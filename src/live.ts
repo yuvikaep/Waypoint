@@ -59,6 +59,7 @@ async function boot(){
   catch(e){if(!$('#login'))showLogin((e as Error).message)}
 }
 function shell(){
+  const navScroll=$<HTMLElement>('.live-sidebar nav')?.scrollTop||0;
   disposeMap();
   $('#app').innerHTML=`<div class="live-shell"><aside class="live-sidebar">${brand()}<div class="workspace-label">${esc(preferences().workspace)}<small>${esc(preferences().name)}</small></div><nav aria-label="Workspace">${views.map(([name,icon])=>`<button data-view="${name}" class="${view===name?'selected':''}">${i(icon)}${name}</button>`).join('')}</nav><div class="sidebar-foot"><a href="/?sender=1" target="_blank" rel="noopener">${i('smartphone')}Mobile sender</a><button id="logout">${i('log-out')}Sign out</button></div></aside><main class="live-main"><header class="live-header"><span>Workspace ${i('chevron-right')} <strong>${view}</strong></span><span id="connection" role="status"></span></header><div class="live-heading"><div><span class="eyebrow">WAYPOINT / OPERATIONS</span><h1>${view==='Live tracking'?'Fleet overview':view}</h1></div><button class="primary" id="add-device">${i('plus')}Add device</button></div><div id="gateway-notice"></div><div id="view-body"></div></main></div><div id="notice" role="status" hidden></div><dialog id="modal"></dialog>`;
   $('#connection').insertAdjacentHTML('afterend',`<button class="tool compact-signout" id="compact-logout" title="Sign out" aria-label="Sign out">${i('log-out')}</button>`);
@@ -77,6 +78,7 @@ function shell(){
   else if(view==='Profile'||view==='Settings')renderPreferences();
   else renderTable();
   renderConnection();icons();
+  $<HTMLElement>('.live-sidebar nav').scrollTop=navScroll;
   const selectedNav=$<HTMLButtonElement>('nav [data-view].selected');
   selectedNav?.setAttribute('aria-current','page');
   if(window.matchMedia('(max-width:800px)').matches)selectedNav?.scrollIntoView({block:'nearest',inline:'nearest'});
