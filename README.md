@@ -1,6 +1,18 @@
-# Waypoint local preview
+# Waypoint GPS workspace
 
-GPS-first responsive web prototype with vehicle selection, interactive OpenStreetMap map, search/status filters, sample route playback, alerts, CSV exports, and vehicle document records with optional PDF/image attachments.
+Live fleet tracking for GT06, Teltonika FMB920, and optional mobile GPS. Includes authenticated device registration, persistent locations, heartbeat/fix freshness, on-demand ping status, map follow, recorded routes, CSV export, geofences, and alerts. Existing browser-stored documents and e-way billing remain available.
+
+Run `npm run dev` and open `http://127.0.0.1:5173` for the real workspace. Live tracking, route history, devices, geofences, alerts, Documents, E-way bills, Profile and Settings share one navigation shell. The local Vite preview signs in same-origin loopback requests automatically; the production backend still requires the generated key in `server/private/admin-token`. Driver sharing remains a separate link without an admin login.
+
+Use `/?demo=1` explicitly for sample vehicles and simulated tracking. Demo edits use separate browser storage and do not contact the GPS or billing backend. Profile and display preferences currently persist only in this browser; they are not customer accounts. Separate customer authentication and tenant isolation are not implemented yet.
+
+Mobile sharing sends a heartbeat every 30 seconds while the driver page is running; the fleet view refreshes every three seconds. Browsers may pause background or locked-screen pages. Hardware heartbeat frequency must be configured on the tracker. Driver links stay fixed until explicitly regenerated or disabled. See [GPS-SETUP.md](GPS-SETUP.md) for setup and deployment boundaries.
+
+Validation: `npm test`, `npm run build`, and `npm run test:gateway` (requires the local Traccar gateway). No physical trackers or SIMs have been connected during development.
+
+## Archived prototype notes
+
+The notes below describe the previous demo and its browser document storage. Sample fleet positions and sample route playback have been replaced in the default live workspace.
 
 ## Run
 

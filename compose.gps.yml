@@ -1,0 +1,14 @@
+services:
+  traccar:
+    image: traccar/traccar:6.16.0-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8082:8082"
+      - "${GPS_TRACKER_BIND:-127.0.0.1}:5023:5023/tcp"
+      - "${GPS_TRACKER_BIND:-127.0.0.1}:5027:5027/tcp"
+    volumes:
+      - traccar-data:/opt/traccar/data
+      - traccar-logs:/opt/traccar/logs
+volumes:
+  traccar-data:
+  traccar-logs:
