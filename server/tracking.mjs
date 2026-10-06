@@ -4,6 +4,7 @@ import { resolve, dirname, extname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TrackingStore, fail, hash, token } from './tracking-store.mjs';
 import { TraccarBridge } from './traccar.mjs';
+import { RelayService } from './relay.mjs';
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 async function body(req) {
@@ -13,9 +14,10 @@ async function body(req) {
   try { const parsed=JSON.parse(data); if (!parsed || Array.isArray(parsed) || typeof parsed!=='object') throw Error(); return parsed; }
   catch { fail(400,'Invalid JSON object.'); }
 }
-export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(store),publicOrigin,staticDir=resolve(root,'dist')}={}) {
+export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(store),publicOrigin,relayEnabled=false,staticDir=resolve(root,'dist')}={}) {
   if (!adminToken || adminToken.length<24) throw new Error('Admin token must contain at least 24 characters.');
   const sessions=new Map(), limits=new Map();
+  const relay=new RelayService(store,bridge,{enabled:relayEnabled});
   const limited=(key,max,ms=60000)=>{
     const now=Date.now(); let slot=limits.get(key);
     if (!slot || slot.reset<=now) { slot={count:0,reset:now+ms}; limits.set(key,slot); }
@@ -76,9 +78,16 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
       }
       if (path==='/api/gps/state' && method==='GET') {store.tick();return json(res,200,{devices:store.devices(),fences:store.fences(),alerts:store.alerts(),gateway:bridge.state,serverTime:Date.now()});}
       if (path==='/api/gps/devices' && method==='POST') {const result=store.createDevice(await body(req));void bridge.sync();return json(res,201,result);}
-      const deviceMatch=path.match(/^\/api\/gps\/devices\/([\w-]+)\/(history|ping|token|driver-link)$/);
+      const deviceMatch=path.match(/^\/api\/gps\/devices\/([\w-]+)\/(history|ping|token|driver-link|relay)$/);
       if (deviceMatch) {
         const [,id,action]=deviceMatch,device=store.raw(id);
+        if(action==='relay'&&method==='GET')return json(res,200,await relay.status(id));
+        if(action==='relay'&&(method==='POST'||method==='PUT')){
+          limited(`relay:${id}`,6);
+          const input=await body(req);
+          if(typeof input.adminKey!=='string'||hash(input.adminKey)!==hash(adminToken))fail(403,'Admin re-authentication is required for relay changes.');
+          return json(res,200,method==='PUT'?relay.configure(id,input):await relay.execute(id,input));
+        }
         if(action==='driver-link' && method==='GET')return json(res,200,store.getDriverLink(id));
         if(action==='driver-link' && method==='POST'){const input=await body(req);return json(res,201,store.createDriverLink(id,{regenerate:input.regenerate===true}));}
         if(action==='driver-link' && method==='DELETE'){store.revokeDriverLinks(id);return json(res,200,{ok:true});}
@@ -127,7 +136,7 @@ if (process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)
   const adminToken=process.env.GPS_ADMIN_TOKEN || readFileSync(secretPath,'utf8').trim();
   const store=new TrackingStore(process.env.GPS_DB || resolve(privateDir,'tracking.sqlite'));
   const bridge=new TraccarBridge(store,{url:process.env.TRACCAR_URL,token:process.env.TRACCAR_TOKEN});
-  const server=createTrackingServer({store,adminToken,bridge,publicOrigin:process.env.GPS_PUBLIC_ORIGIN});
+  const server=createTrackingServer({store,adminToken,bridge,publicOrigin:process.env.GPS_PUBLIC_ORIGIN,relayEnabled:process.env.GPS_RELAY_ENABLED==='true'});
   const port=Number(process.env.GPS_PORT || 5180),host=process.env.GPS_HOST || '127.0.0.1';
   server.listen(port,host,()=>{console.log(`Waypoint GPS: http://${host}:${port}`);console.log(`Workspace access key: ${secretPath}`);void bridge.sync();});
   const shutdown=()=>{server.close(()=>{store.close();process.exit(0)});server.closeAllConnections();};

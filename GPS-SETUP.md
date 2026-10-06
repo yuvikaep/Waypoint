@@ -1,7 +1,7 @@
 # Waypoint GPS
 
-Waypoint now has a live fleet workspace backed by SQLite. It supports GT06 and
-Teltonika FMB920 through Traccar, plus an optional authenticated mobile web sender.
+Waypoint now has a live fleet workspace backed by SQLite. It supports GT06,
+GT06N, Teltonika FMB920, FMB125, FMC920 and FMC130 through Traccar, plus an optional authenticated mobile web sender.
 No sample vehicles are inserted into the live fleet.
 
 ## Local startup

@@ -64,4 +64,22 @@ export class TraccarBridge {
     const response=await this.request('/commands/send',{method:'POST',body:JSON.stringify({deviceId:device.traccarId,type:'positionSingle',textChannel:false,attributes:{}})});
     return {status:response.status===202?'queued':'sent',detail:response.status===202?'Gateway queued the location request.':'Location request sent to the tracker. Awaiting a fresh fix.'};
   }
+  async relaySupported(device,protocol){
+    if(!device.traccarId)return false;
+    const remote=(await this.request(`/devices?id=${device.traccarId}`)).data.find(d=>d.id===device.traccarId);
+    if(!remote||remote.uniqueId!==device.uniqueId||remote.status!=='online')return false;
+    const positions=(await this.request(`/positions?deviceId=${device.traccarId}`)).data;
+    const latest=positions.find(p=>p.deviceId===device.traccarId&&p.id===remote.positionId);
+    if(!latest||latest.protocol!==protocol||!latest.valid)return false;
+    this.ingest(device.id,latest);
+    const lastSeen=Date.parse(remote.lastUpdate);
+    if(Number.isFinite(lastSeen)&&lastSeen<=this.store.now())this.store.seen(device.id,lastSeen);
+    const types=(await this.request(`/commands/types?deviceId=${device.traccarId}&textChannel=false`)).data;
+    return ['engineStop','engineResume'].every(type=>types.some(t=>t.type===type));
+  }
+  async sendRelay(device,action){
+    const response=await this.request('/commands/send',{method:'POST',body:JSON.stringify({deviceId:device.traccarId,type:action==='inhibit'?'engineStop':'engineResume',textChannel:false,attributes:{noQueue:true}})});
+    if(response.status!==200)throw new Error('Unexpected relay delivery response.');
+    return {detail:'Gateway accepted the command. Physical starter-relay state has NOT been verified.'};
+  }
 }

@@ -54,7 +54,7 @@ export class TrackingStore {
   createDevice(body) {
     const name = text(body.name, 'Vehicle name');
     const uniqueId = text(body.uniqueId || (body.model==='Mobile' ? `mobile-${randomUUID().slice(0,8)}` : ''), 'Device identifier', 32);
-    if (!['GT06', 'FMB920', 'Mobile'].includes(body.model)) fail(400, 'Choose GT06, FMB920 or Mobile.');
+    if (!['GT06','GT06N','FMB920','FMB125','FMC920','FMC130','Mobile'].includes(body.model)) fail(400, 'Choose a supported tracker model.');
     if (body.model !== 'Mobile' && !/^\d{15}$/.test(uniqueId)) fail(400, 'Hardware trackers require a 15-digit IMEI.');
     if (body.model === 'Mobile' && !/^[a-zA-Z0-9_-]{3,32}$/.test(uniqueId)) fail(400, 'Mobile identifier must be 3-32 letters, digits, underscores or hyphens.');
     const driver = typeof body.driver === 'string' ? body.driver.trim().slice(0, 100) : '';

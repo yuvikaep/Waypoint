@@ -5,7 +5,7 @@ import './live.css';
 import {DEMO_MODE,demoRequest,workspaceStorage} from './demo';
 
 type Fix={id:number;deviceId:string;recordedAt:number;receivedAt:number;latitude:number;longitude:number;speed:number;heading:number|null;accuracy:number|null;ignition:number|null;battery:number|null;satellites:number|null};
-type Device={id:string;name:string;uniqueId:string;model:'GT06'|'FMB920'|'Mobile';driver:string;lastSeen:number|null;offlineSeconds:number;speedLimit:number;bridgeStatus:string|null;traccarId:number|null;status:string;online:boolean;fresh:boolean;position:Fix|null;command:{status:string;detail:string;createdAt:number}|null};
+type Device={id:string;name:string;uniqueId:string;model:'GT06'|'GT06N'|'FMB920'|'FMB125'|'FMC920'|'FMC130'|'Mobile';driver:string;lastSeen:number|null;offlineSeconds:number;speedLimit:number;bridgeStatus:string|null;traccarId:number|null;status:string;online:boolean;fresh:boolean;position:Fix|null;command:{status:string;detail:string;createdAt:number}|null};
 type Fence={id:string;name:string;latitude:number;longitude:number;radius:number};
 type Alert={id:string;deviceId:string;deviceName:string;type:string;message:string;createdAt:number;acknowledged:number};
 type FleetState={devices:Device[];fences:Fence[];alerts:Alert[];gateway:{configured:boolean;connected:boolean;lastSync:number|null;error:string|null};serverTime:number};
@@ -173,8 +173,9 @@ function select(id:string){if(id!==selected){selected=id;clearHistory()}updateTr
 function detail(){
   const d=current();if(!d){$('#device-detail').innerHTML='';return}
   const p=d.position;
-  $('#device-detail').innerHTML=`<div class="detail-head"><div><strong>${esc(d.name)}</strong><small>${esc(d.model)} &middot; ${esc(d.uniqueId)}</small></div><button class="primary" id="ping-device" ${!connected?'disabled':''}>${i('radio')}Ping</button></div><dl class="detail-grid"><div><dt>Last heartbeat</dt><dd title="${time(d.lastSeen)}">${ago(d.lastSeen)}</dd></div><div><dt>GPS fix</dt><dd title="${time(p?.recordedAt||null)}">${p?ago(p.recordedAt):'Waiting'}</dd></div><div><dt>Ignition</dt><dd>${p?.ignition==null?'Unknown':p.ignition?'On':'Off'}</dd></div><div><dt>Accuracy</dt><dd>${p?.accuracy==null?'Unknown':`${Math.round(p.accuracy)} m`}</dd></div><div><dt>Battery</dt><dd>${p?.battery==null?'Unknown':`${Math.round(p.battery)}%`}</dd></div><div><dt>Satellites</dt><dd>${p?.satellites??'Unknown'}</dd></div></dl>${d.command?`<div class="command-status"><strong>Ping: ${esc(d.command.status)}</strong><span>${esc(d.command.detail)}</span></div>`:''}<div class="detail-actions"><span>${p?coords(p):'No position'}</span><button id="device-history">${i('route')}History</button></div>`;
+  $('#device-detail').innerHTML=`<div class="detail-head"><div><strong>${esc(d.name)}</strong><small>${esc(d.model)} &middot; ${esc(d.uniqueId)}</small></div><button class="primary" id="ping-device" ${!connected?'disabled':''}>${i('radio')}Ping</button></div><dl class="detail-grid"><div><dt>Last heartbeat</dt><dd title="${time(d.lastSeen)}">${ago(d.lastSeen)}</dd></div><div><dt>GPS fix</dt><dd title="${time(p?.recordedAt||null)}">${p?ago(p.recordedAt):'Waiting'}</dd></div><div><dt>Ignition</dt><dd>${p?.ignition==null?'Unknown':p.ignition?'On':'Off'}</dd></div><div><dt>Accuracy</dt><dd>${p?.accuracy==null?'Unknown':`${Math.round(p.accuracy)} m`}</dd></div><div><dt>Battery</dt><dd>${p?.battery==null?'Unknown':`${Math.round(p.battery)}%`}</dd></div><div><dt>Satellites</dt><dd>${p?.satellites??'Unknown'}</dd></div></dl>${d.command?`<div class="command-status"><strong>Ping: ${esc(d.command.status)}</strong><span>${esc(d.command.detail)}</span></div>`:''}<div class="detail-actions"><span>${p?coords(p):'No position'}</span>${d.model!=='Mobile'?`<button id="device-relay">${i('shield-check')}Relay</button>`:''}<button id="device-history">${i('route')}History</button></div>`;
   action('#ping-device',async()=>{const button=$<HTMLButtonElement>('#ping-device');button.disabled=true;try{await api(`/devices/${d.id}/ping`,{method:'POST',body:'{}'});await refresh()}finally{if(button.isConnected)button.disabled=false}});
+  action('#device-relay',()=>relayDialog(d));
   action('#device-history',()=>{view='Route history';shell();void loadHistory().catch(e=>notify(e.message))});
 }
 function clearHistory(){stopPlay();history=[];historyDevice='';historyVersion++;routeLayer?.clearLayers();if($('#history-status')){$('#history-status').textContent='Select a vehicle and date range.';$<HTMLButtonElement>('#play-route').disabled=true;$<HTMLButtonElement>('#export-route').disabled=true;$<HTMLInputElement>('#route-slider').disabled=true}}
@@ -206,25 +207,80 @@ function exportHistory(){if(historyDevice!==selected||!history.length)return;con
 
 function renderTable(){
   if(!state)return;
-  if(view==='Devices')$('#view-body').innerHTML=`<div class="section-heading"><h2>Registered devices <span>${state.devices.length}</span></h2><span>${state.gateway.connected?'Hardware gateway connected':'Hardware gateway unavailable'}</span></div><div class="table-wrap"><table><thead><tr><th>Vehicle / identifier</th><th>Tracker</th><th>State</th><th>Last heartbeat</th><th>Gateway</th><th></th></tr></thead><tbody>${state.devices.map(d=>`<tr><td><strong>${esc(d.name)}</strong><small>${esc(d.uniqueId)}</small></td><td>${d.model}</td><td><span class="status ${statusClass(d)}">${d.status}</span></td><td>${ago(d.lastSeen)}</td><td>${esc(d.model==='Mobile'?'Direct sender':d.bridgeStatus||'Awaiting gateway')}</td><td><button class="secondary" data-setup="${d.id}">Connection</button></td></tr>`).join('')||'<tr><td colspan="6">No registered devices.</td></tr>'}</tbody></table></div>`;
+  if(view==='Devices')$('#view-body').innerHTML=`<div class="section-heading"><h2>Registered devices <span>${state.devices.length}</span></h2><span>${state.gateway.connected?'Hardware gateway connected':'Hardware gateway unavailable'}</span></div><div class="table-wrap"><table><thead><tr><th>Vehicle / identifier</th><th>Tracker</th><th>State</th><th>Last heartbeat</th><th>Gateway</th><th></th></tr></thead><tbody>${state.devices.map(d=>`<tr><td><strong>${esc(d.name)}</strong><small>${esc(d.uniqueId)}</small></td><td>${d.model}</td><td><span class="status ${statusClass(d)}">${d.status}</span></td><td>${ago(d.lastSeen)}</td><td>${esc(d.model==='Mobile'?'Direct sender':d.bridgeStatus||'Awaiting gateway')}</td><td><button class="secondary" data-setup="${d.id}">Connection</button>${d.model!=='Mobile'?` <button class="secondary" data-relay="${d.id}">${i('shield-check')}Relay</button>`:''}</td></tr>`).join('')||'<tr><td colspan="6">No registered devices.</td></tr>'}</tbody></table></div>`;
   else if(view==='Geofences')$('#view-body').innerHTML=`<div class="section-heading"><h2>Geofences <span>${state.fences.length}</span></h2><button class="secondary" id="add-fence">${i('plus')}Add geofence</button></div><div class="table-wrap"><table><thead><tr><th>Name</th><th>Centre</th><th>Radius</th><th></th></tr></thead><tbody>${state.fences.map(f=>`<tr><td>${esc(f.name)}</td><td>${coords(f)}</td><td>${f.radius} m</td><td><button class="tool" data-delete-fence="${f.id}" aria-label="Delete ${esc(f.name)}" title="Delete geofence">${i('trash-2')}</button></td></tr>`).join('')||'<tr><td colspan="4">No geofences configured.</td></tr>'}</tbody></table></div>`;
   else if(view==='Alerts')$('#view-body').innerHTML=`<div class="section-heading"><h2>Recent alerts <span>${state.alerts.filter(a=>!a.acknowledged).length} open</span></h2><span>Latest 200 events</span></div><div class="alert-list">${state.alerts.map(a=>`<div class="live-alert"><span class="event-icon ${a.type==='offline'?'red':a.type==='online'?'green':'amber'}">${i(a.type==='enter'||a.type==='exit'?'map-pin':'bell')}</span><div><strong>${esc(a.deviceName)}</strong><p>${esc(a.message)}</p><small>${time(a.createdAt)}</small></div><button class="secondary" data-ack="${a.id}" ${a.acknowledged?'disabled':''}>${a.acknowledged?'Acknowledged':'Acknowledge'}</button></div>`).join('')||'<div class="empty-state">No alerts recorded.</div>'}</div>`;
   document.querySelectorAll<HTMLElement>('[data-setup]').forEach(b=>b.onclick=()=>deviceInfo(state!.devices.find(d=>d.id===b.dataset.setup)!));
   document.querySelectorAll<HTMLElement>('[data-ack]').forEach(b=>b.onclick=()=>{void api(`/alerts/${b.dataset.ack}/ack`,{method:'POST',body:'{}'}).then(refresh).catch(e=>notify(e.message))});
   document.querySelectorAll<HTMLElement>('[data-delete-fence]').forEach(b=>b.onclick=()=>{const f=state!.fences.find(f=>f.id===b.dataset.deleteFence)!;modal('Delete geofence',`<p>Delete ${esc(f.name)}? Existing alerts will be retained.</p><button class="danger" id="confirm-delete">Delete geofence</button>`);action('#confirm-delete',async()=>{await api(`/fences/${f.id}`,{method:'DELETE'});closeModal();await refresh()})});
+  document.querySelectorAll<HTMLElement>('[data-relay]').forEach(b=>b.onclick=()=>{void relayDialog(state!.devices.find(d=>d.id===b.dataset.relay)!).catch(e=>notify(e.message))});
   action('#add-fence',addFence);icons();
 }
+
+type RelayStatus={enabled:boolean;modelSupported:boolean;supported:boolean;error:string|null;installation:{installer:string;verifiedAt:number}|null;history:{action:string;status:string;detail:string;createdAt:number}[]};
+async function relayDialog(d:Device){
+  if(DEMO_MODE){modal('Relay / '+d.name,'<p>Relay control is unavailable in sample-data mode. No command will be sent.</p>');return}
+  const status=await api<RelayStatus>(`/devices/${d.id}/relay`);
+  const available=status.enabled&&status.supported&&!!status.installation;
+  modal('Starter relay / '+d.name,`
+    <p class="error">Starter-inhibit only. Fuel/ignition cut-off wiring is not supported. Physical relay state: unverified.</p>
+    ${!status.enabled?'<p>Live relay commands are disabled on this server.</p>':''}
+    ${status.error?`<p class="error">${esc(status.error)}</p>`:''}
+    <dl class="setup-facts"><dt>Model</dt><dd>${esc(d.model)}</dd><dt>Gateway commands</dt><dd>${status.supported?'Supported':'Not verified / unavailable'}</dd><dt>Installation</dt><dd>${status.installation?esc(status.installation.installer)+' · '+time(status.installation.verifiedAt):'Not verified'}</dd></dl>
+    <form id="relay-command">
+      <label>Action<select name="action"><option value="inhibit">Inhibit next engine start</option><option value="restore">Restore starter access</option></select></label>
+      <label>Confirm device IMEI<input name="confirmation" required autocomplete="off" placeholder="${esc(d.uniqueId)}"></label>
+      <label>Reason<input name="reason" required maxlength="300"></label>
+      <label>Admin access key<input name="adminKey" type="password" required autocomplete="off"></label>
+      <p>Inhibit requires ignition OFF, parked telemetry for 30 seconds and a fresh GPS fix. Commands are never queued for an offline tracker.</p>
+      <button class="danger" type="submit" ${available?'':'disabled'}>Send relay command</button>
+      <p id="relay-result" role="status"></p>
+    </form>
+    <details><summary>Installer verification</summary><form id="relay-installation">
+      <label>Installer / verification reference<input name="installer" maxlength="200" required value="${esc(status.installation?.installer||'')}"></label>
+      <label class="check-setting"><input type="checkbox" name="starterOnly" required>Starter circuit only; no fuel or ignition cut-off</label>
+      <label class="check-setting"><input type="checkbox" name="polarityVerified" required>Gateway command polarity verified on this installation</label>
+      <label>Admin access key<input name="adminKey" type="password" required autocomplete="off"></label>
+      <button class="secondary" type="submit">Save verification</button>
+      <button class="secondary" id="relay-disable" type="button">Disable relay access</button>
+      <p id="relay-installation-error" role="alert"></p>
+    </form></details>
+    <h2>Recent commands</h2>
+    ${status.history.map(c=>`<p><strong>${esc(c.action)} · ${esc(c.status)}</strong><br>${time(c.createdAt)}<br>${esc(c.detail)}</p>`).join('')||'<p>No relay commands recorded.</p>'}
+  `);
+  const requestId=crypto.randomUUID();
+  $('#relay-command').addEventListener('submit',async event=>{
+    event.preventDefault();const form=event.target as HTMLFormElement,button=form.querySelector<HTMLButtonElement>('button')!;button.disabled=true;
+    try{
+      const input=Object.fromEntries(new FormData(form));
+      const result=await api<{status:string;detail:string}>(`/devices/${d.id}/relay`,{method:'POST',body:JSON.stringify({...input,requestId})});
+      $('#relay-result').textContent=result.status+': '+result.detail;
+    }catch(error){$('#relay-result').textContent=(error as Error).message}
+    finally{form.querySelector<HTMLInputElement>('[name=adminKey]')!.value=''}
+  });
+  $('#relay-installation').addEventListener('submit',async event=>{
+    event.preventDefault();const form=event.target as HTMLFormElement,data=new FormData(form);
+    try{await api(`/devices/${d.id}/relay`,{method:'PUT',body:JSON.stringify({installer:data.get('installer'),adminKey:data.get('adminKey'),starterOnly:data.has('starterOnly'),polarityVerified:data.has('polarityVerified')})});await relayDialog(d)}
+    catch(error){$('#relay-installation-error').textContent=(error as Error).message;form.querySelector<HTMLInputElement>('[name=adminKey]')!.value=''}
+  });
+  action('#relay-disable',async()=>{
+    const key=$<HTMLInputElement>('#relay-installation [name=adminKey]');
+    try{await api(`/devices/${d.id}/relay`,{method:'PUT',body:JSON.stringify({enabled:false,adminKey:key.value})});await relayDialog(d)}
+    finally{key.value=''}
+  });
+}
+
 function modal(title:string,body:string){const dialog=$<HTMLDialogElement>('#modal');if(dialog.open)dialog.close();dialog.innerHTML=`<div class="modal-heading"><h2>${esc(title)}</h2><button class="tool" id="close-modal" aria-label="Close" title="Close">${i('x')}</button></div>${body}`;dialog.showModal();action('#close-modal',closeModal);icons()}
 function closeModal(){$<HTMLDialogElement>('#modal').close()}
 function addDevice(){
-  modal('Add a GPS device',`<form id="device-form"><label>Vehicle name / registration<input name="name" required maxlength="100" placeholder="MH 12 AB 1234"></label><label>Tracker model<select name="model" id="device-model"><option>GT06</option><option>FMB920</option><option>Mobile</option></select></label><label><span id="identifier-label">15-digit IMEI</span><input name="uniqueId" required maxlength="32" autocomplete="off"></label><label>Driver (optional)<input name="driver" maxlength="100"></label><div class="form-grid"><label>Offline after (seconds)<input type="number" name="offlineSeconds" min="30" max="86400" value="180" required></label><label>Speed limit (km/h)<input type="number" name="speedLimit" min="1" max="250" value="80" required></label></div><p class="error" id="form-error" role="alert"></p><button class="primary" type="submit">Register device</button></form>`);
+  modal('Add a GPS device',`<form id="device-form"><label>Vehicle name / registration<input name="name" required maxlength="100" placeholder="MH 12 AB 1234"></label><label>Tracker model<select name="model" id="device-model"><option>GT06</option><option>GT06N</option><option>FMB920</option><option>FMB125</option><option>FMC920</option><option>FMC130</option><option>Mobile</option></select></label><label><span id="identifier-label">15-digit IMEI</span><input name="uniqueId" required maxlength="32" autocomplete="off"></label><label>Driver (optional)<input name="driver" maxlength="100"></label><div class="form-grid"><label>Offline after (seconds)<input type="number" name="offlineSeconds" min="30" max="86400" value="180" required></label><label>Speed limit (km/h)<input type="number" name="speedLimit" min="1" max="250" value="80" required></label></div><p class="error" id="form-error" role="alert"></p><button class="primary" type="submit">Register device</button></form>`);
   $<HTMLSelectElement>('#device-model').onchange=()=>{const mobile=$<HTMLSelectElement>('#device-model').value==='Mobile';const field=$<HTMLInputElement>('#device-form input[name=uniqueId]');field.required=!mobile;field.disabled=mobile;field.closest('label')!.hidden=mobile};
   $('#device-form').addEventListener('submit',async e=>{e.preventDefault();const form=e.target as HTMLFormElement,values=Object.fromEntries(new FormData(form));const button=form.querySelector<HTMLButtonElement>('button[type=submit]')!;button.disabled=true;try{const result=await api<{device:Device;token:string|null}>('/devices',{method:'POST',body:JSON.stringify({...values,offlineSeconds:Number(values.offlineSeconds),speedLimit:Number(values.speedLimit)})});selected=result.device.id;await refresh();deviceInfo(result.device,result.token)}catch(error){$('#form-error').textContent=(error as Error).message;button.disabled=false}});
 }
 function deviceInfo(d:Device,secret:string|null=null){
   const mobile=d.model==='Mobile';
   if(mobile){driverLinkDialog(d,!!secret);return}
-  modal(`${d.name} / Connection`,`<dl class="setup-facts"><dt>Model</dt><dd>${d.model}</dd><dt>IMEI</dt><dd>${esc(d.uniqueId)}</dd><dt>Protocol</dt><dd>${d.model==='GT06'?'GT06':'Teltonika'}</dd><dt>TCP port</dt><dd>${d.model==='GT06'?'5023':'5027'}</dd><dt>Registration</dt><dd>${d.traccarId?'Linked to gateway':'Awaiting gateway synchronization'}</dd></dl><p>Set the tracker server address to your reachable Traccar host and configure the SIM APN in the device configurator.</p><p class="muted">${d.model==='FMB920'?'Use Teltonika Configurator with TCP data transport.':'GT06 command syntax varies by manufacturer; use the manual supplied with this device.'}</p><button class="secondary" id="hardware-help">Gateway details</button>`);
+  modal(`${d.name} / Connection`,`<dl class="setup-facts"><dt>Model</dt><dd>${d.model}</dd><dt>IMEI</dt><dd>${esc(d.uniqueId)}</dd><dt>Protocol</dt><dd>${d.model.startsWith('GT06')?'GT06':'Teltonika'}</dd><dt>TCP port</dt><dd>${d.model.startsWith('GT06')?'5023':'5027'}</dd><dt>Registration</dt><dd>${d.traccarId?'Linked to gateway':'Awaiting gateway synchronization'}</dd></dl><p>Set the tracker server address to your reachable Traccar host and configure the SIM APN in the device configurator.</p><p class="muted">${d.model.startsWith('FM')?'Use Teltonika Configurator with TCP data transport.':'GT06 command syntax varies by manufacturer; use the manual supplied with this device.'}</p><button class="secondary" id="hardware-help">Gateway details</button>`);
   action('#hardware-help',gatewayInfo);
 }
 function driverLinkDialog(d:Device,createNow=false){

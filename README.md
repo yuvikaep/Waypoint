@@ -10,6 +10,10 @@ Mobile sharing sends a heartbeat every 30 seconds while the driver page is runni
 
 Validation: `npm test`, `npm run build`, and `npm run test:gateway` (requires the local Traccar gateway). No physical trackers or SIMs have been connected during development.
 
+Relay controls: see [RELAY-SETUP.md](RELAY-SETUP.md). Starter-inhibit/restore is
+default-disabled and requires installer verification and admin re-authentication.
+No physical relay operation has been validated.
+
 ## Archived prototype notes
 
 The notes below describe the previous demo and its browser document storage. Sample fleet positions and sample route playback have been replaced in the default live workspace.
