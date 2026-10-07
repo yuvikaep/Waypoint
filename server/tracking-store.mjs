@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 
 export const hash = value => createHash('sha256').update(value).digest('hex');
 export const token = () => randomBytes(32).toString('base64url');
@@ -43,15 +43,40 @@ export class TrackingStore {
       CREATE TABLE IF NOT EXISTS commands (id TEXT PRIMARY KEY, deviceId TEXT NOT NULL, status TEXT NOT NULL, detail TEXT NOT NULL, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS driver_links (hash TEXT PRIMARY KEY,deviceId TEXT NOT NULL REFERENCES devices(id),expiresAt INTEGER NOT NULL,revoked INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS driver_sessions (hash TEXT PRIMARY KEY,linkHash TEXT NOT NULL REFERENCES driver_links(hash),expiresAt INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS customers (id TEXT PRIMARY KEY,name TEXT NOT NULL,email TEXT NOT NULL UNIQUE,salt TEXT NOT NULL,passwordHash TEXT NOT NULL,createdAt INTEGER NOT NULL,enabled INTEGER NOT NULL DEFAULT 1);
     `);
+    if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name==='tenantId'))this.db.exec("ALTER TABLE devices ADD COLUMN tenantId TEXT NOT NULL DEFAULT 'owner'");
+    if(!this.db.prepare('PRAGMA table_info(fences)').all().some(c=>c.name==='tenantId'))this.db.exec("ALTER TABLE fences ADD COLUMN tenantId TEXT NOT NULL DEFAULT 'owner'");
     if(!this.db.prepare('PRAGMA table_info(driver_links)').all().some(c=>c.name==='code')){
       this.db.exec('ALTER TABLE driver_links ADD COLUMN code TEXT');
       this.db.prepare('UPDATE driver_links SET expiresAt=0 WHERE revoked=0 AND expiresAt>?').run(this.now());
     }
   }
   close() { this.db.close(); }
+  customers(){return this.db.prepare('SELECT id,name,email,createdAt,enabled FROM customers ORDER BY createdAt').all();}
+  customer(id){return this.db.prepare('SELECT id,name,email,createdAt,enabled FROM customers WHERE id=?').get(id)||fail(404,'Customer not found.');}
+  createCustomer(body){
+    const name=text(body.name,'Customer name',100);
+    const email=text(body.email,'Customer email',254).toLowerCase();
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail(400,'Enter a valid customer email.');
+    const id=randomUUID(),secret=token(),salt=randomBytes(16).toString('hex');
+    try{this.db.prepare('INSERT INTO customers(id,name,email,salt,passwordHash,createdAt) VALUES (?,?,?,?,?,?)').run(id,name,email,salt,scryptSync(secret,salt,64).toString('hex'),this.now());}
+    catch(e){if(String(e).includes('UNIQUE'))fail(409,'Customer email is already registered.');throw e;}
+    return {customer:this.customer(id),password:secret};
+  }
+  customerLogin(email,password){
+    const row=typeof email==='string'&&this.db.prepare('SELECT * FROM customers WHERE email=? AND enabled=1').get(email.trim().toLowerCase());
+    if(typeof password!=='string'||!row||!timingSafeEqual(Buffer.from(row.passwordHash,'hex'),scryptSync(password,row.salt,64)))fail(401,'Incorrect customer credentials.');
+    return {id:row.id,name:row.name,email:row.email};
+  }
+  resetCustomer(id){
+    this.customer(id);const password=token(),salt=randomBytes(16).toString('hex');
+    this.db.prepare('UPDATE customers SET salt=?,passwordHash=? WHERE id=?').run(salt,scryptSync(password,salt,64).toString('hex'),id);
+    return {password};
+  }
+  setCustomerEnabled(id,enabled){this.customer(id);this.db.prepare('UPDATE customers SET enabled=? WHERE id=?').run(Number(enabled),id);return this.customer(id);}
   raw(id) { return this.db.prepare('SELECT * FROM devices WHERE id=?').get(id) || fail(404, 'Device not found.'); }
-  createDevice(body) {
+  createDevice(body,tenantId='owner') {
     const name = text(body.name, 'Vehicle name');
     const uniqueId = text(body.uniqueId || (body.model==='Mobile' ? `mobile-${randomUUID().slice(0,8)}` : ''), 'Device identifier', 32);
     if (!['GT06','GT06N','FMB920','FMB125','FMC920','FMC130','Mobile'].includes(body.model)) fail(400, 'Choose a supported tracker model.');
@@ -62,8 +87,8 @@ export class TrackingStore {
     const speedLimit = number(body.speedLimit ?? 80, 'Speed limit', 1, 250);
     const id = randomUUID(), secret = body.model === 'Mobile' ? token() : null;
     try {
-      this.db.prepare('INSERT INTO devices (id,name,uniqueId,model,driver,tokenHash,createdAt,offlineSeconds,speedLimit) VALUES (?,?,?,?,?,?,?,?,?)')
-        .run(id,name,uniqueId,body.model,driver,secret ? hash(secret) : null,this.now(),offlineSeconds,speedLimit);
+      this.db.prepare('INSERT INTO devices (id,name,uniqueId,model,driver,tokenHash,createdAt,offlineSeconds,speedLimit,tenantId) VALUES (?,?,?,?,?,?,?,?,?,?)')
+        .run(id,name,uniqueId,body.model,driver,secret ? hash(secret) : null,this.now(),offlineSeconds,speedLimit,tenantId);
     } catch (e) { if (String(e).includes('UNIQUE')) fail(409, 'This device identifier is already registered.'); throw e; }
     return { device: this.device(id), token: secret };
   }
@@ -118,7 +143,7 @@ export class TrackingStore {
     const command = this.db.prepare('SELECT * FROM commands WHERE deviceId=? ORDER BY createdAt DESC,rowid DESC LIMIT 1').get(id) || null;
     return { ...device, position, online, fresh: !!fresh, status, command };
   }
-  devices() { return this.db.prepare('SELECT id FROM devices ORDER BY createdAt').all().map(d => this.device(d.id)); }
+  devices(tenantId) {return (tenantId?this.db.prepare('SELECT id FROM devices WHERE tenantId=? ORDER BY createdAt').all(tenantId):this.db.prepare('SELECT id FROM devices ORDER BY createdAt').all()).map(d=>this.device(d.id));}
   seen(id, at = this.now()) {
     const previous = this.raw(id);
     this.db.prepare('UPDATE devices SET lastSeen=MAX(COALESCE(lastSeen,0),?),offlineAlert=CASE WHEN ?>? THEN 0 ELSE offlineAlert END WHERE id=?')
@@ -144,7 +169,7 @@ export class TrackingStore {
       if (heartbeat) this.seen(id, receivedAt);
       if (inserted && (!previous || recordedAt > previous.recordedAt)) {
         if (speed > device.speedLimit && (!previous || previous.speed <= device.speedLimit)) this.alert(id,'speed',`Speed ${Math.round(speed)} km/h exceeds ${device.speedLimit} km/h.`,recordedAt);
-        for (const fence of this.fences()) {
+        for (const fence of this.fences(device.tenantId)) {
           const inside = Number(distance({latitude,longitude},fence) <= fence.radius);
           const old = this.db.prepare('SELECT inside FROM fence_state WHERE deviceId=? AND fenceId=?').get(id,fence.id);
           if (old && old.inside !== inside) this.alert(id,inside?'enter':'exit',`${inside?'Entered':'Left'} ${fence.name}.`,recordedAt);
@@ -169,18 +194,19 @@ export class TrackingStore {
     return { positions: rows, next: more ? rows.at(-1).id : null };
   }
   alert(id,type,message,at=this.now()) { this.db.prepare('INSERT INTO alerts(id,deviceId,type,message,createdAt) VALUES (?,?,?,?,?)').run(randomUUID(),id,type,message,at); }
-  alerts() { return this.db.prepare('SELECT alerts.*,devices.name AS deviceName FROM alerts JOIN devices ON devices.id=alerts.deviceId ORDER BY createdAt DESC LIMIT 200').all(); }
-  acknowledge(id) { if (!this.db.prepare('UPDATE alerts SET acknowledged=1 WHERE id=?').run(id).changes) fail(404,'Alert not found.'); }
-  fences() { return this.db.prepare('SELECT * FROM fences ORDER BY name').all(); }
-  addFence(body) {
+  alerts(tenantId){return tenantId?this.db.prepare('SELECT alerts.*,devices.name AS deviceName FROM alerts JOIN devices ON devices.id=alerts.deviceId WHERE devices.tenantId=? ORDER BY alerts.createdAt DESC LIMIT 200').all(tenantId):this.db.prepare('SELECT alerts.*,devices.name AS deviceName FROM alerts JOIN devices ON devices.id=alerts.deviceId ORDER BY alerts.createdAt DESC LIMIT 200').all();}
+  acknowledge(id,tenantId){const result=tenantId?this.db.prepare('UPDATE alerts SET acknowledged=1 WHERE id=? AND deviceId IN (SELECT id FROM devices WHERE tenantId=?)').run(id,tenantId):this.db.prepare('UPDATE alerts SET acknowledged=1 WHERE id=?').run(id);if(!result.changes)fail(404,'Alert not found.');}
+  fences(tenantId){return tenantId?this.db.prepare('SELECT * FROM fences WHERE tenantId=? ORDER BY name').all(tenantId):this.db.prepare('SELECT * FROM fences ORDER BY name').all();}
+  addFence(body,tenantId='owner') {
     const id=randomUUID(), name=text(body.name,'Geofence name');
     const latitude=number(body.latitude,'Latitude',-90,90), longitude=number(body.longitude,'Longitude',-180,180), radius=number(body.radius,'Radius (m)',50,100000);
-    this.db.prepare('INSERT INTO fences VALUES (?,?,?,?,?)').run(id,name,latitude,longitude,radius);
-    for (const device of this.devices()) if (device.position) this.db.prepare('INSERT INTO fence_state VALUES (?,?,?)').run(device.id,id,Number(distance(device.position,{latitude,longitude}) <= radius));
+    this.db.prepare('INSERT INTO fences(id,name,latitude,longitude,radius,tenantId) VALUES (?,?,?,?,?,?)').run(id,name,latitude,longitude,radius,tenantId);
+    for (const device of this.devices(tenantId)) if (device.position) this.db.prepare('INSERT INTO fence_state VALUES (?,?,?)').run(device.id,id,Number(distance(device.position,{latitude,longitude}) <= radius));
     return {id,name,latitude,longitude,radius};
   }
-  deleteFence(id) {
-    if (!this.db.prepare('DELETE FROM fences WHERE id=?').run(id).changes) fail(404,'Geofence not found.');
+  deleteFence(id,tenantId){
+    const result=tenantId?this.db.prepare('DELETE FROM fences WHERE id=? AND tenantId=?').run(id,tenantId):this.db.prepare('DELETE FROM fences WHERE id=?').run(id);
+    if (!result.changes) fail(404,'Geofence not found.');
     this.db.prepare('DELETE FROM fence_state WHERE fenceId=?').run(id);
   }
   queue(id) {

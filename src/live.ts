@@ -2,18 +2,20 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {createIcons,Navigation,Map,Route,RadioTower,Bell,Files,Plus,Search,Scan,LocateFixed,Radio,Download,Play,Pause,X,LogOut,Trash2,Smartphone,Copy,RefreshCw,ShieldCheck,MapPin,ChevronRight,UserRound,Settings,FileText,Save} from 'lucide';
 import './live.css';
-import {DEMO_MODE,demoRequest,workspaceStorage} from './demo';
+import {DEMO_MODE,demoRequest,workspaceStorage,setWorkspaceTenant} from './demo';
 
 type Fix={id:number;deviceId:string;recordedAt:number;receivedAt:number;latitude:number;longitude:number;speed:number;heading:number|null;accuracy:number|null;ignition:number|null;battery:number|null;satellites:number|null};
 type Device={id:string;name:string;uniqueId:string;model:'GT06'|'GT06N'|'FMB920'|'FMB125'|'FMC920'|'FMC130'|'Mobile';driver:string;lastSeen:number|null;offlineSeconds:number;speedLimit:number;bridgeStatus:string|null;traccarId:number|null;status:string;online:boolean;fresh:boolean;position:Fix|null;command:{status:string;detail:string;createdAt:number}|null};
 type Fence={id:string;name:string;latitude:number;longitude:number;radius:number};
 type Alert={id:string;deviceId:string;deviceName:string;type:string;message:string;createdAt:number;acknowledged:number};
 type FleetState={devices:Device[];fences:Fence[];alerts:Alert[];gateway:{configured:boolean;connected:boolean;lastSync:number|null;error:string|null};serverTime:number};
-type View='Live tracking'|'Route history'|'Devices'|'Geofences'|'Alerts'|'Documents'|'E-way bills'|'Profile'|'Settings';
+type View='Live tracking'|'Route history'|'Devices'|'Geofences'|'Alerts'|'Documents'|'E-way bills'|'Profile'|'Settings'|'Customers';
 const views: [View,string][]=[['Live tracking','map'],['Route history','route'],['Devices','radio-tower'],['Geofences','map-pin'],['Alerts','bell'],['Documents','files'],['E-way bills','file-text'],['Profile','user-round'],['Settings','settings']];
+type Identity={role:'admin'|'customer';tenantId:string;name:string;email:string|null};
+type Customer={id:string;name:string;email:string;enabled:boolean;createdAt:number};
 type Preferences={name:string;workspace:string;email:string;follow:boolean;defaultView:View};
 function preferences():Preferences{
-  const defaults:Preferences={name:'Workspace admin',workspace:'Fleet workspace',email:'',follow:false,defaultView:'Live tracking'};
+  const defaults:Preferences={name:identity?.name||'Workspace admin',workspace:'Fleet workspace',email:identity?.email||'',follow:false,defaultView:'Live tracking'};
   try{const saved=JSON.parse(workspaceStorage.getItem('workspace-preferences')||'{}');return {...defaults,...saved,defaultView:views.some(([name])=>name===saved.defaultView)?saved.defaultView:defaults.defaultView}}catch{return defaults}
 }
 const iconSet={Navigation,Map,Route,RadioTower,Bell,Files,Plus,Search,Scan,LocateFixed,Radio,Download,Play,Pause,X,LogOut,Trash2,Smartphone,Copy,RefreshCw,ShieldCheck,MapPin,ChevronRight,UserRound,Settings,FileText,Save};
@@ -25,7 +27,7 @@ const time=(at:number|null)=>at?new Date(at).toLocaleString(): 'Never';
 function ago(at:number|null){if(!at)return 'Never';const s=Math.max(0,Math.floor((Date.now()-at)/1000));return s<60?`${s}s ago`:s<3600?`${Math.floor(s/60)}m ago`:`${Math.floor(s/3600)}h ago`}
 const coords=(p:Fix|Fence)=>`${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)}`;
 const statusClass=(d:Device)=>d.status==='Moving'?'green':d.status==='Stopped'?'blue':d.status==='Offline'?'red':'amber';
-let state:FleetState|undefined, view:View='Live tracking', selected='', search='', filter='All', following=false;
+let state:FleetState|undefined, identity:Identity|undefined, view:View='Live tracking', selected='', search='', filter='All', following=false;
 let map:L.Map|undefined, markerLayer:L.LayerGroup|undefined, fenceLayer:L.LayerGroup|undefined, routeLayer:L.LayerGroup|undefined;
 let poll:ReturnType<typeof setTimeout>|undefined, busy=false, connected=false, fitted=false;
 let history:Fix[]=[],historyDevice='',historyVersion=0,playTimer:ReturnType<typeof setInterval>|undefined,playMarker:L.CircleMarker|undefined;
@@ -48,34 +50,45 @@ function disposeMap(){stopPlay();map?.remove();map=undefined;markerLayer=undefin
 function brand(){return `<a class="live-brand" href="/${DEMO_MODE?'?demo=1':'?live=1'}">${i('navigation')}<span>waypoint<span class="brand-dot">.</span></span></a>`}
 function showLogin(error=''){
   active=false;clearTimeout(poll);disposeMap();
-  $('#app').innerHTML=`<div class="login-shell">${brand()}<form class="login-form" id="login"><span class="eyebrow">FLEET WORKSPACE</span><h1>Welcome back</h1><label>Workspace access key<input name="token" type="password" required autocomplete="current-password"></label><p class="error" role="alert">${esc(error)}</p><button class="primary" type="submit">Open workspace ${i('chevron-right')}</button><a class="muted-link" href="/?sender=1">${i('smartphone')} Mobile GPS sender</a><details><summary>Local access key</summary><p>Your server stores the key in <code>server/private/admin-token</code>.</p></details></form></div>`;
-  $('#login').addEventListener('submit',async event=>{event.preventDefault();const button=$<HTMLButtonElement>('#login button');button.disabled=true;try{await api('/session',{method:'POST',body:JSON.stringify({token:new FormData(event.target as HTMLFormElement).get('token')})});active=true;await boot()}catch(e){$('.error').textContent=(e as Error).message;button.disabled=false}});icons();
+  $('#app').innerHTML=`<div class="login-shell">${brand()}<form class="login-form" id="login"><span class="eyebrow">FLEET WORKSPACE</span><h1>Welcome back</h1><div class="login-modes" role="group" aria-label="Sign in as"><button type="button" data-mode="customer" aria-pressed="true">Customer</button><button type="button" data-mode="admin" aria-pressed="false">Admin</button></div><div id="login-fields"></div><p class="error" role="alert">${esc(error)}</p><button class="primary" type="submit">Open workspace ${i('chevron-right')}</button><a class="muted-link" href="/?sender=1">${i('smartphone')} Mobile GPS sender</a></form></div>`;
+  let mode:'customer'|'admin'='customer';
+  const fields=()=>{$('#login-fields').innerHTML=mode==='customer'?'<label>Email<input name="email" type="email" required autocomplete="username"></label><label>Password<input name="password" type="password" required autocomplete="current-password"></label>':'<label>Workspace access key<input name="token" type="password" required autocomplete="current-password"></label><details><summary>Local access key</summary><p>Your server stores the key in <code>server/private/admin-token</code>.</p></details>';document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.mode===mode)))};
+  document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(b=>b.onclick=()=>{mode=b.dataset.mode as typeof mode;fields()});fields();
+  $('#login').addEventListener('submit',async event=>{event.preventDefault();const button=$<HTMLButtonElement>('#login button[type=submit]');button.disabled=true;try{const data=new FormData(event.target as HTMLFormElement);await api(mode==='customer'?'/customers/session':'/session',{method:'POST',body:JSON.stringify(mode==='customer'?{email:data.get('email'),password:data.get('password')}:{token:data.get('token')})});location.href='/?live=1'}catch(e){$('.error').textContent=(e as Error).message;button.disabled=false}});icons();
 }
 async function boot(){
-  if(import.meta.env.DEV&&!DEMO_MODE&&['127.0.0.1','localhost'].includes(location.hostname)){
-    try{await fetch('/__local/workspace-session',{method:'POST',signal:AbortSignal.timeout(6000)})}catch{/* The regular login remains available when local setup is unavailable. */}
+  try{identity=DEMO_MODE?{role:'admin',tenantId:'owner',name:'Demo workspace',email:null}:await api<Identity>('/session')}
+  catch{
+    if(import.meta.env.DEV&&!DEMO_MODE&&['127.0.0.1','localhost'].includes(location.hostname)&&!new URLSearchParams(location.search).has('signin')){
+      try{await fetch('/__local/workspace-session',{method:'POST',signal:AbortSignal.timeout(6000)});identity=await api<Identity>('/session')}catch{/* Show the sign-in screen below. */}
+    }
   }
+  if(!identity){showLogin();return}
+  setWorkspaceTenant(identity.tenantId);
+  if(view==='Customers'&&identity.role!=='admin')view='Live tracking';
   try {state=await api<FleetState>('/state');active=true;connected=true;selected=state.devices[0]?.id || '';shell();schedule();}
   catch(e){if(!$('#login'))showLogin((e as Error).message)}
 }
 function shell(){
   const navScroll=$<HTMLElement>('.live-sidebar nav')?.scrollTop||0;
   disposeMap();
-  $('#app').innerHTML=`<div class="live-shell"><aside class="live-sidebar">${brand()}<div class="workspace-label">${esc(preferences().workspace)}<small>${esc(preferences().name)}</small></div><nav aria-label="Workspace">${views.map(([name,icon])=>`<button data-view="${name}" class="${view===name?'selected':''}">${i(icon)}${name}</button>`).join('')}</nav><div class="sidebar-foot"><a href="/?sender=1" target="_blank" rel="noopener">${i('smartphone')}Mobile sender</a><button id="logout">${i('log-out')}Sign out</button></div></aside><main class="live-main"><header class="live-header"><span>Workspace ${i('chevron-right')} <strong>${view}</strong></span><span id="connection" role="status"></span></header><div class="live-heading"><div><span class="eyebrow">WAYPOINT / OPERATIONS</span><h1>${view==='Live tracking'?'Fleet overview':view}</h1></div><button class="primary" id="add-device">${i('plus')}Add device</button></div><div id="gateway-notice"></div><div id="view-body"></div></main></div><div id="notice" role="status" hidden></div><dialog id="modal"></dialog>`;
+  $('#app').innerHTML=`<div class="live-shell"><aside class="live-sidebar">${brand()}<div class="workspace-label">${esc(preferences().workspace)}<small>${esc(identity?.name||preferences().name)}</small></div><nav aria-label="Workspace">${[...views,...(identity?.role==='admin'&&!DEMO_MODE?[['Customers','user-round'] as [View,string]]:[])].map(([name,icon])=>`<button data-view="${name}" class="${view===name?'selected':''}">${i(icon)}${name}</button>`).join('')}</nav><div class="sidebar-foot"><a href="/?sender=1" target="_blank" rel="noopener">${i('smartphone')}Mobile sender</a><button id="logout">${i('log-out')}Sign out</button></div></aside><main class="live-main"><header class="live-header"><span>Workspace ${i('chevron-right')} <strong>${view}</strong></span><span id="connection" role="status"></span></header><div class="live-heading"><div><span class="eyebrow">WAYPOINT / OPERATIONS</span><h1>${view==='Live tracking'?'Fleet overview':view}</h1></div><button class="primary" id="add-device">${i('plus')}Add device</button></div><div id="gateway-notice"></div><div id="view-body"></div></main></div><div id="notice" role="status" hidden></div><dialog id="modal"></dialog>`;
   $('#connection').insertAdjacentHTML('afterend',`<button class="tool compact-signout" id="compact-logout" title="Sign out" aria-label="Sign out">${i('log-out')}</button>`);
-  action('#compact-logout',async()=>{await api('/session',{method:'DELETE'});showLogin()});
+  const logout=async()=>{await api('/session',{method:'DELETE'});location.href='/?live=1&signin=1'};
+  action('#compact-logout',logout);
   document.querySelectorAll<HTMLElement>('[data-view]').forEach(b=>b.onclick=()=>{view=b.dataset.view as View;search='';filter='All';const url=new URL(location.href);url.searchParams.set('view',view);window.history.pushState(null,'',url);shell()});
-  action('#logout',async()=>{await api('/session',{method:'DELETE'});showLogin()});action('#add-device',addDevice);
+  action('#logout',logout);action('#add-device',addDevice);
   document.querySelectorAll<HTMLAnchorElement>('a[href="/?workspace=documents"]').forEach(a=>a.href=DEMO_MODE?'/?demo=1&workspace=documents':'/?live=1&workspace=documents');
   if(DEMO_MODE){
     document.querySelectorAll<HTMLAnchorElement>('a[href="/?sender=1"]').forEach(a=>a.href='/?demo=1&sender=1');
     $('#logout').replaceWith(Object.assign(document.createElement('a'),{href:'/?live=1',textContent:'Open live workspace'}));
     $('#compact-logout').remove();
   }
-  $('#add-device').hidden=['Documents','E-way bills','Profile','Settings'].includes(view);
+  $('#add-device').hidden=['Documents','E-way bills','Profile','Settings','Customers'].includes(view);
   if(view==='Live tracking'||view==='Route history')tracking();
   else if(view==='Documents'||view==='E-way bills')void savedView(view);
   else if(view==='Profile'||view==='Settings')renderPreferences();
+  else if(view==='Customers')void renderCustomers();
   else renderTable();
   renderConnection();icons();
   $<HTMLElement>('.live-sidebar nav').scrollTop=navScroll;
@@ -86,7 +99,7 @@ function shell(){
 
 window.addEventListener('popstate',()=>{
   const name=new URLSearchParams(location.search).get('view');
-  view=views.find(([v])=>v===name)?.[0]||'Live tracking';
+  view=name==='Customers'&&identity?.role==='admin'?'Customers':views.find(([v])=>v===name)?.[0]||'Live tracking';
   if(active&&state)shell();
 });
 async function savedView(section:'Documents'|'E-way bills'){
@@ -114,6 +127,20 @@ function renderPreferences(){
       workspaceStorage.setItem('workspace-preferences',JSON.stringify(next));following=next.follow;shell();notify('Preferences saved in this browser.');
     }catch(error){$('#preferences-error').textContent=(error as Error).message}
   });
+}
+async function renderCustomers(){
+  if(identity?.role!=='admin')return;
+  const host=$('#view-body');host.textContent='Loading customers...';
+  try{
+    const result=await api<{customers:Customer[]}>('/customers');
+    if(!host.isConnected||view!=='Customers')return;
+    host.innerHTML=`<form class="workspace-form" id="create-customer"><h2>Add customer</h2><label>Customer name<input name="name" maxlength="100" required></label><label>Email<input name="email" type="email" maxlength="254" required></label><button class="primary" type="submit">${i('plus')}Create customer</button><p class="error" id="customer-error" role="alert"></p></form><div id="customer-credentials" role="status"></div><div class="section-heading"><h2>Customers <span>${result.customers.length}</span></h2></div><div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Access</th><th>Actions</th></tr></thead><tbody>${result.customers.map(c=>`<tr><td><strong>${esc(c.name)}</strong></td><td>${esc(c.email)}</td><td>${c.enabled?'Enabled':'Disabled'}</td><td><button class="secondary" data-reset="${esc(c.id)}">Reset password</button> <button class="secondary" data-access="${esc(c.id)}" data-enabled="${c.enabled}">${c.enabled?'Disable':'Enable'}</button></td></tr>`).join('')||'<tr><td colspan="4">No customers yet.</td></tr>'}</tbody></table></div>`;
+    const credentials=(email:string,password:string)=>{const box=$('#customer-credentials');box.innerHTML=`<div class="credential-result"><strong>One-time password for ${esc(email)}</strong><code>${esc(password)}</code><button class="secondary" id="copy-customer-password" type="button">${i('copy')}Copy password</button><p>Share privately. This password is shown only now.</p></div>`;action('#copy-customer-password',async()=>{await navigator.clipboard.writeText(password);notify('Password copied.')});icons()};
+    $('#create-customer').addEventListener('submit',async event=>{event.preventDefault();const form=event.target as HTMLFormElement;const data=new FormData(form);const button=form.querySelector<HTMLButtonElement>('button[type=submit]')!;button.disabled=true;try{const result=await api<{customer:Customer;password:string}>('/customers',{method:'POST',body:JSON.stringify({name:data.get('name'),email:data.get('email')})});await renderCustomers();credentials(result.customer.email,result.password)}catch(e){$('#customer-error').textContent=(e as Error).message;button.disabled=false}});
+    document.querySelectorAll<HTMLButtonElement>('[data-reset]').forEach(button=>button.onclick=async()=>{if(!confirm('Reset this customer password and sign out active sessions?'))return;try{const customer=result.customers.find(c=>c.id===button.dataset.reset)!;const reset=await api<{password:string}>(`/customers/${customer.id}/reset`,{method:'POST',body:'{}'});credentials(customer.email,reset.password)}catch(e){notify((e as Error).message)}});
+    document.querySelectorAll<HTMLButtonElement>('[data-access]').forEach(button=>button.onclick=async()=>{const enabled=button.dataset.enabled!=='true';if(!confirm(`${enabled?'Enable':'Disable'} this customer account?`))return;try{await api(`/customers/${button.dataset.access}/access`,{method:'PUT',body:JSON.stringify({enabled})});await renderCustomers()}catch(e){notify((e as Error).message)}});
+    icons();
+  }catch(e){if(host.isConnected)host.textContent=(e as Error).message}
 }
 
 function renderConnection(){
@@ -231,7 +258,7 @@ async function relayDialog(d:Device){
       <label>Action<select name="action"><option value="inhibit">Inhibit next engine start</option><option value="restore">Restore starter access</option></select></label>
       <label>Confirm device IMEI<input name="confirmation" required autocomplete="off" placeholder="${esc(d.uniqueId)}"></label>
       <label>Reason<input name="reason" required maxlength="300"></label>
-      <label>Admin access key<input name="adminKey" type="password" required autocomplete="off"></label>
+      <label>${identity?.role==='customer'?'Customer password':'Admin access key'}<input name="adminKey" type="password" required autocomplete="off"></label>
       <p>Inhibit requires ignition OFF, parked telemetry for 30 seconds and a fresh GPS fix. Commands are never queued for an offline tracker.</p>
       <button class="danger" type="submit" ${available?'':'disabled'}>Send relay command</button>
       <p id="relay-result" role="status"></p>
@@ -240,7 +267,7 @@ async function relayDialog(d:Device){
       <label>Installer / verification reference<input name="installer" maxlength="200" required value="${esc(status.installation?.installer||'')}"></label>
       <label class="check-setting"><input type="checkbox" name="starterOnly" required>Starter circuit only; no fuel or ignition cut-off</label>
       <label class="check-setting"><input type="checkbox" name="polarityVerified" required>Gateway command polarity verified on this installation</label>
-      <label>Admin access key<input name="adminKey" type="password" required autocomplete="off"></label>
+      <label>${identity?.role==='customer'?'Customer password':'Admin access key'}<input name="adminKey" type="password" required autocomplete="off"></label>
       <button class="secondary" type="submit">Save verification</button>
       <button class="secondary" id="relay-disable" type="button">Disable relay access</button>
       <p id="relay-installation-error" role="alert"></p>

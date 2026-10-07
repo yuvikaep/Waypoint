@@ -1,7 +1,10 @@
 export const DEMO_MODE=new URLSearchParams(location.search).has('demo');
+let storageTenant='owner';
+export function setWorkspaceTenant(tenant:string){storageTenant=tenant}
+const scopedKey=(key:string)=>DEMO_MODE?'demo:'+key:storageTenant==='owner'?key:`tenant:${storageTenant}:${key}`;
 export const workspaceStorage={
-  getItem:(key:string)=>window.localStorage.getItem(DEMO_MODE?'demo:'+key:key),
-  setItem:(key:string,value:string)=>window.localStorage.setItem(DEMO_MODE?'demo:'+key:key,value)
+  getItem:(key:string)=>window.localStorage.getItem(scopedKey(key)),
+  setItem:(key:string,value:string)=>window.localStorage.setItem(scopedKey(key),value)
 };
 const storageKey='waypoint-preview-v1';
 const now=()=>Date.now();
