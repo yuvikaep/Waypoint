@@ -52,3 +52,19 @@ test('customer sessions scope fleet, commands, fences, alerts, links and relay a
   assert.equal((await as(bCookie,'/state')).status,401);
   assert.equal((await request('/customers/session',{method:'POST',body:JSON.stringify({email:b.customer.email,password:b.password})})).status,401);
 });
+
+test('customer can sign up but receives no admin access',async t=>{
+  const store=new TrackingStore(':memory:');t.after(()=>store.close());
+  const server=createTrackingServer({store,adminToken:'customer-test-admin-secret-12345',bridge:{state:{configured:false,connected:false},sync:async()=>{}}});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>{server.close(resolve);server.closeAllConnections()}));
+  const base=`http://127.0.0.1:${server.address().port}/api/gps`;
+  const signup=await fetch(base+'/customers/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'New Fleet',email:'new@example.test',password:'strong-passphrase-123'})});
+  assert.equal(signup.status,201);
+  const account=await signup.json();assert.equal(account.role,'customer');assert.equal(account.email,'new@example.test');
+  const cookie=signup.headers.get('set-cookie').split(';')[0];
+  assert.equal((await fetch(base+'/customers',{headers:{cookie}})).status,403);
+  assert.deepEqual((await (await fetch(base+'/state',{headers:{cookie}})).json()).devices,[]);
+  assert.equal((await fetch(base+'/customers/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'Duplicate',email:'new@example.test',password:'strong-passphrase-123'})})).status,409);
+  assert.equal((await fetch(base+'/customers/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'Weak',email:'weak@example.test',password:'short'})})).status,400);
+});

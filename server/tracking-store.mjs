@@ -64,6 +64,17 @@ export class TrackingStore {
     catch(e){if(String(e).includes('UNIQUE'))fail(409,'Customer email is already registered.');throw e;}
     return {customer:this.customer(id),password:secret};
   }
+  registerCustomer(body){
+    const name=text(body.name,'Customer name',100);
+    const email=text(body.email,'Customer email',254).toLowerCase();
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail(400,'Enter a valid customer email.');
+    const password=body.password;
+    if(typeof password!=='string'||password.length<12||password.length>128)fail(400,'Password must be 12-128 characters.');
+    const id=randomUUID(),salt=randomBytes(16).toString('hex');
+    try{this.db.prepare('INSERT INTO customers(id,name,email,salt,passwordHash,createdAt) VALUES (?,?,?,?,?,?)').run(id,name,email,salt,scryptSync(password,salt,64).toString('hex'),this.now());}
+    catch(e){if(String(e).includes('UNIQUE'))fail(409,'Customer email is already registered.');throw e;}
+    return this.customer(id);
+  }
   customerLogin(email,password){
     const row=typeof email==='string'&&this.db.prepare('SELECT * FROM customers WHERE email=? AND enabled=1').get(email.trim().toLowerCase());
     if(typeof password!=='string'||!row||!timingSafeEqual(Buffer.from(row.passwordHash,'hex'),scryptSync(password,row.salt,64)))fail(401,'Incorrect customer credentials.');

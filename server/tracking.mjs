@@ -49,6 +49,13 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
         res.setHeader('Set-Cookie',`waypoint_session=${session}; HttpOnly; SameSite=Strict; Path=/api/gps; Max-Age=43200${publicOrigin?.startsWith('https:')?'; Secure':''}`);
         return json(res,200,{ok:true});
       }
+      if(path==='/api/gps/customers/register'&&method==='POST'){
+        limited(`register:${req.socket.remoteAddress}`,5,3600000);
+        const customer=store.registerCustomer(await body(req));
+        const session=token();sessions.set(hash(session),{role:'customer',tenantId:customer.id,name:customer.name,email:customer.email,expiresAt:Date.now()+12*3600000});
+        res.setHeader('Set-Cookie',`waypoint_session=${session}; HttpOnly; SameSite=Strict; Path=/api/gps; Max-Age=43200${publicOrigin?.startsWith('https:')?'; Secure':''}`);
+        return json(res,201,{role:'customer',tenantId:customer.id,name:customer.name,email:customer.email});
+      }
       if(path==='/api/gps/customers/session'&&method==='POST'){
         limited(`customer-login:${req.socket.remoteAddress}`,10);
         const input=await body(req),customer=store.customerLogin(input.email,input.password);
