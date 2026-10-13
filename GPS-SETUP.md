@@ -81,6 +81,17 @@ the VM is replaced. The local fleet SQLite
 database and registered devices were copied to the VM; subsequent local edits
 do not automatically synchronize to the cloud copy.
 
+The Traccar service uses `ops/traccar-watchdog.conf` to disable the installer's
+systemd watchdog on this small VM. A controlled restart retained the API token
+and both hardware registrations; repeated watchdog aborts had previously left
+the gateway presenting itself as uninitialized. If gateway credentials need
+renewal, use an SSH tunnel to its private port 8082, set `TRACCAR_SETUP_URL` to
+the local tunnel URL, and run `node scripts/renew-cloud-gateway.mjs`. Copy the
+generated owner-only environment file to the VM, change its URL to
+`http://127.0.0.1:8082`, and restart `waypoint.service`. Do not commit either
+credential file. Keep a consistent backup of the Traccar database as well as
+the Waypoint SQLite database.
+
 The VM has no live PT06 or GT06 fix yet. Registration by IMEI only associates
 future packets; it does not configure the physical tracker or prove it can
 connect. After setting the final server address by SMS, check the device's
