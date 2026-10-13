@@ -73,10 +73,11 @@ separate deployment from the local Compose gateway.
 An Oracle Always Free VM named `waypoint-gps` in Mumbai runs Traccar 6.16.0 and
 the Waypoint API as systemd services. The VM currently has public IP
 `92.4.84.227`. Traccar accepts GT06-family TCP on port 5023; the Waypoint API
-binds only to `127.0.0.1:8180`. A Caddy reverse proxy is configured to serve
-`https://92.4.84.227.sslip.io` after public HTTP/HTTPS ingress and certificate
-issuance are verified. Do not use this URL as a permanent tracker destination
-until the public-IP reservation decision is complete. The local fleet SQLite
+binds only to `127.0.0.1:8180`. Caddy serves the fleet at
+`https://92.4.84.227.sslip.io/?live=1`; HTTPS and the health endpoint were
+verified from outside the VM. The VM's public IP is still ephemeral and will
+not survive replacement of the instance, so update tracker configuration if
+the VM is replaced. The local fleet SQLite
 database and registered devices were copied to the VM; subsequent local edits
 do not automatically synchronize to the cloud copy.
 
