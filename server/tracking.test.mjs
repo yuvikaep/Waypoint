@@ -88,6 +88,9 @@ test('HTTP access control, login, origin checks, sender isolation, and bounded r
   assert.equal((await request('/state',{headers:{Authorization:`Bearer ${token}`}})).status,401);
   assert.equal((await request('/sender/position',{method:'POST',headers:{Authorization:`Bearer ${token}`},body:JSON.stringify(position())})).status,200);
   assert.equal((await request('/devices',{method:'POST',headers:{Cookie:cookie},body:JSON.stringify({name:'Bad IMEI',model:'GT06',uniqueId:'123'})})).status,400);
+  const pt06=await request('/devices',{method:'POST',headers:{Cookie:cookie},body:JSON.stringify({name:'PT06 tracker',model:'PT06',uniqueId:'356218606437323'})});
+  assert.equal(pt06.status,201);
+  assert.equal((await pt06.json()).device.model,'PT06');
   assert.equal((await request('/devices',{method:'POST',headers:{Cookie:cookie},body:'x'.repeat(17000)})).status,413);
   const ping=await request(`/devices/${device.id}/ping`,{method:'POST',headers:{Cookie:cookie},body:'{}'});assert.equal(ping.status,202);
   const commands=await request('/sender/heartbeat',{method:'POST',headers:{Authorization:`Bearer ${token}`},body:'{}'}).then(r=>r.json());assert.equal(commands.commands.length,1);

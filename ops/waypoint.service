@@ -1,0 +1,22 @@
+[Unit]
+Description=Waypoint fleet API
+After=network-online.target traccar.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=opc
+WorkingDirectory=/opt/waypoint
+EnvironmentFile=/opt/waypoint/server/private/cloud-gateway.env
+Environment=GPS_HOST=127.0.0.1
+Environment=GPS_PORT=8180
+Environment=GPS_PUBLIC_ORIGIN=https://92.4.84.227.sslip.io
+ExecStart=/opt/node/bin/node /opt/waypoint/server/tracking.mjs
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/waypoint/server/private
+
+[Install]
+WantedBy=multi-user.target

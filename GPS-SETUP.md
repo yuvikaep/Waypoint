@@ -52,6 +52,7 @@ matched to Traccar by IMEI; if absent they are created on the next synchronizati
 | Model | Identifier | Device transport | Gateway port |
 | --- | --- | --- | --- |
 | GT06 | 15-digit IMEI | GT06 TCP | 5023 |
+| PT06 | 15-digit IMEI | GT06-family TCP (verify first live packet) | 5023 |
 | FMB920 | 15-digit IMEI | Teltonika TCP | 5027 |
 | Mobile browser | Vehicle-specific driver link | HTTPS JSON API | Web origin |
 
@@ -62,9 +63,29 @@ is no universal SMS command included here.
 
 The bundled gateway binds to loopback by default. SIM-connected trackers cannot
 reach your Mac's `127.0.0.1`. On a reachable gateway host, explicitly set
-`GPS_TRACKER_BIND=0.0.0.0`, allow the two tracker TCP ports through the firewall,
-and configure a public IP/domain or private network routing. Keep port 8082 private
-or behind authenticated HTTPS. This repository has **not** been deployed publicly.
+`GPS_TRACKER_BIND=0.0.0.0`, allow the tracker TCP port through the firewall,
+and configure a public IP/domain or private network routing. Keep Traccar port
+8082 private or behind authenticated HTTPS. The Oracle gateway below is a
+separate deployment from the local Compose gateway.
+
+## Oracle gateway
+
+An Oracle Always Free VM named `waypoint-gps` in Mumbai runs Traccar 6.16.0 and
+the Waypoint API as systemd services. The VM currently has public IP
+`92.4.84.227`. Traccar accepts GT06-family TCP on port 5023; the Waypoint API
+binds only to `127.0.0.1:8180`. A Caddy reverse proxy is configured to serve
+`https://92.4.84.227.sslip.io` after public HTTP/HTTPS ingress and certificate
+issuance are verified. Do not use this URL as a permanent tracker destination
+until the public-IP reservation decision is complete. The local fleet SQLite
+database and registered devices were copied to the VM; subsequent local edits
+do not automatically synchronize to the cloud copy.
+
+The VM has no live PT06 or GT06 fix yet. Registration by IMEI only associates
+future packets; it does not configure the physical tracker or prove it can
+connect. After setting the final server address by SMS, check the device's
+`SERVER#` and `STATUS#` replies, and verify the first connection and position
+in Traccar/Waypoint before considering onboarding complete. PT06 is listed as
+GT06-family provisionally; its first packet will establish protocol compatibility.
 
 ## Mobile sender
 
