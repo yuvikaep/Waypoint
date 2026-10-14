@@ -26,43 +26,86 @@ const icons=()=>createIcons({icons:iconSet});
 const time=(at:number|null)=>at?new Date(at).toLocaleString(): 'Never';
 function ago(at:number|null){if(!at)return 'Never';const s=Math.max(0,Math.floor((Date.now()-at)/1000));return s<60?`${s}s ago`:s<3600?`${Math.floor(s/60)}m ago`:`${Math.floor(s/3600)}h ago`}
 const coords=(p:Fix|Fence)=>`${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)}`;
+const TRUCK='<svg class="truck-icon" viewBox="0 0 24 40" aria-hidden="true"><rect x="2.5" y="6" width="2.5" height="4" rx="1"/><rect x="19" y="6" width="2.5" height="4" rx="1"/><rect x="5" y="2" width="14" height="10" rx="3.5"/><rect class="glass" x="7" y="4.2" width="10" height="3.6" rx="1.2"/><rect x="4" y="13.5" width="16" height="24.5" rx="2"/><path class="ribs" d="M7 18h10M7 23h10M7 28h10M7 33h10"/></svg>';
 function duration(from:number){const m=Math.max(0,Math.floor((Date.now()-from)/60000));return m<60?`${m} min`:m<1440?`${Math.floor(m/60)} h ${m%60} min`:`${Math.floor(m/1440)} d ${Math.floor(m%1440/60)} h`}
-// Place names come from OpenStreetMap Nominatim. Its public service allows about one request per
-// second, so lookups are cached per ~11 m cell, serialised, and made only for what is on screen.
+// Place names come from OpenStreetMap: Nominatim gives the road; Photon (komoot) is the fallback
+// and gives the nearest named place. Both are free shared services, so every lookup is cached per
+// ~11 m cell (also in this browser), serialised at one per second, and failures are never retried
+// in a loop: a failed cell waits 10 minutes and a refused Nominatim (403/429) is skipped for 30.
 type Place={label:string;road:string|null};
-const places=new globalThis.Map<string,Place|null>(),placeWaiters=new globalThis.Map<string,Promise<Place|null>>();let placeChain=Promise.resolve();
+const places=new globalThis.Map<string,Place|null>(),placeWaiters=new globalThis.Map<string,Promise<Place|null>>(),placeFailedAt=new globalThis.Map<string,number>();
+let placeChain=Promise.resolve(),nominatimPausedUntil=0;
 const placeKey=(p:{latitude:number;longitude:number})=>`${p.latitude.toFixed(4)},${p.longitude.toFixed(4)}`;
-async function reverse(lat:number,lon:number,zoom:number){
-  const run=placeChain.then(async()=>{
-    const response=await fetch(`https://nominatim.openstreetmap.org/reverse?${new URLSearchParams({format:'jsonv2',lat:String(lat),lon:String(lon),zoom:String(zoom),addressdetails:'1','accept-language':'en'})}`);
-    if(!response.ok)throw new Error(`Place lookup HTTP ${response.status}`);
-    return response.json() as Promise<{name?:string;category?:string;type?:string;address?:Record<string,string>}>;
+const PLACE_STORE='waypoint.places.v1';
+try{for(const [k,v] of Object.entries(JSON.parse(localStorage.getItem(PLACE_STORE)||'{}') as Record<string,Place>))places.set(k,v)}catch{}
+function rememberPlace(key:string,value:Place){try{const saved=JSON.parse(localStorage.getItem(PLACE_STORE)||'{}') as Record<string,Place>;saved[key]=value;const keys=Object.keys(saved);for(const old of keys.slice(0,Math.max(0,keys.length-500)))delete saved[old];localStorage.setItem(PLACE_STORE,JSON.stringify(saved))}catch{}}
+function paced<T>(task:()=>Promise<T>):Promise<T>{const run=placeChain.then(task);placeChain=run.then(()=>new Promise(r=>setTimeout(r,1100)),()=>new Promise(r=>setTimeout(r,1100)));return run}
+const query=(lat:number,lon:number,extra:Record<string,string>)=>new URLSearchParams({lat:String(lat),lon:String(lon),...extra});
+async function nominatim(lat:number,lon:number,zoom:number){
+  return paced(async()=>{
+    // Re-check inside the queue: lookups queued before a refusal must not keep hitting Nominatim.
+    if(Date.now()<nominatimPausedUntil)throw new Error('Place lookup paused');
+    // A refused request arrives without CORS headers, so it surfaces as a network error, not a status.
+    const response=await fetch(`https://nominatim.openstreetmap.org/reverse?${query(lat,lon,{format:'jsonv2',zoom:String(zoom),addressdetails:'1','accept-language':'en'})}`).catch(()=>null);
+    if(!response?.ok){if(!response||response.status===403||response.status===429)nominatimPausedUntil=Date.now()+30*60000;throw new Error('Place lookup unavailable')}
+    return response.json() as Promise<{name?:string;category?:string;address?:Record<string,string>}>;
   });
-  placeChain=run.then(()=>new Promise(r=>setTimeout(r,1100)),()=>new Promise(r=>setTimeout(r,1100)));
-  return run;
+}
+async function fromNominatim(lat:number,lon:number):Promise<Place|null>{
+  const near=await nominatim(lat,lon,18),a=near.address||{};
+  const road=a.road||(near.category==='highway'?(near.name||'Unnamed road'):null);
+  let locality=a.neighbourhood||a.suburb||a.quarter||a.village||a.hamlet||a.town||a.city_district||a.city||null;
+  // Rural roads often carry no village; ask once more at locality scale.
+  if(!locality){const wide=(await nominatim(lat,lon,14)).address||{};locality=wide.village||wide.suburb||wide.town||wide.hamlet||wide.city||null}
+  const parts=[road,near.category!=='highway'&&near.name?near.name:null,locality,a.town||a.city||a.state_district||a.county,a.state,a.postcode].filter((v,i,all):v is string=>!!v&&all.indexOf(v)===i);
+  return parts.length?{label:parts.join(', '),road}:null;
+}
+async function fromPhoton(lat:number,lon:number):Promise<Place|null>{
+  const response=await paced(()=>fetch(`https://photon.komoot.io/reverse?${query(lat,lon,{lang:'en',limit:'1'})}`));
+  if(!response.ok)throw new Error('Place lookup unavailable');
+  const f=((await response.json()) as {features?:{properties:Record<string,string>}[]}).features?.[0]?.properties;
+  if(!f)return null;
+  const road=f.street||(f.osm_key==='highway'?f.name:null)||null;
+  // Photon may name a postcode area after its PIN; that is not a place to be 'near'.
+  const isPin=f.osm_value==='postcode'||f.type==='postcode'||/^\d{6}$/.test(f.name||'');
+  const named=f.name&&!isPin?f.name:null;
+  const parts=[road,!road&&named?`near ${named}`:null,f.district||f.locality,f.city,f.county,f.state,f.postcode||(isPin?f.name:null)].filter((v,i,all):v is string=>!!v&&all.indexOf(v)===i);
+  return parts.length?{label:parts.join(', '),road}:null;
 }
 function place(p:{latitude:number;longitude:number}):Promise<Place|null>{
   const key=placeKey(p);
   if(places.has(key))return Promise.resolve(places.get(key)!);
+  if(Date.now()-(placeFailedAt.get(key)||0)<10*60000)return Promise.resolve(null);
   if(!placeWaiters.has(key))placeWaiters.set(key,(async()=>{
     try{
-      const near=await reverse(p.latitude,p.longitude,18),a=near.address||{};
-      const road=a.road||(near.category==='highway'?(near.name||'Unnamed road'):null);
-      let locality=a.neighbourhood||a.suburb||a.quarter||a.village||a.hamlet||a.town||a.city_district||a.city||null;
-      // Rural roads often carry no village; ask once more at locality scale.
-      if(!locality){const wide=(await reverse(p.latitude,p.longitude,14)).address||{};locality=wide.village||wide.suburb||wide.town||wide.hamlet||wide.city||null}
-      const parts=[road,near.category!=='highway'&&near.name?near.name:null,locality,a.town||a.city||a.state_district||a.county,a.state,a.postcode].filter((v,i,all):v is string=>!!v&&all.indexOf(v)===i);
-      const value=parts.length?{label:parts.join(', '),road}:null;places.set(key,value);return value;
-    }catch{return null}finally{placeWaiters.delete(key)}
+      let value:Place|null=null;
+      if(Date.now()>=nominatimPausedUntil)value=await fromNominatim(p.latitude,p.longitude).catch(()=>null);
+      value??=await fromPhoton(p.latitude,p.longitude);
+      if(value){places.set(key,value);rememberPlace(key,value)}else placeFailedAt.set(key,Date.now());
+      return value;
+    }catch{placeFailedAt.set(key,Date.now());return null}finally{placeWaiters.delete(key)}
   })());
   return placeWaiters.get(key)!;
 }
+const placeAskedAt=new globalThis.Map<string,number>();
+// Fill every on-screen label waiting for this place; keep the previous text if the lookup failed.
+const shortPlace=(label:string)=>label.split(', ').slice(0,2).join(', ');
+function fillPlaceLabels(key:string){const found=places.get(key);if(found)document.querySelectorAll<HTMLElement>(`[data-place-label="${key}"]`).forEach(el=>el.textContent=el.dataset.short?shortPlace(found.label):found.label)}
+// Map tags: look up each visible vehicle at most every 30 s; show the last known name meanwhile.
+function placeTag(d:Device){
+  const p=d.position!;const key=placeKey(p),known=places.get(key);
+  const last=placeAskedAt.get(d.id)||0;
+  if(!places.has(key)&&Date.now()-last>30000){placeAskedAt.set(d.id,Date.now());void place(p).then(()=>{fillPlaceLabels(key);lastTag.set(d.id,places.get(key)?.label||lastTag.get(d.id)||'')})}
+  if(known)lastTag.set(d.id,known.label);
+  return {key,text:known?.label||lastTag.get(d.id)||''};
+}
+const lastTag=new globalThis.Map<string,string>();
 function showPlace(selector:string,p:{latitude:number;longitude:number}|null){
   const el=document.querySelector<HTMLElement>(selector);if(!el)return;
   if(!p){el.textContent='No position';return}
   const key=placeKey(p),known=places.get(key);
-  el.dataset.place=key;el.textContent=known?known.label:known===null?coords(p as Fix):'Finding place...';
-  if(!places.has(key))void place(p).then(found=>{if(el.isConnected&&el.dataset.place===key)el.textContent=found?found.label:coords(p as Fix)});
+  el.dataset.place=key;el.textContent=known?known.label:placeWaiters.has(key)||!placeFailedAt.has(key)?'Finding place...':coords(p as Fix);
+  if(!places.has(key))void place(p).then(found=>{if(el.isConnected&&el.dataset.place===key)el.textContent=found?found.label:coords(p as Fix);fillPlaceLabels(key)});
 }
 const statusClass=(d:Device)=>d.status==='Moving'?'green':d.status==='Stopped'?'blue':d.status==='Offline'?'red':'amber';
 let state:FleetState|undefined, identity:Identity|undefined, view:View='Live tracking', selected='', search='', filter='All', following=false;
@@ -227,15 +270,15 @@ function updateTracking(){
   action('#first-device',addDevice);
   document.querySelectorAll<HTMLElement>('[data-device]').forEach(b=>b.onclick=()=>select(b.dataset.device!));
   markerLayer!.clearLayers();
-  for(const d of visible){if(!d.position)continue;const marker=L.marker(point(d.position),{title:d.name,icon:L.divIcon({className:'gps-marker',html:`<div class="gps-pin ${statusClass(d)} ${selected===d.id?'selected':''}"><span style="transform:rotate(${d.position.heading||0}deg)">&#9650;</span></div>`,iconSize:[32,32],iconAnchor:[16,16]})}).addTo(markerLayer!);const label=document.createElement('span');label.textContent=d.name;marker.bindTooltip(label,{permanent:d.id===selected,direction:'top',offset:[0,-16]}).on('click',()=>select(d.id));}
+  for(const d of visible){if(!d.position)continue;const marker=L.marker(point(d.position),{title:d.name,icon:L.divIcon({className:'gps-marker',html:`<div class="gps-pin ${statusClass(d)} ${selected===d.id?'selected':''}"><span style="transform:rotate(${d.position.heading||0}deg)">${TRUCK}</span></div>`,iconSize:[40,40],iconAnchor:[20,20]})}).addTo(markerLayer!);const label=document.createElement('span');label.className='truck-tag';const name=document.createElement('strong');name.textContent=d.name;const where=document.createElement('small');const tag=placeTag(d);where.dataset.placeLabel=tag.key;where.dataset.short='1';where.textContent=tag.text?shortPlace(tag.text):coords(d.position);label.append(name,where);marker.bindTooltip(label,{permanent:d.id===selected||visible.length<=15,direction:'top',offset:[0,-20],className:'truck-tooltip'}).on('click',()=>select(d.id));}
   fenceLayer!.clearLayers();for(const fence of state.fences){const label=document.createElement('span');label.textContent=fence.name;L.circle(point(fence),{radius:fence.radius,color:'#8665a9',fillOpacity:.08,weight:2}).bindTooltip(label).addTo(fenceLayer!)}
   $('#map-empty').hidden=visible.some(d=>d.position!==null);
   detail();
   if(!fitted&&visible.some(d=>d.position)){fit();fitted=true}
   if(following&&view==='Live tracking'&&current()?.position)map.panTo(point(current()!.position!));icons();
 }
-function fit(){const points=devices().flatMap(d=>d.position?[point(d.position)]:[]);if(points.length)map?.fitBounds(points,{padding:[45,45],maxZoom:15})}
-function select(id:string){if(id!==selected){selected=id;clearHistory()}updateTracking();if(current()?.position)map?.setView(point(current()!.position!),Math.max(12,map.getZoom()))}
+function fit(){const points=devices().flatMap(d=>d.position?[point(d.position)]:[]);if(points.length)map?.fitBounds(points,{padding:[60,60],maxZoom:16})}
+function select(id:string){if(id!==selected){selected=id;clearHistory()}updateTracking();if(current()?.position)map?.setView(point(current()!.position!),Math.max(16,map.getZoom()))}
 function detail(){
   const d=current();if(!d){$('#device-detail').innerHTML='';return}
   const p=d.position;
@@ -268,7 +311,7 @@ async function loadHistory(){
   }catch(e){if(version===historyVersion)$('#history-status').textContent=(e as Error).message}
   finally{if($('#load-history'))$<HTMLButtonElement>('#load-history').disabled=false}
 }
-function showHistoryPoint(index:number){const p=history[index];if(!p)return;playMarker?.remove();playMarker=L.circleMarker(point(p),{radius:8,color:'#fff',fillColor:'#176fba',fillOpacity:1,weight:3}).addTo(map!);$<HTMLInputElement>('#route-slider').value=String(index);$('#history-status').innerHTML=`${index+1} / ${history.length} · ${esc(time(p.recordedAt))} · ${Math.round(p.speed)} km/h · <span id="history-place"></span>`;if(!playTimer)showPlace('#history-place',p);else{const el=document.querySelector<HTMLElement>('#history-place');if(el)el.textContent=places.get(placeKey(p))?.label||''}if(following)map?.panTo(point(p))}
+function showHistoryPoint(index:number){const p=history[index];if(!p)return;playMarker?.remove();playMarker=L.circleMarker(point(p),{radius:8,color:'#fff',fillColor:'#176fba',fillOpacity:1,weight:3}).addTo(map!);const tag=document.createElement('span');tag.className='truck-tag';const tagTime=document.createElement('strong');tagTime.textContent=`${new Date(p.recordedAt).toLocaleTimeString()} · ${Math.round(p.speed)} km/h`;const tagPlace=document.createElement('small');tagPlace.dataset.placeLabel=placeKey(p);tagPlace.dataset.short='1';tagPlace.textContent=shortPlace(places.get(placeKey(p))?.label||'');tag.append(tagTime,tagPlace);playMarker.bindTooltip(tag,{permanent:true,direction:'top',offset:[0,-10],className:'truck-tooltip'});$<HTMLInputElement>('#route-slider').value=String(index);$('#history-status').innerHTML=`${index+1} / ${history.length} · ${esc(time(p.recordedAt))} · ${Math.round(p.speed)} km/h · <span id="history-place"></span>`;if(!playTimer)showPlace('#history-place',p);else{const el=document.querySelector<HTMLElement>('#history-place');if(el)el.textContent=places.get(placeKey(p))?.label||''}if(following)map?.panTo(point(p))}
 function playHistory(){if(playTimer){stopPlay();$('#play-route').innerHTML=i('play');icons();return}let index=Number($<HTMLInputElement>('#route-slider').value);if(index>=history.length-1)index=0;$('#play-route').innerHTML=i('pause');icons();playTimer=setInterval(()=>{showHistoryPoint(index++);if(index===history.length){clearInterval(playTimer);playTimer=undefined;$('#play-route').innerHTML=i('play');icons()}},500)}
 function exportHistory(){if(historyDevice!==selected||!history.length)return;const rows=[['Time','Latitude','Longitude','Speed km/h','Accuracy m','Ignition'],...history.map(p=>[new Date(p.recordedAt).toISOString(),p.latitude,p.longitude,p.speed,p.accuracy??'',p.ignition??''])];const url=URL.createObjectURL(new Blob([rows.map(r=>r.join(',')).join('\n')],{type:'text/csv'}));const a=document.createElement('a');a.href=url;a.download=`waypoint-route-${selected}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
 

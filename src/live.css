@@ -28,3 +28,11 @@ html{scrollbar-gutter:stable}
 /* The global svg icon size must not shrink Leaflet's vector pane; that hid route lines. */
 .leaflet-container svg{width:auto;height:auto}
 .detail-place{display:flex;flex-direction:column;gap:4px;padding:0 18px;margin-top:12px}.detail-place span{display:flex;align-items:flex-start;gap:6px;font-size:13px;line-height:1.4}.detail-place span svg{width:15px;height:15px;margin-top:2px;color:var(--accent)}.detail-place small{color:var(--muted);padding-left:21px}
+.gps-pin{width:40px;height:40px;border:0;border-radius:50%;background:none!important;box-shadow:none;display:grid;place-items:center}
+.gps-pin.selected{outline:0;background:#147d6626!important;box-shadow:0 0 0 2px #147d6655}
+.gps-pin span{display:grid;place-items:center;transition:transform .4s ease}
+.leaflet-container .gps-pin svg.truck-icon{width:22px;height:36px;fill:currentColor;stroke:#fff;stroke-width:1.4;stroke-linejoin:round;filter:drop-shadow(0 1px 2px #0006)}
+.gps-pin .truck-icon .glass{fill:#fff;fill-opacity:.85;stroke:none}
+.gps-pin .truck-icon .ribs{fill:none;stroke:#fff;stroke-opacity:.45;stroke-width:1.2}
+.leaflet-tooltip.truck-tooltip{padding:5px 8px;border-radius:6px;border:0;box-shadow:0 2px 8px #0003;width:max-content;max-width:230px;white-space:normal}
+.truck-tag{display:flex;flex-direction:column;gap:1px;line-height:1.25}.truck-tag strong{font-size:12px}.truck-tag small{font-size:11px;color:#4d625e}.truck-tag small:empty{display:none}
