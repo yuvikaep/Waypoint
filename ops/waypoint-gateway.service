@@ -8,7 +8,7 @@ Type=simple
 User=opc
 WorkingDirectory=/opt/waypoint
 EnvironmentFile=/opt/waypoint/server/private/gateway-agent.env
-ExecStart=/usr/local/bin/node --max-old-space-size=96 /opt/waypoint/server/gateway-agent.mjs
+ExecStart=/opt/node/bin/node --max-old-space-size=96 /opt/waypoint/server/gateway-agent.mjs
 Restart=always
 RestartSec=10
 MemoryMax=160M

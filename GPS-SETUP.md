@@ -71,23 +71,21 @@ separate deployment from the local Compose gateway.
 
 ## Oracle gateway
 
-The Oracle deployment is the live source of truth. Add devices, sign in, and
-test real GPS at `https://92.4.84.227.sslip.io/?live=1`. Do not use localhost
-for production tracking or copy its SQLite database into the cloud again. Local
-`npm run dev` is only a development preview; its accounts and device records
-are separate. A stored position copied from localhost is historical evidence,
-not proof that the cloud gateway received a tracker packet.
+Vercel is the application source of truth. Add devices, sign in, and test at
+`https://waypoint-eta-pied.vercel.app`. Its API uses PostgreSQL from Vercel
+Storage and private Blob for attachments; neither login nor documents depend
+on Oracle availability. Do not migrate old SQLite records into the fresh app.
 
 An Oracle Always Free VM named `waypoint-gps` in Mumbai runs Traccar 6.16.0 and
-the Waypoint API as systemd services. The VM currently has public IP
-`92.4.84.227`. Traccar accepts GT06-family TCP on port 5023; the Waypoint API
-binds only to `127.0.0.1:8180`. Caddy serves the fleet at
-`https://92.4.84.227.sslip.io/?live=1`; HTTPS and the health endpoint were
-verified from outside the VM. The VM's public IP is still ephemeral and will
+the lightweight `waypoint-gateway` forwarding worker as systemd services.
+The VM currently has public IP `92.4.84.227`. Traccar accepts GT06-family TCP
+on port 5023 and Teltonika TCP on 5027. Traccar's management API binds only
+to `127.0.0.1:8082`; app accounts and document storage do not run on this VM.
+The VM's public IP is still ephemeral and will
 not survive replacement of the instance, so update tracker configuration if
-the VM is replaced. The cloud SQLite database is independent from localhost.
-Do not copy local records to the VM; the fresh workspace starts without customers
-or devices.
+the VM is replaced. Obtain an Oracle reserved public IP before treating this
+endpoint as permanent. The fresh Vercel workspace starts without customers
+or devices. H2 on the gateway is only a reception/retry buffer.
 
 The Traccar service uses `ops/traccar-watchdog.conf` to disable the installer's
 systemd watchdog on this small VM. A controlled restart retained the API token
@@ -96,9 +94,13 @@ the gateway presenting itself as uninitialized. If gateway credentials need
 renewal, use an SSH tunnel to its private port 8082, set `TRACCAR_SETUP_URL` to
 the local tunnel URL, and run `node scripts/renew-cloud-gateway.mjs`. Copy the
 generated owner-only environment file to the VM, change its URL to
-`http://127.0.0.1:8082`, and restart `waypoint.service`. Do not commit either
-credential file. Keep a consistent backup of the Traccar database as well as
-the Waypoint SQLite database.
+`http://127.0.0.1:8082`, and update the private `gateway-agent.env` token.
+Restart `waypoint-gateway.service`. Do not commit either credential file.
+Set its `WAYPOINT_CLOUD_URL` to the production Vercel URL and match its
+`GPS_GATEWAY_SECRET` with the Vercel secret. Every ten seconds the worker
+reconciles IMEIs and sends real fixes/last-packet timestamps to Vercel.
+Checkpoint advancement happens only after a successful cloud write. A replay
+does not refresh a fix or heartbeat. An offline gateway is shown as disconnected.
 
 After the approved fresh-data reset, the VM has no registered devices or live fixes. Registration by IMEI only associates
 future packets; it does not configure the physical tracker or prove it can

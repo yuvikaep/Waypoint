@@ -4,7 +4,7 @@ export class TraccarBridge {
     this.state={configured:!!(url && token),connected:false,lastSync:null,error:null};
   }
   async request(path, options={}) {
-    if (!this.state.configured) throw new Error('Set TRACCAR_URL and TRACCAR_TOKEN to connect hardware trackers.');
+    if (!this.url || !this.token) throw new Error('Gateway command channel is not configured. Automatic GPS reports do not require this channel.');
     const response=await this.fetcher(`${this.url}/api${path}`,{...options,headers:{Authorization:`Bearer ${this.token}`,'Content-Type':'application/json',Accept:'application/json'},signal:AbortSignal.timeout(10000)});
     if (!response.ok) throw new Error(`Tracker gateway returned HTTP ${response.status}.`);
     return {status:response.status,data:response.status===204?null:await response.json()};
