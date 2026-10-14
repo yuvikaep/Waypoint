@@ -1,4 +1,5 @@
 {
   "regions": ["sin1"],
-  "functions": {"api/gps/[...path].mjs": {"maxDuration": 30,"includeFiles": "server/postgres-schema.sql"}}
+  "functions": {"api/gps.mjs": {"maxDuration": 30,"includeFiles": "server/postgres-schema.sql"}},
+  "rewrites": [{"source":"/api/gps/:path*","destination":"/api/gps?__route=:path*"}]
 }
