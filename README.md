@@ -1,14 +1,14 @@
 # Waypoint GPS workspace
 
-Live fleet tracking for GT06, Teltonika FMB920, and optional mobile GPS. Includes authenticated device registration, persistent locations, heartbeat/fix freshness, on-demand ping status, map follow, recorded routes, CSV export, geofences, and alerts. Existing browser-stored documents and e-way billing remain available.
+Live fleet tracking for GT06-family, Teltonika, and optional mobile GPS. Includes customer workspaces, persistent locations, heartbeat/fix freshness, maps, recorded routes, geofences, and alerts. Existing browser-stored documents and e-way billing remain available.
 
-Run `npm run dev` and open `http://127.0.0.1:5173` for the real workspace. Live tracking, route history, devices, geofences, alerts, Documents, E-way bills, Profile and Settings share one navigation shell. The local Vite preview signs in same-origin loopback requests automatically; the production backend still requires the generated key in `server/private/admin-token`. Driver sharing remains a separate link without an admin login.
+The live workspace is [Waypoint Cloud](https://92.4.84.227.sslip.io/?live=1). Add devices and test real GPS there; its database and Traccar gateway are separate from localhost. `npm run dev` is a development preview only. Live tracking, route history, devices, geofences, alerts, Documents, E-way bills, Profile, and Settings share one navigation shell. Customers sign in with their own accounts; admin access uses the cloud server's private key. Drivers use separate vehicle links.
 
-Use `/?demo=1` explicitly for sample vehicles and simulated tracking. Demo edits use separate browser storage and do not contact the GPS or billing backend. Profile and display preferences currently persist only in this browser; they are not customer accounts. Separate customer authentication and tenant isolation are not implemented yet.
+Use `/?demo=1` explicitly for sample vehicles and simulated tracking. Demo edits use separate browser storage and do not contact the GPS backend. Profile/display preferences and existing documents remain browser-local; customer accounts and fleet data are stored on the server.
 
-Mobile sharing sends a heartbeat every 30 seconds while the driver page is running; the fleet view refreshes every three seconds. Browsers may pause background or locked-screen pages. Hardware heartbeat frequency must be configured on the tracker. Driver links stay fixed until explicitly regenerated or disabled. See [GPS-SETUP.md](GPS-SETUP.md) for setup and deployment boundaries.
+Mobile sharing sends a heartbeat every 30 seconds while the driver page is running; the fleet view refreshes every three seconds. Browsers may pause background or locked-screen pages. Hardware heartbeat frequency must be configured on the tracker. Driver links stay fixed until explicitly regenerated or disabled. See [GPS-SETUP.md](GPS-SETUP.md) for setup and deployment boundaries and the cloud-only diagnostic command.
 
-Validation: `npm test`, `npm run build`, and `npm run test:gateway` (requires the local Traccar gateway). No physical trackers or SIMs have been connected during development.
+Production readiness is checked on the Oracle VM with `scripts/cloud-check.mjs`, which distinguishes registered devices from actual packets and fixes received by cloud Traccar. No live GT06 or PT06 packet has reached the cloud gateway yet.
 
 Relay controls: see [RELAY-SETUP.md](RELAY-SETUP.md). Starter-inhibit/restore is
 default-disabled and requires installer verification and admin re-authentication.

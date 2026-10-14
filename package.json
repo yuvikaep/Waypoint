@@ -11,6 +11,7 @@
     "gateway:up": "docker compose -f compose.gps.yml up -d",
     "gateway:setup": "node scripts/setup-gateway.mjs",
     "test:gateway": "node --env-file=server/private/gateway.env scripts/gateway-smoke.mjs",
+    "test:cloud": "node --env-file=server/private/cloud-gateway.env scripts/cloud-check.mjs",
     "start": "npm run gps",
     "test:gps": "node --test server/tracking.test.mjs",
     "test": "node --test server/*.test.mjs",

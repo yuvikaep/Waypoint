@@ -70,6 +70,13 @@ separate deployment from the local Compose gateway.
 
 ## Oracle gateway
 
+The Oracle deployment is the live source of truth. Add devices, sign in, and
+test real GPS at `https://92.4.84.227.sslip.io/?live=1`. Do not use localhost
+for production tracking or copy its SQLite database into the cloud again. Local
+`npm run dev` is only a development preview; its accounts and device records
+are separate. A stored position copied from localhost is historical evidence,
+not proof that the cloud gateway received a tracker packet.
+
 An Oracle Always Free VM named `waypoint-gps` in Mumbai runs Traccar 6.16.0 and
 the Waypoint API as systemd services. The VM currently has public IP
 `92.4.84.227`. Traccar accepts GT06-family TCP on port 5023; the Waypoint API
@@ -98,6 +105,19 @@ connect. After setting the final server address by SMS, check the device's
 `SERVER#` and `STATUS#` replies, and verify the first connection and position
 in Traccar/Waypoint before considering onboarding complete. PT06 is listed as
 GT06-family provisionally; its first packet will establish protocol compatibility.
+
+Run the read-only production check on the VM, not against the local gateway:
+
+```sh
+cd /opt/waypoint
+WAYPOINT_URL=https://92.4.84.227.sslip.io /opt/node/bin/node \
+  --env-file=server/private/cloud-gateway.env scripts/cloud-check.mjs
+```
+
+It checks public HTTPS, the Waypoint bridge, and each registered hardware IMEI
+against cloud Traccar. Its `last packet` and `cloud GPS fix` values come from
+Traccar on the VM, not from the copied Waypoint history. `never` means the
+physical tracker has not yet reported to the cloud gateway.
 
 ## Mobile sender
 
