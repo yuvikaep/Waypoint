@@ -40,7 +40,7 @@ async function api<T=any>(path:string, options:RequestInit={}):Promise<T>{
   if(DEMO_MODE)return demoRequest(path,options);
   const response=await fetch('/api/gps'+path,{...options,headers:{'Content-Type':'application/json',...options.headers},signal:AbortSignal.timeout(15000)});
   const body=await response.json().catch(()=>({error:'Tracking service is temporarily unavailable. Please try again shortly.'}));
-  if(!response.ok){if(response.status===401 && !path.startsWith('/sender/') && path!=='/session' && path!=='/customers/session')showLogin();throw new Error(body.error || 'Request failed.');}
+  if(!response.ok){if(response.status===401 && !path.startsWith('/sender/') && !['/session','/customers/session','/customers/register','/admin/session'].includes(path))showLogin();throw new Error(body.error || 'Request failed.');}
   return body;
 }
 function action(selector:string,callback:()=>void|Promise<void>){$(selector)?.addEventListener('click',()=>{Promise.resolve().then(callback).catch(e=>notify(e.message))})}
@@ -59,9 +59,10 @@ function showLogin(error=''){
   $('#login').addEventListener('submit',async event=>{event.preventDefault();const button=$<HTMLButtonElement>('#login-submit');button.disabled=true;try{const data=new FormData(event.target as HTMLFormElement);if(mode==='signup'&&data.get('password')!==data.get('confirm'))throw Error('Passwords do not match.');await api(mode==='signup'?'/customers/register':mode==='customer'?'/customers/session':'/admin/session',{method:'POST',body:JSON.stringify({name:data.get('name'),email:data.get('email'),password:data.get('password')})});location.href='/?live=1'}catch(e){$('.error').textContent=(e as Error).message;button.disabled=false}});icons();
 }
 async function boot(){
+  if(!DEMO_MODE)showLogin();
   try{identity=DEMO_MODE?{role:'admin',tenantId:'owner',name:'Demo workspace',email:null}:await api<Identity>('/session')}
   catch{/* Show customer login, signup and admin access. */}
-  if(!identity){showLogin();return}
+  if(!identity){if(!$('#login'))showLogin();return}
   const requestedAuth=new URLSearchParams(location.search).get('auth');
   if(requestedAuth==='signup'||(requestedAuth==='admin'&&identity.role!=='admin')||(requestedAuth==='customer'&&identity.role!=='customer')){showLogin();return}
   setWorkspaceTenant(identity.tenantId);

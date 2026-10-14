@@ -7,7 +7,7 @@ const cloudCache=new Map<string,string>();
 export async function loadWorkspaceData(){
   if(DEMO_MODE)return;
   for(const [key,kind] of Object.entries(cloudKeys)){
-    const response=await fetch(`/api/gps/workspace/${kind}`);
+    const response=await fetch(`/api/gps/workspace/${kind}`,{signal:AbortSignal.timeout(15000)});
     if(!response.ok)throw new Error('Could not load cloud workspace data.');
     const {value}=await response.json();
     if(value!==null)cloudCache.set(key,JSON.stringify(value));else cloudCache.delete(key);
@@ -21,7 +21,7 @@ export const workspaceStorage={
   setItem:async(key:string,value:string)=>{
     if(DEMO_MODE){window.localStorage.setItem(scopedKey(key),value);return}
     const kind=cloudKeys[key];if(!kind)throw new Error('Unknown workspace record.');
-    const response=await fetch(`/api/gps/workspace/${kind}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:JSON.parse(value)})});
+    const response=await fetch(`/api/gps/workspace/${kind}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:JSON.parse(value)}),signal:AbortSignal.timeout(30000)});
     if(!response.ok){const result=await response.json().catch(()=>({}));throw new Error(result.error||'Could not save cloud workspace data.')}
     cloudCache.set(key,value);
   }
