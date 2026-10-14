@@ -9,4 +9,6 @@
   <entry key='web.address'>127.0.0.1</entry>
   <entry key='database.maxPoolSize'>2</entry>
   <entry key='server.nettyThreads'>2</entry>
+  <!-- Longer than the tracker's three-minute heartbeat, but not an indefinitely stale session. -->
+  <entry key='gt06.timeout'>300</entry>
 </properties>
