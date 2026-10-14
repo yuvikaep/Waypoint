@@ -63,7 +63,7 @@ export class TraccarBridge {
   async ping(device) {
     if (!device.traccarId) throw new Error('Device is not registered with the tracker gateway yet.');
     const types=(await this.request(`/commands/types?deviceId=${device.traccarId}&textChannel=false`)).data;
-    if (!types.some(t=>t.type==='positionSingle')) return {status:'unsupported',detail:'This tracker does not advertise an on-demand location command. Scheduled reports remain active.'};
+    if (!types.some(t=>t.type==='positionSingle')) return {status:'unsupported',detail:'The gateway does not expose a built-in location Ping for this tracker. Automatic GPS uploads are separate and require a tracker data connection.'};
     const response=await this.request('/commands/send',{method:'POST',body:JSON.stringify({deviceId:device.traccarId,type:'positionSingle',textChannel:false,attributes:{}})});
     return {status:response.status===202?'queued':'sent',detail:response.status===202?'Gateway queued the location request.':'Location request sent to the tracker. Awaiting a fresh fix.'};
   }
