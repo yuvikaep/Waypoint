@@ -5,7 +5,7 @@ import './live.css';
 import {DEMO_MODE,demoRequest,workspaceStorage,setWorkspaceTenant,loadWorkspaceData} from './demo';
 
 type Fix={id:number;deviceId:string;recordedAt:number;receivedAt:number;latitude:number;longitude:number;speed:number;heading:number|null;accuracy:number|null;ignition:number|null;battery:number|null;satellites:number|null;valid?:number};
-type Device={id:string;name:string;uniqueId:string;model:'GT06'|'GT06N'|'PT06'|'FMB920'|'FMB125'|'FMC920'|'FMC130'|'Mobile';driver:string;lastSeen:number|null;offlineSeconds:number;speedLimit:number;bridgeStatus:string|null;traccarId:number|null;status:string;online:boolean;fresh:boolean;position:Fix|null;command:{status:string;detail:string;createdAt:number}|null};
+type Device={id:string;name:string;uniqueId:string;model:'GT06'|'GT06N'|'PT06'|'FMB920'|'FMB125'|'FMC920'|'FMC130'|'Mobile';driver:string;lastSeen:number|null;offlineSeconds:number;speedLimit:number;bridgeStatus:string|null;traccarId:number|null;status:string;online:boolean;fresh:boolean;position:Fix|null;command:{status:string;detail:string;createdAt:number}|null;ignition:number|null;stoppedSince:number|null};
 type Fence={id:string;name:string;latitude:number;longitude:number;radius:number};
 type Alert={id:string;deviceId:string;deviceName:string;type:string;message:string;createdAt:number;acknowledged:number};
 type FleetState={devices:Device[];fences:Fence[];alerts:Alert[];gateway:{configured:boolean;connected:boolean;lastSync:number|null;error:string|null;trackerHost?:string;gt06Port?:number;gt06AlternativePort?:number;teltonikaPort?:number};serverTime:number};
@@ -26,6 +26,44 @@ const icons=()=>createIcons({icons:iconSet});
 const time=(at:number|null)=>at?new Date(at).toLocaleString(): 'Never';
 function ago(at:number|null){if(!at)return 'Never';const s=Math.max(0,Math.floor((Date.now()-at)/1000));return s<60?`${s}s ago`:s<3600?`${Math.floor(s/60)}m ago`:`${Math.floor(s/3600)}h ago`}
 const coords=(p:Fix|Fence)=>`${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)}`;
+function duration(from:number){const m=Math.max(0,Math.floor((Date.now()-from)/60000));return m<60?`${m} min`:m<1440?`${Math.floor(m/60)} h ${m%60} min`:`${Math.floor(m/1440)} d ${Math.floor(m%1440/60)} h`}
+// Place names come from OpenStreetMap Nominatim. Its public service allows about one request per
+// second, so lookups are cached per ~11 m cell, serialised, and made only for what is on screen.
+type Place={label:string;road:string|null};
+const places=new globalThis.Map<string,Place|null>(),placeWaiters=new globalThis.Map<string,Promise<Place|null>>();let placeChain=Promise.resolve();
+const placeKey=(p:{latitude:number;longitude:number})=>`${p.latitude.toFixed(4)},${p.longitude.toFixed(4)}`;
+async function reverse(lat:number,lon:number,zoom:number){
+  const run=placeChain.then(async()=>{
+    const response=await fetch(`https://nominatim.openstreetmap.org/reverse?${new URLSearchParams({format:'jsonv2',lat:String(lat),lon:String(lon),zoom:String(zoom),addressdetails:'1','accept-language':'en'})}`);
+    if(!response.ok)throw new Error(`Place lookup HTTP ${response.status}`);
+    return response.json() as Promise<{name?:string;category?:string;type?:string;address?:Record<string,string>}>;
+  });
+  placeChain=run.then(()=>new Promise(r=>setTimeout(r,1100)),()=>new Promise(r=>setTimeout(r,1100)));
+  return run;
+}
+function place(p:{latitude:number;longitude:number}):Promise<Place|null>{
+  const key=placeKey(p);
+  if(places.has(key))return Promise.resolve(places.get(key)!);
+  if(!placeWaiters.has(key))placeWaiters.set(key,(async()=>{
+    try{
+      const near=await reverse(p.latitude,p.longitude,18),a=near.address||{};
+      const road=a.road||(near.category==='highway'?(near.name||'Unnamed road'):null);
+      let locality=a.neighbourhood||a.suburb||a.quarter||a.village||a.hamlet||a.town||a.city_district||a.city||null;
+      // Rural roads often carry no village; ask once more at locality scale.
+      if(!locality){const wide=(await reverse(p.latitude,p.longitude,14)).address||{};locality=wide.village||wide.suburb||wide.town||wide.hamlet||wide.city||null}
+      const parts=[road,near.category!=='highway'&&near.name?near.name:null,locality,a.town||a.city||a.state_district||a.county,a.state,a.postcode].filter((v,i,all):v is string=>!!v&&all.indexOf(v)===i);
+      const value=parts.length?{label:parts.join(', '),road}:null;places.set(key,value);return value;
+    }catch{return null}finally{placeWaiters.delete(key)}
+  })());
+  return placeWaiters.get(key)!;
+}
+function showPlace(selector:string,p:{latitude:number;longitude:number}|null){
+  const el=document.querySelector<HTMLElement>(selector);if(!el)return;
+  if(!p){el.textContent='No position';return}
+  const key=placeKey(p),known=places.get(key);
+  el.dataset.place=key;el.textContent=known?known.label:known===null?coords(p as Fix):'Finding place...';
+  if(!places.has(key))void place(p).then(found=>{if(el.isConnected&&el.dataset.place===key)el.textContent=found?found.label:coords(p as Fix)});
+}
 const statusClass=(d:Device)=>d.status==='Moving'?'green':d.status==='Stopped'?'blue':d.status==='Offline'?'red':'amber';
 let state:FleetState|undefined, identity:Identity|undefined, view:View='Live tracking', selected='', search='', filter='All', following=false;
 let map:L.Map|undefined, markerLayer:L.LayerGroup|undefined, fenceLayer:L.LayerGroup|undefined, routeLayer:L.LayerGroup|undefined;
@@ -184,8 +222,8 @@ function statusText(d:Device){return d.status==='No GPS fix'?(d.position?(d.posi
 function updateTracking(){
   if(!state||!map)return;
   const visible=devices();if(!visible.some(d=>d.id===selected)){selected=visible[0]?.id||'';clearHistory()}
-  $('#fleet-stats').innerHTML=[['Vehicles',state.devices.length,''],['Moving',state.devices.filter(d=>d.status==='Moving').length,'green'],['Stopped',state.devices.filter(d=>d.status==='Stopped').length,'blue'],['Needs attention',state.devices.filter(d=>!d.fresh||!d.online).length,'amber']].map(([name,value,color])=>`<div><span>${name}</span><strong class="${color}">${value}</strong></div>`).join('');
-  $('#fleet-list').innerHTML=visible.length?visible.map(d=>`<button class="live-vehicle ${selected===d.id?'chosen':''}" data-device="${d.id}"><span class="vehicle-title"><strong>${esc(d.name)}</strong><span class="status ${statusClass(d)}">${esc(statusText(d))}</span></span><span class="vehicle-sub">${esc(d.model)} &middot; ${esc(d.driver||d.uniqueId)}</span><span class="vehicle-position">${i('map-pin')}${d.position?coords(d.position):'Awaiting first GPS report'}</span><span class="vehicle-bottom"><b>${d.position&&d.fresh?`${Math.round(d.position.speed)} km/h`:'No current speed'}</b><span title="${time(d.lastSeen)}">${ago(d.lastSeen)}</span></span></button>`).join(''):`<div class="empty-state">${i('radio-tower')}<h2>${state.devices.length?'No matching vehicles':'No devices yet'}</h2>${!state.devices.length?'<button class="primary" id="first-device">Add device</button>':''}</div>`;
+  $('#fleet-stats').innerHTML=[['Vehicles',state.devices.length,''],['Moving',state.devices.filter(d=>d.status==='Moving').length,'green'],['Stopped',state.devices.filter(d=>d.status==='Stopped').length,'blue'],['Needs attention',state.devices.filter(d=>!d.online||d.status==='No GPS fix').length,'amber']].map(([name,value,color])=>`<div><span>${name}</span><strong class="${color}">${value}</strong></div>`).join('');
+  $('#fleet-list').innerHTML=visible.length?visible.map(d=>`<button class="live-vehicle ${selected===d.id?'chosen':''}" data-device="${d.id}"><span class="vehicle-title"><strong>${esc(d.name)}</strong><span class="status ${statusClass(d)}">${esc(statusText(d))}</span></span><span class="vehicle-sub">${esc(d.model)} &middot; ${esc(d.driver||d.uniqueId)}</span><span class="vehicle-position">${i('map-pin')}${d.position?esc(places.get(placeKey(d.position))?.label||coords(d.position)):'Awaiting first GPS report'}</span><span class="vehicle-bottom"><b>${d.status==='Stopped'&&d.stoppedSince?`Parked ${duration(d.stoppedSince)}`:d.position&&d.fresh?`${Math.round(d.position.speed)} km/h`:'No current speed'}</b><span title="${time(d.lastSeen)}">${ago(d.lastSeen)}</span></span></button>`).join(''):`<div class="empty-state">${i('radio-tower')}<h2>${state.devices.length?'No matching vehicles':'No devices yet'}</h2>${!state.devices.length?'<button class="primary" id="first-device">Add device</button>':''}</div>`;
   action('#first-device',addDevice);
   document.querySelectorAll<HTMLElement>('[data-device]').forEach(b=>b.onclick=()=>select(b.dataset.device!));
   markerLayer!.clearLayers();
@@ -201,8 +239,9 @@ function select(id:string){if(id!==selected){selected=id;clearHistory()}updateTr
 function detail(){
   const d=current();if(!d){$('#device-detail').innerHTML='';return}
   const p=d.position;
-  $('#device-detail').innerHTML=`<div class="detail-head"><div><strong>${esc(d.name)}</strong><small>${esc(d.model)} &middot; ${esc(d.uniqueId)}</small></div><button class="primary" id="ping-device" ${!connected?'disabled':''}>${i('radio')}Ping</button></div><dl class="detail-grid"><div><dt>Last heartbeat</dt><dd title="${time(d.lastSeen)}">${ago(d.lastSeen)}</dd></div><div><dt>Last GPS report</dt><dd title="${time(p?.recordedAt||null)}">${p?ago(p.recordedAt):'Waiting'}</dd></div><div><dt>Ignition</dt><dd>${p?.ignition==null?'Unknown':p.ignition?'On':'Off'}</dd></div><div><dt>Accuracy</dt><dd>${p?.accuracy==null?'Unknown':`${Math.round(p.accuracy)} m`}</dd></div><div><dt>Battery</dt><dd>${p?.battery==null?'Unknown':`${Math.round(p.battery)}%`}</dd></div><div><dt>Satellites</dt><dd>${p?.satellites??'Unknown'}</dd></div></dl>${d.command?`<div class="command-status"><strong>Ping: ${esc(d.command.status)}</strong><span>${esc(d.command.detail)}</span></div>`:''}<div class="detail-actions"><span>${p?coords(p):'No position'}</span>${d.model!=='Mobile'?`<button id="device-relay">${i('shield-check')}Relay</button>`:''}<button id="device-history">${i('route')}History</button></div>`;
+  $('#device-detail').innerHTML=`<div class="detail-head"><div><strong>${esc(d.name)}</strong><small>${esc(d.model)} &middot; ${esc(d.uniqueId)}</small></div><button class="primary" id="ping-device" ${!connected?'disabled':''}>${i('radio')}Ping</button></div><div class="detail-place"><span>${i('map-pin')}<b id="device-place"></b></span><small>${d.status==='Stopped'&&d.stoppedSince?`Parked here since ${time(d.stoppedSince)} &middot; ${duration(d.stoppedSince)}`:d.status==='Moving'&&p?`Moving at ${Math.round(p.speed)} km/h`:p&&p.valid===0?'No GPS fix &middot; last known place':''}</small></div><dl class="detail-grid"><div><dt>Last heartbeat</dt><dd title="${time(d.lastSeen)}">${ago(d.lastSeen)}</dd></div><div><dt>Last GPS report</dt><dd title="${time(p?.recordedAt||null)}">${p?ago(p.recordedAt):'Waiting'}</dd></div><div><dt>Ignition</dt><dd>${d.ignition==null?'Unknown':d.ignition?'On':'Off'}</dd></div><div><dt>Accuracy</dt><dd>${p?.accuracy==null?'Unknown':`${Math.round(p.accuracy)} m`}</dd></div><div><dt>Battery</dt><dd>${p?.battery==null?'Unknown':`${Math.round(p.battery)}%`}</dd></div><div><dt>Satellites</dt><dd>${p?.satellites??'Unknown'}</dd></div></dl>${d.command?`<div class="command-status"><strong>Ping: ${esc(d.command.status)}</strong><span>${esc(d.command.detail)}</span></div>`:''}<div class="detail-actions"><span>${p?coords(p):'No position'}</span>${d.model!=='Mobile'?`<button id="device-relay">${i('shield-check')}Relay</button>`:''}<button id="device-history">${i('route')}History</button></div>`;
   action('#ping-device',async()=>{const button=$<HTMLButtonElement>('#ping-device');button.disabled=true;try{await api(`/devices/${d.id}/ping`,{method:'POST',body:'{}'});await refresh()}finally{if(button.isConnected)button.disabled=false}});
+  showPlace('#device-place',p);
   action('#device-relay',()=>relayDialog(d));
   action('#device-history',()=>{view='Route history';shell();void loadHistory().catch(e=>notify(e.message))});
 }
@@ -229,7 +268,7 @@ async function loadHistory(){
   }catch(e){if(version===historyVersion)$('#history-status').textContent=(e as Error).message}
   finally{if($('#load-history'))$<HTMLButtonElement>('#load-history').disabled=false}
 }
-function showHistoryPoint(index:number){const p=history[index];if(!p)return;playMarker?.remove();playMarker=L.circleMarker(point(p),{radius:8,color:'#fff',fillColor:'#176fba',fillOpacity:1,weight:3}).addTo(map!);$<HTMLInputElement>('#route-slider').value=String(index);$('#history-status').textContent=`${index+1} / ${history.length} · ${time(p.recordedAt)} · ${Math.round(p.speed)} km/h`;if(following)map?.panTo(point(p))}
+function showHistoryPoint(index:number){const p=history[index];if(!p)return;playMarker?.remove();playMarker=L.circleMarker(point(p),{radius:8,color:'#fff',fillColor:'#176fba',fillOpacity:1,weight:3}).addTo(map!);$<HTMLInputElement>('#route-slider').value=String(index);$('#history-status').innerHTML=`${index+1} / ${history.length} · ${esc(time(p.recordedAt))} · ${Math.round(p.speed)} km/h · <span id="history-place"></span>`;if(!playTimer)showPlace('#history-place',p);else{const el=document.querySelector<HTMLElement>('#history-place');if(el)el.textContent=places.get(placeKey(p))?.label||''}if(following)map?.panTo(point(p))}
 function playHistory(){if(playTimer){stopPlay();$('#play-route').innerHTML=i('play');icons();return}let index=Number($<HTMLInputElement>('#route-slider').value);if(index>=history.length-1)index=0;$('#play-route').innerHTML=i('pause');icons();playTimer=setInterval(()=>{showHistoryPoint(index++);if(index===history.length){clearInterval(playTimer);playTimer=undefined;$('#play-route').innerHTML=i('play');icons()}},500)}
 function exportHistory(){if(historyDevice!==selected||!history.length)return;const rows=[['Time','Latitude','Longitude','Speed km/h','Accuracy m','Ignition'],...history.map(p=>[new Date(p.recordedAt).toISOString(),p.latitude,p.longitude,p.speed,p.accuracy??'',p.ignition??''])];const url=URL.createObjectURL(new Blob([rows.map(r=>r.join(',')).join('\n')],{type:'text/csv'}));const a=document.createElement('a');a.href=url;a.download=`waypoint-route-${selected}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
 

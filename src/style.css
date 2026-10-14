@@ -14,3 +14,6 @@
 
 }
 .documents-workspace{--green:#147d66;--muted:#647773;--line:#dfe7e5;min-width:0}.documents-workspace .document-actions{display:flex;gap:12px;margin-bottom:16px}.documents-workspace *{letter-spacing:0}.documents-workspace .table-panel{border-radius:0}.documents-workspace .stats{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
+
+/* The global svg icon size must not shrink Leaflet's vector pane; that hid route lines. */
+.leaflet-container svg{width:auto;height:auto}

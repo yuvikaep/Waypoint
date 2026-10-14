@@ -55,11 +55,14 @@ export class TraccarBridge {
     // reception time rather than rejecting the point, which would stall the whole sync.
     const fixAt=Date.parse(p.fixTime);
     const recordedAt=Number.isFinite(fixAt) && fixAt >= Date.UTC(2020,0,1) && fixAt <= Math.min(receivedAt,this.store.now())+60000 ? p.fixTime : new Date(Math.min(receivedAt,this.store.now())).toISOString();
+    // GT06 0x12 location packets carry ACC in a course/status bit that clones such as the G17 leave
+    // unset while driving; the 0x13 heartbeat's terminal-info ACC bit is the reliable source.
+    const ignition=typeof attrs.ignition!=='boolean'||(p.protocol==='gt06'&&attrs.type===0x12)?null:attrs.ignition;
     const within=(value,min,max)=>Number.isFinite(value) && value>=min && value<=max ? value : null;
     try {
       return await this.store.ingest(id,{eventId:`traccar:${p.id}`,recordedAt,latitude:p.latitude,longitude:p.longitude,
-        speed:within(p.speed*1.852,0,400) ?? 0,heading:within(p.course,0,360),accuracy:within(p.accuracy,0,100000),
-        ignition:typeof attrs.ignition==='boolean'?attrs.ignition:null,battery:within(attrs.batteryLevel,0,100),satellites:within(attrs.sat,0,100),valid:!!p.valid},
+        speed:within(p.speed*1.852,0,400) ?? 0,heading:within(p.course,0,360),accuracy:p.accuracy>0?within(p.accuracy,0,100000):null,
+        ignition,battery:within(attrs.batteryLevel,0,100),satellites:within(attrs.sat,0,100),valid:!!p.valid},
       {receivedAt,heartbeat:false});
     } catch (e) {
       // One malformed receiver point must not block every later fix for the fleet.

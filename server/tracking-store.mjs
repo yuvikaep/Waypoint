@@ -49,6 +49,7 @@ export class TrackingStore {
     `);
     if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name==='tenantId'))this.db.exec("ALTER TABLE devices ADD COLUMN tenantId TEXT NOT NULL DEFAULT 'owner'");
     if(!this.db.prepare('PRAGMA table_info(positions)').all().some(c=>c.name==='valid'))this.db.exec('ALTER TABLE positions ADD COLUMN valid INTEGER NOT NULL DEFAULT 1');
+    this.db.exec('CREATE INDEX IF NOT EXISTS position_moving ON positions(deviceId,recordedAt) WHERE valid=1 AND speed>=3; CREATE INDEX IF NOT EXISTS position_ignition ON positions(deviceId,receivedAt) WHERE ignition IS NOT NULL;');
     if(!this.db.prepare('PRAGMA table_info(fences)').all().some(c=>c.name==='tenantId'))this.db.exec("ALTER TABLE fences ADD COLUMN tenantId TEXT NOT NULL DEFAULT 'owner'");
     if(!this.db.prepare('PRAGMA table_info(driver_links)').all().some(c=>c.name==='code')){
       this.db.exec('ALTER TABLE driver_links ADD COLUMN code TEXT');
@@ -180,9 +181,19 @@ export class TrackingStore {
     const position = this.db.prepare('SELECT * FROM positions WHERE deviceId=? ORDER BY recordedAt DESC,id DESC LIMIT 1').get(id) || null;
     const online = device.lastSeen !== null && this.now()-device.lastSeen < device.offlineSeconds*1000;
     const fresh = position && position.valid !== 0 && this.now()-position.recordedAt < device.offlineSeconds*1000;
-    const status = !device.lastSeen ? 'Waiting' : !online ? 'Offline' : !fresh ? 'No GPS fix' : position.speed >= 3 ? 'Moving' : 'Stopped';
+    // Hardware trackers (GT06 family) stop uploading fixes once parked and only send heartbeats,
+    // so an online tracker whose last good fix was stationary is parked, not missing GPS.
+    const parked = !fresh && device.model !== 'Mobile' && position && position.valid !== 0 && position.speed < 3;
+    const status = !device.lastSeen ? 'Waiting' : !online ? 'Offline' : parked ? 'Stopped' : !fresh ? 'No GPS fix' : position.speed >= 3 ? 'Moving' : 'Stopped';
     const command = this.db.prepare('SELECT * FROM commands WHERE deviceId=? ORDER BY createdAt DESC,rowid DESC LIMIT 1').get(id) || null;
-    return { ...device, position, online, fresh: !!fresh, status, command };
+    // Ignition comes from whichever packet last reported it, not only the newest fix.
+    const ignition = this.db.prepare('SELECT ignition FROM positions WHERE deviceId=? AND ignition IS NOT NULL ORDER BY receivedAt DESC,id DESC LIMIT 1').get(id)?.ignition ?? null;
+    let stoppedSince = null;
+    if (status === 'Stopped') {
+      const moved = this.db.prepare('SELECT MAX(recordedAt) AS t FROM positions WHERE deviceId=? AND valid=1 AND speed>=3').get(id)?.t ?? null;
+      stoppedSince = this.db.prepare('SELECT MIN(recordedAt) AS t FROM positions WHERE deviceId=? AND recordedAt>?').get(id, moved ?? -1)?.t ?? position.recordedAt;
+    }
+    return { ...device, position, online, fresh: !!fresh, status, command, ignition, stoppedSince };
   }
   devices(tenantId) {return (tenantId?this.db.prepare('SELECT id FROM devices WHERE tenantId=? ORDER BY createdAt').all(tenantId):this.db.prepare('SELECT id FROM devices ORDER BY createdAt').all()).map(d=>this.device(d.id));}
   seen(id, at = this.now()) {

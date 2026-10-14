@@ -243,3 +243,34 @@ test('receiver points with a skewed tracker clock or odd attributes are stored, 
   assert.equal(p.recordedAt,store.now());assert.equal(p.battery,null);assert.equal(p.heading,null);assert.equal(p.satellites,9);
   assert.equal(store.device(device.id).fresh,true);
 });
+
+test('GT06 ignition follows the heartbeat ACC bit and parked time starts after the last movement',async t=>{
+  const {store,advance}=fixture(t);
+  const device=store.createDevice({name:'TEST G17',model:'GT06',uniqueId:'867111062240499',offlineSeconds:600}).device;
+  const bridge=new TraccarBridge(store,{url:'http://gateway',token:'x',fetcher:async()=>{throw Error('unused')}});
+  let id=100;
+  const send=async(type,attrs,speed)=>{const at=new Date(store.now()).toISOString();await bridge.ingest(device.id,{id:id++,deviceId:4,protocol:'gt06',valid:true,fixTime:at,serverTime:at,latitude:25.27,longitude:82.83,speed,course:0,attributes:{type,...attrs}});store.seen(device.id,store.now());};
+  // Driving: heartbeat says ACC on, location packets from this clone claim ignition false.
+  await send(0x13,{ignition:true,status:198},0);advance(20000);
+  await send(0x12,{ignition:false,sat:15},10);advance(20000);
+  assert.equal(store.device(device.id).ignition,1);
+  assert.equal(store.device(device.id).status,'Moving');
+  // Parked from here on.
+  const parkedAt=store.now()+20000;advance(20000);
+  await send(0x12,{ignition:false,sat:15},0);advance(60000);
+  await send(0x13,{ignition:false,status:196},0);advance(60000);
+  await send(0x12,{sat:15},0);
+  const d=store.device(device.id);
+  assert.equal(d.status,'Stopped');assert.equal(d.ignition,0);assert.equal(d.stoppedSince,parkedAt);
+});
+
+test('a parked hardware tracker that only sends heartbeats stays Stopped; a stale mobile sender does not',t=>{
+  const {store,device:mobile,position,advance}=fixture(t);
+  const hw=store.createDevice({name:'TEST parked GT06',model:'GT06',uniqueId:'867111062240498',offlineSeconds:180}).device;
+  store.ingest(hw.id,{eventId:'park',recordedAt:new Date(store.now()).toISOString(),latitude:25.28,longitude:82.79,speed:0});
+  store.ingest(mobile.id,position({speed:0}));
+  advance(20*60000);store.seen(hw.id,store.now());store.seen(mobile.id,store.now());
+  assert.equal(store.device(hw.id).status,'Stopped');assert.equal(store.device(hw.id).fresh,false);
+  assert.equal(store.device(hw.id).stoppedSince,store.now()-20*60000);
+  assert.equal(store.device(mobile.id).status,'No GPS fix');
+});
