@@ -30,9 +30,10 @@ try {
   const { data: remoteDevices } = await request(`${traccarUrl}/api/devices`, { headers });
   const { data: remotePositions } = await request(`${traccarUrl}/api/positions`, { headers });
   const devices = db.prepare("SELECT name,uniqueId,model,traccarId FROM devices WHERE model!='Mobile' ORDER BY name").all();
-  let ready = state.gateway.connected && devices.length > 0;
+  let ready = state.gateway.connected;
   console.log(`Public HTTPS: ready (${origin})`);
   console.log(`Waypoint bridge: ${state.gateway.connected ? 'connected' : state.gateway.error || 'disconnected'}`);
+  if(!devices.length)console.log('No hardware devices registered yet.');
   for (const device of devices) {
     const remote = remoteDevices.find(item => item.uniqueId === device.uniqueId);
     const position = remotePositions.find(item => item.deviceId === remote?.id);

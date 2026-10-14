@@ -14,15 +14,16 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173` for the no-login demo. Use `/?live=1` for actual tracking
-and admin sign-in. The demo uses isolated browser storage and simulated data; its
+Open `http://127.0.0.1:5173` only for development. Actual tracking and testing
+use the cloud URL below. The local demo uses isolated browser storage and simulated data; its
 mobile sender does not request real location permission. The launcher starts the web UI, GPS service on port
 5180, and the existing e-way adapter on port 5174. Vite chooses another free port
 if 5173 is occupied. E-way generation retains its original localhost:5173 origin
 restriction and requires separately configured credentials.
 
-The first GPS startup creates a random workspace access key in
-`server/private/admin-token` (owner-only permissions). Enter that key at sign-in.
+The first local GPS startup creates a random maintenance key in
+`server/private/admin-token` (owner-only permissions). Cloud admin login uses
+a separate email/password account; the maintenance key is not shown in the UI.
 Alternatively set `GPS_ADMIN_TOKEN` to a random secret of at least 24 characters.
 Sessions expire after 12 hours and on server restart. Sign-out invalidates the
 session. Sender credentials cannot access the fleet API.
@@ -84,9 +85,9 @@ binds only to `127.0.0.1:8180`. Caddy serves the fleet at
 `https://92.4.84.227.sslip.io/?live=1`; HTTPS and the health endpoint were
 verified from outside the VM. The VM's public IP is still ephemeral and will
 not survive replacement of the instance, so update tracker configuration if
-the VM is replaced. The local fleet SQLite
-database and registered devices were copied to the VM; subsequent local edits
-do not automatically synchronize to the cloud copy.
+the VM is replaced. The cloud SQLite database is independent from localhost.
+Do not copy local records to the VM; the fresh workspace starts without customers
+or devices.
 
 The Traccar service uses `ops/traccar-watchdog.conf` to disable the installer's
 systemd watchdog on this small VM. A controlled restart retained the API token
@@ -99,7 +100,7 @@ generated owner-only environment file to the VM, change its URL to
 credential file. Keep a consistent backup of the Traccar database as well as
 the Waypoint SQLite database.
 
-The VM has no live PT06 or GT06 fix yet. Registration by IMEI only associates
+After the approved fresh-data reset, the VM has no registered devices or live fixes. Registration by IMEI only associates
 future packets; it does not configure the physical tracker or prove it can
 connect. After setting the final server address by SMS, check the device's
 `SERVER#` and `STATUS#` replies, and verify the first connection and position
@@ -116,7 +117,7 @@ WAYPOINT_URL=https://92.4.84.227.sslip.io /opt/node/bin/node \
 
 It checks public HTTPS, the Waypoint bridge, and each registered hardware IMEI
 against cloud Traccar. Its `last packet` and `cloud GPS fix` values come from
-Traccar on the VM, not from the copied Waypoint history. `never` means the
+Traccar on the VM, not from browser or localhost history. `never` means the
 physical tracker has not yet reported to the cloud gateway.
 
 ## Mobile sender

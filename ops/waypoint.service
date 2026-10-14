@@ -10,10 +10,14 @@ WorkingDirectory=/opt/waypoint
 EnvironmentFile=/opt/waypoint/server/private/cloud-gateway.env
 Environment=GPS_HOST=127.0.0.1
 Environment=GPS_PORT=8180
+Environment=NODE_OPTIONS=--max-old-space-size=128
 Environment=GPS_PUBLIC_ORIGIN=https://92.4.84.227.sslip.io
+Environment=GPS_FRONTEND_ORIGIN=https://waypoint-eta-pied.vercel.app
 ExecStart=/opt/node/bin/node /opt/waypoint/server/tracking.mjs
 Restart=always
 RestartSec=5
+MemoryMax=192M
+MemorySwapMax=128M
 NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=/opt/waypoint/server/private

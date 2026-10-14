@@ -1,10 +1,30 @@
-export const DEMO_MODE=new URLSearchParams(location.search).has('demo');
+export const DEMO_MODE=new URLSearchParams(location.search).has('demo')&&['localhost','127.0.0.1'].includes(location.hostname);
 let storageTenant='owner';
 export function setWorkspaceTenant(tenant:string){storageTenant=tenant}
 const scopedKey=(key:string)=>DEMO_MODE?'demo:'+key:storageTenant==='owner'?key:`tenant:${storageTenant}:${key}`;
+const cloudKeys:Record<string,string>={'waypoint-docs':'documents','waypoint-eway':'bills','workspace-preferences':'preferences','waypoint-ack':'ack'};
+const cloudCache=new Map<string,string>();
+export async function loadWorkspaceData(){
+  if(DEMO_MODE)return;
+  for(const [key,kind] of Object.entries(cloudKeys)){
+    const response=await fetch(`/api/gps/workspace/${kind}`);
+    if(!response.ok)throw new Error('Could not load cloud workspace data.');
+    const {value}=await response.json();
+    if(value!==null)cloudCache.set(key,JSON.stringify(value));else cloudCache.delete(key);
+  }
+  for(const key of Object.keys(window.localStorage)){
+    if(/^(waypoint-|tenant:|demo:)/.test(key))window.localStorage.removeItem(key);
+  }
+}
 export const workspaceStorage={
-  getItem:(key:string)=>window.localStorage.getItem(scopedKey(key)),
-  setItem:(key:string,value:string)=>window.localStorage.setItem(scopedKey(key),value)
+  getItem:(key:string)=>DEMO_MODE?window.localStorage.getItem(scopedKey(key)):cloudCache.get(key)||null,
+  setItem:async(key:string,value:string)=>{
+    if(DEMO_MODE){window.localStorage.setItem(scopedKey(key),value);return}
+    const kind=cloudKeys[key];if(!kind)throw new Error('Unknown workspace record.');
+    const response=await fetch(`/api/gps/workspace/${kind}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:JSON.parse(value)})});
+    if(!response.ok){const result=await response.json().catch(()=>({}));throw new Error(result.error||'Could not save cloud workspace data.')}
+    cloudCache.set(key,value);
+  }
 };
 const storageKey='waypoint-preview-v1';
 const now=()=>Date.now();

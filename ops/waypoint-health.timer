@@ -1,0 +1,10 @@
+[Unit]
+Description=Check Waypoint services every 30 seconds
+
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

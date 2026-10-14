@@ -1,0 +1,8 @@
+[Unit]
+Description=Waypoint service health recovery
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /opt/waypoint/ops/health-check.sh
+TimeoutStartSec=45

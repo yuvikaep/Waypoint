@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { isIP } from 'node:net';
 import { mkdirSync, readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { resolve, dirname, extname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,14 +8,14 @@ import { TraccarBridge } from './traccar.mjs';
 import { RelayService } from './relay.mjs';
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
-async function body(req) {
+async function body(req,maxBytes=16384) {
   if (!req.headers['content-type']?.startsWith('application/json')) fail(415,'Send application/json.');
-  let data='';
-  for await (const chunk of req) { data+=chunk; if (Buffer.byteLength(data)>16384) fail(413,'Request is too large.'); }
-  try { const parsed=JSON.parse(data); if (!parsed || Array.isArray(parsed) || typeof parsed!=='object') throw Error(); return parsed; }
+  const chunks=[];let bytes=0;
+  for await (const chunk of req) { bytes+=chunk.length; if (bytes>maxBytes) fail(413,'Request is too large.'); chunks.push(chunk); }
+  try { const parsed=JSON.parse(Buffer.concat(chunks).toString('utf8')); if (!parsed || Array.isArray(parsed) || typeof parsed!=='object') throw Error(); return parsed; }
   catch { fail(400,'Invalid JSON object.'); }
 }
-export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(store),publicOrigin,relayEnabled=false,staticDir=resolve(root,'dist')}={}) {
+export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(store),publicOrigin,frontendOrigin=process.env.GPS_FRONTEND_ORIGIN,relayEnabled=false,staticDir=resolve(root,'dist')}={}) {
   if (!adminToken || adminToken.length<24) throw new Error('Admin token must contain at least 24 characters.');
   const sessions=new Map(), limits=new Map();
   const relay=new RelayService(store,bridge,{enabled:relayEnabled});
@@ -38,26 +39,37 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
         return res.end(method==='HEAD'?undefined:readFileSync(target));
       }
       const origin=req.headers.origin;
-      const allowed=publicOrigin || `http://${req.headers.host}`;
-      if (origin && origin!==allowed) fail(403,'Origin is not allowed.');
-      limited(req.socket.remoteAddress,600);
+      const allowed=[publicOrigin || `http://${req.headers.host}`,frontendOrigin].filter(Boolean);
+      if (origin && !allowed.includes(origin)) fail(403,'Origin is not allowed.');
+      const remoteAddress=req.socket.remoteAddress;
+      const forwarded=String(req.headers['x-forwarded-for']||'').split(',').at(-1).trim();
+      // Only the local production reverse proxy can supply client addresses.
+      const clientAddress=publicOrigin&&['127.0.0.1','::1','::ffff:127.0.0.1'].includes(remoteAddress)&&isIP(forwarded)?forwarded:remoteAddress;
+      limited(clientAddress,600);
       if (path==='/api/gps/session' && method==='POST') {
-        limited(`login:${req.socket.remoteAddress}`,10);
+        limited(`login:${clientAddress}`,10);
         const input=await body(req);
         if (typeof input.token!=='string' || hash(input.token)!==hash(adminToken)) fail(401,'Incorrect workspace access key.');
         const session=token(); sessions.set(hash(session),{role:'admin',tenantId:'owner',name:'Workspace admin',expiresAt:Date.now()+12*3600000});
         res.setHeader('Set-Cookie',`waypoint_session=${session}; HttpOnly; SameSite=Strict; Path=/api/gps; Max-Age=43200${publicOrigin?.startsWith('https:')?'; Secure':''}`);
         return json(res,200,{ok:true});
       }
+      if(path==='/api/gps/admin/session'&&method==='POST'){
+        limited(`admin-login:${clientAddress}`,10);
+        const input=await body(req),admin=store.adminLogin(input.email,input.password);
+        const session=token();sessions.set(hash(session),{role:'admin',tenantId:'owner',name:'Workspace admin',email:admin.email,expiresAt:Date.now()+12*3600000});
+        res.setHeader('Set-Cookie',`waypoint_session=${session}; HttpOnly; SameSite=Strict; Path=/api/gps; Max-Age=43200${publicOrigin?.startsWith('https:')?'; Secure':''}`);
+        return json(res,200,{ok:true});
+      }
       if(path==='/api/gps/customers/register'&&method==='POST'){
-        limited(`register:${req.socket.remoteAddress}`,5,3600000);
+        limited(`register:${clientAddress}`,5,3600000);
         const customer=store.registerCustomer(await body(req));
         const session=token();sessions.set(hash(session),{role:'customer',tenantId:customer.id,name:customer.name,email:customer.email,expiresAt:Date.now()+12*3600000});
         res.setHeader('Set-Cookie',`waypoint_session=${session}; HttpOnly; SameSite=Strict; Path=/api/gps; Max-Age=43200${publicOrigin?.startsWith('https:')?'; Secure':''}`);
         return json(res,201,{role:'customer',tenantId:customer.id,name:customer.name,email:customer.email});
       }
       if(path==='/api/gps/customers/session'&&method==='POST'){
-        limited(`customer-login:${req.socket.remoteAddress}`,10);
+        limited(`customer-login:${clientAddress}`,10);
         const input=await body(req),customer=store.customerLogin(input.email,input.password);
         const session=token();sessions.set(hash(session),{role:'customer',tenantId:customer.id,name:customer.name,email:customer.email,expiresAt:Date.now()+12*3600000});
         res.setHeader('Set-Cookie',`waypoint_session=${session}; HttpOnly; SameSite=Strict; Path=/api/gps; Max-Age=43200${publicOrigin?.startsWith('https:')?'; Secure':''}`);
@@ -65,7 +77,7 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
       }
       if (path.startsWith('/api/gps/sender/')) {
         if(path==='/api/gps/sender/join' && method==='POST'){
-          limited(`join:${req.socket.remoteAddress}`,20);
+          limited(`join:${clientAddress}`,20);
           const joined=store.joinDriver((await body(req)).code);
           res.setHeader('Set-Cookie',`waypoint_sender=${joined.secret}; HttpOnly; SameSite=Strict; Path=/api/gps/sender; Max-Age=${Math.floor((joined.expiresAt-store.now())/1000)}${publicOrigin?.startsWith('https:')?'; Secure':''}`);
           return json(res,200,{device:{id:joined.device.id,name:joined.device.name,driver:joined.device.driver},expiresAt:joined.expiresAt});
@@ -91,6 +103,13 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
       if(session.role==='customer'&&!store.customer(session.tenantId).enabled)fail(403,'Customer access is disabled.');
       const ownsDevice=id=>{const d=store.raw(id);if(d.tenantId!==session.tenantId)fail(404,'Device not found.');return d;};
       if(path==='/api/gps/session'&&method==='GET')return json(res,200,{role:session.role,tenantId:session.tenantId,name:session.name,email:session.email||null});
+      const dataMatch=path.match(/^\/api\/gps\/workspace\/(documents|bills|preferences|ack)$/);
+      if(dataMatch){
+        const key=dataMatch[1];
+        if(method==='GET')return json(res,200,{value:store.workspaceData(session.tenantId,key)});
+        if(method==='PUT')return json(res,200,store.saveWorkspaceData(session.tenantId,key,(await body(req,26*1024*1024)).value));
+        fail(405,'Method not allowed.');
+      }
       if (path==='/api/gps/session' && method==='DELETE') {
         sessions.delete(hash(cookie));res.setHeader('Set-Cookie','waypoint_session=; HttpOnly; SameSite=Strict; Path=/api/gps; Max-Age=0');return json(res,200,{ok:true});
       }
@@ -154,7 +173,7 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
       fail(404,'Endpoint not found.');
     } catch(e) {if (!res.headersSent) json(res,e.status || 500,{error:e.status?e.message:'The tracking service could not complete this request.'}); else res.end();}
   });
-  server.requestTimeout=15000;server.headersTimeout=10000;
+  server.requestTimeout=60000;server.headersTimeout=10000;
   const timer=setInterval(()=>{
     store.tick();void bridge.sync();
     for(const [key,session] of sessions) if(session.expiresAt<=Date.now()) sessions.delete(key);

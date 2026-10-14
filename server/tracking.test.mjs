@@ -97,6 +97,31 @@ test('HTTP access control, login, origin checks, sender isolation, and bounded r
   assert.equal((await request('/session',{method:'DELETE',headers:{Cookie:cookie}})).status,200);
   assert.equal((await request('/state',{headers:{Cookie:cookie}})).status,401);
 });
+test('separate admin login and tenant-scoped cloud records',async t=>{
+  const store=new TrackingStore(':memory:');t.after(()=>store.close());
+  const admin=store.createAdmin('admin@example.com');
+  const server=createTrackingServer({store,adminToken:'test-admin-token-at-least-24-characters'});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>{server.close(resolve);server.closeAllConnections()}));
+  const base=`http://127.0.0.1:${server.address().port}/api/gps`;
+  const call=(path,method='GET',value,cookie)=>fetch(base+path,{method,headers:{'Content-Type':'application/json',...(cookie?{Cookie:cookie}:{})},...(value===undefined?{}:{body:JSON.stringify(value)})});
+  assert.equal((await call('/admin/session','POST',{email:admin.email,password:'wrong'})).status,401);
+  const adminLogin=await call('/admin/session','POST',admin);
+  assert.equal(adminLogin.status,200);
+  const adminCookie=adminLogin.headers.get('set-cookie').split(';')[0];
+  assert.equal((await call('/session','GET',undefined,adminCookie).then(r=>r.json())).role,'admin');
+  const first=await call('/customers/register','POST',{name:'First',email:'first@example.com',password:'strong-password-1'});
+  const second=await call('/customers/register','POST',{name:'Second',email:'second@example.com',password:'strong-password-2'});
+  assert.equal(first.status,201);assert.equal(second.status,201);
+  const firstCookie=first.headers.get('set-cookie').split(';')[0];
+  const secondCookie=second.headers.get('set-cookie').split(';')[0];
+  assert.equal((await call('/workspace/documents','PUT',{value:[{number:'DOC-1'}]},firstCookie)).status,200);
+  assert.deepEqual((await call('/workspace/documents','GET',undefined,firstCookie).then(r=>r.json())).value,[{number:'DOC-1'}]);
+  assert.equal((await call('/workspace/documents','GET',undefined,secondCookie).then(r=>r.json())).value,null);
+  assert.equal((await call('/workspace/documents','GET',undefined,adminCookie).then(r=>r.json())).value,null);
+  assert.equal((await call('/workspace/documents','PUT',{value:{}},firstCookie)).status,400);
+  assert.equal((await call('/workspace/documents','GET')).status,401);
+});
 test('Traccar bridge provisions IMEI, converts knots, deduplicates history and checks supported commands',async t=>{
   const {store}=fixture(t);
   const device=store.createDevice({name:'TEST FMB920',model:'FMB920',uniqueId:'123456789012345'}).device;

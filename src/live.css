@@ -4,6 +4,7 @@
 .login-modes{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--line);border-radius:5px;overflow:hidden;background:var(--surface)}
 .login-modes button{padding:10px;font-size:13px;font-weight:600}
 .login-modes button[aria-pressed="true"]{background:var(--tint);color:var(--accent)}
+.auth-links{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:22px;color:var(--muted);font-size:13px}.auth-links a{color:var(--accent);font-weight:600}.auth-links a:hover{text-decoration:underline}
 .credential-result{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:16px;border-left:3px solid var(--accent);background:var(--tint);font-size:13px}
 .credential-result strong{width:100%}.credential-result code{overflow-wrap:anywhere}.credential-result p{width:100%;margin:0;color:var(--muted)}
 html{scrollbar-gutter:stable}

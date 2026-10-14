@@ -44,6 +44,8 @@ export class TrackingStore {
       CREATE TABLE IF NOT EXISTS driver_links (hash TEXT PRIMARY KEY,deviceId TEXT NOT NULL REFERENCES devices(id),expiresAt INTEGER NOT NULL,revoked INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS driver_sessions (hash TEXT PRIMARY KEY,linkHash TEXT NOT NULL REFERENCES driver_links(hash),expiresAt INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS customers (id TEXT PRIMARY KEY,name TEXT NOT NULL,email TEXT NOT NULL UNIQUE,salt TEXT NOT NULL,passwordHash TEXT NOT NULL,createdAt INTEGER NOT NULL,enabled INTEGER NOT NULL DEFAULT 1);
+      CREATE TABLE IF NOT EXISTS admins (email TEXT PRIMARY KEY,salt TEXT NOT NULL,passwordHash TEXT NOT NULL,createdAt INTEGER NOT NULL,enabled INTEGER NOT NULL DEFAULT 1);
+      CREATE TABLE IF NOT EXISTS workspace_data (tenantId TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updatedAt INTEGER NOT NULL, PRIMARY KEY(tenantId,key));
     `);
     if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name==='tenantId'))this.db.exec("ALTER TABLE devices ADD COLUMN tenantId TEXT NOT NULL DEFAULT 'owner'");
     if(!this.db.prepare('PRAGMA table_info(fences)').all().some(c=>c.name==='tenantId'))this.db.exec("ALTER TABLE fences ADD COLUMN tenantId TEXT NOT NULL DEFAULT 'owner'");
@@ -54,7 +56,34 @@ export class TrackingStore {
   }
   close() { this.db.close(); }
   customers(){return this.db.prepare('SELECT id,name,email,createdAt,enabled FROM customers ORDER BY createdAt').all();}
+  createAdmin(email){
+    email=text(email,'Admin email',254).toLowerCase();
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail(400,'Enter a valid admin email.');
+    const password=token(),salt=randomBytes(16).toString('hex');
+    this.db.prepare('INSERT INTO admins(email,salt,passwordHash,createdAt) VALUES (?,?,?,?)').run(email,salt,scryptSync(password,salt,64).toString('hex'),this.now());
+    return {email,password};
+  }
+  adminLogin(email,password){
+    const row=typeof email==='string'&&this.db.prepare('SELECT * FROM admins WHERE email=? AND enabled=1').get(email.trim().toLowerCase());
+    if(typeof password!=='string'||!row||!timingSafeEqual(Buffer.from(row.passwordHash,'hex'),scryptSync(password,row.salt,64)))fail(401,'Incorrect admin credentials.');
+    return {email:row.email};
+  }
   customer(id){return this.db.prepare('SELECT id,name,email,createdAt,enabled FROM customers WHERE id=?').get(id)||fail(404,'Customer not found.');}
+  workspaceData(tenantId,key){
+    const row=this.db.prepare('SELECT value FROM workspace_data WHERE tenantId=? AND key=?').get(tenantId,key);
+    return row?JSON.parse(row.value):null;
+  }
+  saveWorkspaceData(tenantId,key,value){
+    if(!['documents','bills','preferences','ack'].includes(key))fail(404,'Workspace data not found.');
+    if(key==='documents'||key==='bills'){
+      if(!Array.isArray(value)||value.length>100)fail(400,'Store up to 100 records.');
+    }else if(!value||typeof value!=='object'||Array.isArray(value))fail(400,'Expected an object.');
+    const data=JSON.stringify(value);
+    if(Buffer.byteLength(data)>25*1024*1024)fail(413,'Workspace data is too large.');
+    this.db.prepare('INSERT INTO workspace_data(tenantId,key,value,updatedAt) VALUES (?,?,?,?) ON CONFLICT(tenantId,key) DO UPDATE SET value=excluded.value,updatedAt=excluded.updatedAt')
+      .run(tenantId,key,data,this.now());
+    return {ok:true};
+  }
   createCustomer(body){
     const name=text(body.name,'Customer name',100);
     const email=text(body.email,'Customer email',254).toLowerCase();

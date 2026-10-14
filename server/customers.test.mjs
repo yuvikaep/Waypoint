@@ -3,6 +3,18 @@ import assert from 'node:assert/strict';
 import {TrackingStore} from './tracking-store.mjs';
 import {createTrackingServer} from './tracking.mjs';
 
+test('loopback production proxy keeps login rate limits separate by client IP',async t=>{
+  const store=new TrackingStore(':memory:');t.after(()=>store.close());
+  const server=createTrackingServer({store,adminToken:'customer-test-admin-secret-12345',publicOrigin:'https://fleet.example.test',bridge:{state:{configured:false,connected:false},sync:async()=>{}}});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>{server.close(resolve);server.closeAllConnections()}));
+  const login=address=>fetch(`http://127.0.0.1:${server.address().port}/api/gps/customers/session`,{method:'POST',headers:{'Content-Type':'application/json','X-Forwarded-For':address},body:JSON.stringify({email:'absent@example.test',password:'incorrect-password'})});
+  for(let attempt=0;attempt<10;attempt++)assert.equal((await login('192.0.2.1')).status,401);
+  assert.equal((await login('192.0.2.1')).status,429);
+  assert.equal((await login('192.0.2.2')).status,401);
+  assert.equal((await login('invalid-address')).status,401);
+});
+
 test('customer sessions scope fleet, commands, fences, alerts, links and relay access',async t=>{
   const store=new TrackingStore(':memory:');t.after(()=>store.close());
   const a=store.createCustomer({name:'Alpha Fleet',email:'alpha@example.test'});

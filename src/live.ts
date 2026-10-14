@@ -2,7 +2,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {createIcons,Navigation,Map,Route,RadioTower,Bell,Files,Plus,Search,Scan,LocateFixed,Radio,Download,Play,Pause,X,LogOut,Trash2,Smartphone,Copy,RefreshCw,ShieldCheck,MapPin,ChevronRight,UserRound,Settings,FileText,Save} from 'lucide';
 import './live.css';
-import {DEMO_MODE,demoRequest,workspaceStorage,setWorkspaceTenant} from './demo';
+import {DEMO_MODE,demoRequest,workspaceStorage,setWorkspaceTenant,loadWorkspaceData} from './demo';
 
 type Fix={id:number;deviceId:string;recordedAt:number;receivedAt:number;latitude:number;longitude:number;speed:number;heading:number|null;accuracy:number|null;ignition:number|null;battery:number|null;satellites:number|null};
 type Device={id:string;name:string;uniqueId:string;model:'GT06'|'GT06N'|'PT06'|'FMB920'|'FMB125'|'FMC920'|'FMC130'|'Mobile';driver:string;lastSeen:number|null;offlineSeconds:number;speedLimit:number;bridgeStatus:string|null;traccarId:number|null;status:string;online:boolean;fresh:boolean;position:Fix|null;command:{status:string;detail:string;createdAt:number}|null};
@@ -39,7 +39,7 @@ if(views.some(([name])=>name===requestedView))view=requestedView as View;
 async function api<T=any>(path:string, options:RequestInit={}):Promise<T>{
   if(DEMO_MODE)return demoRequest(path,options);
   const response=await fetch('/api/gps'+path,{...options,headers:{'Content-Type':'application/json',...options.headers},signal:AbortSignal.timeout(15000)});
-  const body=await response.json().catch(()=>({error:'Tracking service unavailable. Start npm run dev.'}));
+  const body=await response.json().catch(()=>({error:'Tracking service is temporarily unavailable. Please try again shortly.'}));
   if(!response.ok){if(response.status===401 && !path.startsWith('/sender/') && path!=='/session' && path!=='/customers/session')showLogin();throw new Error(body.error || 'Request failed.');}
   return body;
 }
@@ -50,27 +50,31 @@ function disposeMap(){stopPlay();map?.remove();map=undefined;markerLayer=undefin
 function brand(){return `<a class="live-brand" href="/${DEMO_MODE?'?demo=1':'?live=1'}">${i('navigation')}<span>waypoint<span class="brand-dot">.</span></span></a>`}
 function showLogin(error=''){
   active=false;clearTimeout(poll);disposeMap();
-  $('#app').innerHTML=`<div class="login-shell">${brand()}<form class="login-form" id="login"><span class="eyebrow">FLEET WORKSPACE</span><h1>Welcome back</h1><div class="login-modes" role="group" aria-label="Account access"><button type="button" data-mode="customer" aria-pressed="true">Customer login</button><button type="button" data-mode="signup" aria-pressed="false">Sign up</button><button type="button" data-mode="admin" aria-pressed="false">Admin</button></div><div id="login-fields"></div><p class="error" role="alert">${esc(error)}</p><button class="primary" type="submit" id="login-submit">Open workspace ${i('chevron-right')}</button></form></div>`;
-  let mode:'customer'|'signup'|'admin'='customer';
-  const fields=()=>{$('#login-fields').innerHTML=mode==='admin'?'<label>Workspace access key<input name="token" type="password" required autocomplete="current-password"></label><details><summary>Local access key</summary><p>Your server stores the key in <code>server/private/admin-token</code>.</p></details>':`${mode==='signup'?'<label>Your name or business<input name="name" maxlength="100" required autocomplete="organization"></label>':''}<label>Email<input name="email" type="email" required autocomplete="username"></label><label>Password<input name="password" type="password" ${mode==='signup'?'minlength="12" maxlength="128" autocomplete="new-password"':'autocomplete="current-password"'} required></label>${mode==='signup'?'<label>Confirm password<input name="confirm" type="password" required autocomplete="new-password"></label>':''}`;$('#login-submit').innerHTML=(mode==='signup'?'Create workspace':'Open workspace')+' '+i('chevron-right');document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.mode===mode)));icons()};
-  document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(b=>b.onclick=()=>{mode=b.dataset.mode as typeof mode;fields()});fields();
-  $('#login').addEventListener('submit',async event=>{event.preventDefault();const button=$<HTMLButtonElement>('#login-submit');button.disabled=true;try{const data=new FormData(event.target as HTMLFormElement);if(mode==='signup'&&data.get('password')!==data.get('confirm'))throw Error('Passwords do not match.');await api(mode==='signup'?'/customers/register':mode==='customer'?'/customers/session':'/session',{method:'POST',body:JSON.stringify(mode==='admin'?{token:data.get('token')}:{name:data.get('name'),email:data.get('email'),password:data.get('password')})});location.href='/?live=1'}catch(e){$('.error').textContent=(e as Error).message;button.disabled=false}});icons();
+  const requested=new URLSearchParams(location.search).get('auth');
+  const mode=requested==='signup'||requested==='admin'?requested:'customer';
+  const titles={customer:'Customer login',signup:'Create your workspace',admin:'Admin login'};
+  const fields=`${mode==='signup'?'<label>Your name or business<input name="name" maxlength="100" required autocomplete="organization"></label>':''}<label>Email<input name="email" type="email" required autocomplete="username"></label><label>Password<input name="password" type="password" ${mode==='signup'?'minlength="12" maxlength="128" autocomplete="new-password"':'autocomplete="current-password"'} required></label>${mode==='signup'?'<label>Confirm password<input name="confirm" type="password" required autocomplete="new-password"></label>':''}`;
+  const links=mode==='signup'?'<span>Already have an account? <a href="/?live=1&auth=customer">Customer login</a></span>':mode==='admin'?'<a href="/?live=1&auth=customer">Customer login</a>':'<span>New to Waypoint? <a href="/?live=1&auth=signup">Create account</a></span><a href="/?live=1&auth=admin">Admin login</a>';
+  $('#app').innerHTML=`<div class="login-shell">${brand()}<form class="login-form" id="login"><span class="eyebrow">${mode==='admin'?'WAYPOINT / ADMIN':'WAYPOINT / CUSTOMER'}</span><h1>${titles[mode]}</h1>${fields}<p class="error" role="alert">${esc(error)}</p><button class="primary" type="submit" id="login-submit">${mode==='signup'?'Create account':'Sign in'} ${i('chevron-right')}</button><div class="auth-links">${links}</div></form></div>`;
+  $('#login').addEventListener('submit',async event=>{event.preventDefault();const button=$<HTMLButtonElement>('#login-submit');button.disabled=true;try{const data=new FormData(event.target as HTMLFormElement);if(mode==='signup'&&data.get('password')!==data.get('confirm'))throw Error('Passwords do not match.');await api(mode==='signup'?'/customers/register':mode==='customer'?'/customers/session':'/admin/session',{method:'POST',body:JSON.stringify({name:data.get('name'),email:data.get('email'),password:data.get('password')})});location.href='/?live=1'}catch(e){$('.error').textContent=(e as Error).message;button.disabled=false}});icons();
 }
 async function boot(){
   try{identity=DEMO_MODE?{role:'admin',tenantId:'owner',name:'Demo workspace',email:null}:await api<Identity>('/session')}
   catch{/* Show customer login, signup and admin access. */}
   if(!identity){showLogin();return}
+  const requestedAuth=new URLSearchParams(location.search).get('auth');
+  if(requestedAuth==='signup'||(requestedAuth==='admin'&&identity.role!=='admin')||(requestedAuth==='customer'&&identity.role!=='customer')){showLogin();return}
   setWorkspaceTenant(identity.tenantId);
   if(view==='Customers'&&identity.role!=='admin')view='Live tracking';
-  try {state=await api<FleetState>('/state');active=true;connected=true;selected=state.devices[0]?.id || '';shell();schedule();}
-  catch(e){if(!$('#login'))showLogin((e as Error).message)}
+  try {await loadWorkspaceData();if(!requestedView)view=preferences().defaultView;state=await api<FleetState>('/state');active=true;connected=true;selected=state.devices[0]?.id || '';shell();schedule();}
+  catch(e){$('#app').innerHTML=`<div class="login-shell">${brand()}<div class="login-form"><h1>Workspace unavailable</h1><p class="error">${esc((e as Error).message)}</p><button class="primary" id="retry-workspace">Retry</button></div></div>`;action('#retry-workspace',()=>location.reload());icons()}
 }
 function shell(){
   const navScroll=$<HTMLElement>('.live-sidebar nav')?.scrollTop||0;
   disposeMap();
   $('#app').innerHTML=`<div class="live-shell"><aside class="live-sidebar">${brand()}<div class="workspace-label">${esc(preferences().workspace)}<small>${esc(identity?.name||preferences().name)}</small></div><nav aria-label="Workspace">${[...views,...(identity?.role==='admin'&&!DEMO_MODE?[['Customers','user-round'] as [View,string]]:[])].map(([name,icon])=>`<button data-view="${name}" class="${view===name?'selected':''}">${i(icon)}${name}</button>`).join('')}</nav><div class="sidebar-foot"><button id="logout">${i('log-out')}Sign out</button></div></aside><main class="live-main"><header class="live-header"><span>Workspace ${i('chevron-right')} <strong>${view}</strong></span><span id="connection" role="status"></span></header><div class="live-heading"><div><span class="eyebrow">WAYPOINT / OPERATIONS</span><h1>${view==='Live tracking'?'Fleet overview':view}</h1></div><button class="primary" id="add-device">${i('plus')}Add device</button></div><div id="gateway-notice"></div><div id="view-body"></div></main></div><div id="notice" role="status" hidden></div><dialog id="modal"></dialog>`;
   $('#connection').insertAdjacentHTML('afterend',`<button class="tool compact-signout" id="compact-logout" title="Sign out" aria-label="Sign out">${i('log-out')}</button>`);
-  const logout=async()=>{await api('/session',{method:'DELETE'});location.href='/?live=1&signin=1'};
+  const logout=async()=>{await api('/session',{method:'DELETE'});location.href=`/?live=1&auth=${identity?.role==='admin'?'admin':'customer'}`};
   action('#compact-logout',logout);
   document.querySelectorAll<HTMLElement>('[data-view]').forEach(b=>b.onclick=()=>{view=b.dataset.view as View;search='';filter='All';const url=new URL(location.href);url.searchParams.set('view',view);window.history.pushState(null,'',url);shell()});
   action('#logout',logout);action('#add-device',addDevice);
@@ -111,15 +115,15 @@ function renderPreferences(){
   $('#view-body').innerHTML=`<form class="workspace-form" id="workspace-preferences">
     <h2>${profile?'Workspace profile':'Workspace preferences'}</h2>
     ${profile?`<label>Display name<input name="name" maxlength="100" required value="${esc(p.name)}"></label><label>Workspace name<input name="workspace" maxlength="100" required value="${esc(p.workspace)}"></label><label>Email<input name="email" type="email" maxlength="254" value="${esc(p.email)}"></label>`:
-    `<label>Default page<select name="defaultView">${views.map(([name])=>`<option ${p.defaultView===name?'selected':''}>${name}</option>`).join('')}</select></label><label class="check-setting"><input type="checkbox" name="follow" ${p.follow?'checked':''}>Follow selected vehicle on map</label><dl class="setup-facts"><dt>Mobile heartbeat</dt><dd>30 seconds</dd><dt>Map refresh</dt><dd>3 seconds</dd><dt>Preference storage</dt><dd>This browser</dd></dl>`}
+    `<label>Default page<select name="defaultView">${views.map(([name])=>`<option ${p.defaultView===name?'selected':''}>${name}</option>`).join('')}</select></label><label class="check-setting"><input type="checkbox" name="follow" ${p.follow?'checked':''}>Follow selected vehicle on map</label><dl class="setup-facts"><dt>Mobile heartbeat</dt><dd>30 seconds</dd><dt>Map refresh</dt><dd>3 seconds</dd><dt>Preference storage</dt><dd>Cloud workspace</dd></dl>`}
     <p class="error" id="preferences-error" role="alert"></p>
     <button class="primary" type="submit">${i('save')}Save changes</button></form>`;
-  $('#workspace-preferences').addEventListener('submit',event=>{
+  $('#workspace-preferences').addEventListener('submit',async event=>{
     event.preventDefault();const form=new FormData(event.target as HTMLFormElement);
     try{
       const next=profile?{...p,name:String(form.get('name')).trim(),workspace:String(form.get('workspace')).trim(),email:String(form.get('email')).trim()}:{...p,defaultView:String(form.get('defaultView')) as View,follow:form.has('follow')};
       if(!next.name||!next.workspace)throw Error('Display name and workspace name are required.');
-      workspaceStorage.setItem('workspace-preferences',JSON.stringify(next));following=next.follow;shell();notify('Preferences saved in this browser.');
+      await workspaceStorage.setItem('workspace-preferences',JSON.stringify(next));following=next.follow;shell();notify('Preferences saved to cloud.');
     }catch(error){$('#preferences-error').textContent=(error as Error).message}
   });
 }

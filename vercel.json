@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/gps/:path*",
+      "destination": "https://92.4.84.227.sslip.io/api/gps/:path*"
+    }
+  ]
+}

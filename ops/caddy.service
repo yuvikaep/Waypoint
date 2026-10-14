@@ -16,6 +16,7 @@ NoNewPrivileges=true
 ProtectSystem=full
 ReadWritePaths=/var/lib/caddy
 Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
