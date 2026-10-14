@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22.13.0" },
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:web": "vite --host 127.0.0.1",
@@ -20,8 +22,10 @@
     "test:api": "node --test server/sandbox.test.mjs"
   },
   "dependencies": {
+    "@vercel/blob": "^2.8.2",
     "leaflet": "^1.9.4",
-    "lucide": "^0.468.0"
+    "lucide": "^0.468.0",
+    "pg": "^8.23.1"
   },
   "devDependencies": {
     "@types/leaflet": "^1.9.15",

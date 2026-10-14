@@ -16,27 +16,27 @@ export class TraccarBridge {
       const remote=(await this.request('/devices')).data;
       const current=(await this.request('/positions')).data;
       const failures=[];
-      for (const device of this.store.devices().filter(d=>d.model!=='Mobile')) {
+      for (const device of (await this.store.devices()).filter(d=>d.model!=='Mobile')) {
         try {
           let match=remote.find(d=>d.uniqueId===device.uniqueId);
           if (!match) {
             match=(await this.request('/devices',{method:'POST',body:JSON.stringify({name:device.name,uniqueId:device.uniqueId,model:device.model})})).data;
             remote.push(match);
           }
-          this.store.db.prepare('UPDATE devices SET traccarId=?,bridgeStatus=? WHERE id=?').run(match.id,match.status || 'unknown',device.id);
+          await this.store.db.prepare('UPDATE devices SET traccarId=?,bridgeStatus=? WHERE id=?').run(match.id,match.status || 'unknown',device.id);
           const lastSeen=Date.parse(match.lastUpdate);
-          if (Number.isFinite(lastSeen) && lastSeen<=this.store.now()+60000) this.store.seen(device.id,lastSeen);
+          if (Number.isFinite(lastSeen) && lastSeen<=this.store.now()+60000) await this.store.seen(device.id,lastSeen);
           const latest=current.find(p=>p.deviceId===match.id);
           // Backfill bounded windows with overlap; source position IDs deduplicate retries.
           // Record historical points before the current fix so fence transitions stay ordered.
           const from=Math.max(device.createdAt-60000,(device.cursor ?? device.createdAt)-60000);
           const to=Math.min(from+15*60000,this.store.now());
           const history=(await this.request(`/positions?${new URLSearchParams({deviceId:String(match.id),from:new Date(from).toISOString(),to:new Date(to).toISOString()})}`)).data;
-          for (const position of history.sort((a,b)=>Date.parse(a.fixTime)-Date.parse(b.fixTime))) this.ingest(device.id,position);
-          this.store.db.prepare('UPDATE devices SET cursor=? WHERE id=?').run(to,device.id);
-          if (latest) this.ingest(device.id,latest);
+          for (const position of history.sort((a,b)=>Date.parse(a.fixTime)-Date.parse(b.fixTime))) await this.ingest(device.id,position);
+          await this.store.db.prepare('UPDATE devices SET cursor=? WHERE id=?').run(to,device.id);
+          if (latest) await this.ingest(device.id,latest);
         } catch (e) {
-          this.store.db.prepare('UPDATE devices SET bridgeStatus=? WHERE id=?').run(`Sync failed: ${e.message}`,device.id);
+          await this.store.db.prepare('UPDATE devices SET bridgeStatus=? WHERE id=?').run(`Sync failed: ${e.message}`,device.id);
           failures.push(`${device.name}: ${e.message}`);
         }
       }
@@ -44,10 +44,10 @@ export class TraccarBridge {
     } catch (e) { this.state={...this.state,connected:false,error:e.message}; }
     finally { this.busy=false; }
   }
-  ingest(id,p) {
+  async ingest(id,p) {
     if (!p.valid || !p.id) return;
     const attrs=p.attributes || {};
-    this.store.ingest(id,{eventId:`traccar:${p.id}`,recordedAt:p.fixTime,latitude:p.latitude,longitude:p.longitude,
+    return await this.store.ingest(id,{eventId:`traccar:${p.id}`,recordedAt:p.fixTime,latitude:p.latitude,longitude:p.longitude,
       speed:Math.max(0,p.speed*1.852),heading:p.course,accuracy:p.accuracy,
       ignition:attrs.ignition,battery:attrs.batteryLevel,satellites:attrs.sat},
     {receivedAt:Date.parse(p.serverTime) || this.store.now(),heartbeat:false});
@@ -55,7 +55,7 @@ export class TraccarBridge {
   async importHistory(device,from,to) {
     if(!device.traccarId)throw new Error('Device is not yet linked to the gateway.');
     const result=await this.request(`/positions?${new URLSearchParams({deviceId:String(device.traccarId),from:new Date(from).toISOString(),to:new Date(to).toISOString()})}`);
-    for(const position of result.data.sort((a,b)=>Date.parse(a.fixTime)-Date.parse(b.fixTime)))this.ingest(device.id,position);
+    for(const position of result.data.sort((a,b)=>Date.parse(a.fixTime)-Date.parse(b.fixTime)))await this.ingest(device.id,position);
   }
   async ping(device) {
     if (!device.traccarId) throw new Error('Device is not registered with the tracker gateway yet.');
@@ -71,9 +71,9 @@ export class TraccarBridge {
     const positions=(await this.request(`/positions?deviceId=${device.traccarId}`)).data;
     const latest=positions.find(p=>p.deviceId===device.traccarId&&p.id===remote.positionId);
     if(!latest||latest.protocol!==protocol||!latest.valid)return false;
-    this.ingest(device.id,latest);
+    await this.ingest(device.id,latest);
     const lastSeen=Date.parse(remote.lastUpdate);
-    if(Number.isFinite(lastSeen)&&lastSeen<=this.store.now())this.store.seen(device.id,lastSeen);
+    if(Number.isFinite(lastSeen)&&lastSeen<=this.store.now())await this.store.seen(device.id,lastSeen);
     const types=(await this.request(`/commands/types?deviceId=${device.traccarId}&textChannel=false`)).data;
     return ['engineStop','engineResume'].every(type=>types.some(t=>t.type===type));
   }

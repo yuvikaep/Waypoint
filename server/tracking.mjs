@@ -10,16 +10,28 @@ import { RelayService } from './relay.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 async function body(req,maxBytes=16384) {
   if (!req.headers['content-type']?.startsWith('application/json')) fail(415,'Send application/json.');
+  if(req.body!==undefined){
+    try{const value=typeof req.body==='string'||Buffer.isBuffer(req.body)?JSON.parse(String(req.body)):req.body;
+      if(Buffer.byteLength(JSON.stringify(value))>maxBytes)fail(413,'Request is too large.');
+      if(!value||Array.isArray(value)||typeof value!=='object')fail(400,'Invalid JSON object.');return value;
+    }catch(error){if(error.status)throw error;fail(400,'Invalid JSON object.');}
+  }
   const chunks=[];let bytes=0;
   for await (const chunk of req) { bytes+=chunk.length; if (bytes>maxBytes) fail(413,'Request is too large.'); chunks.push(chunk); }
   try { const parsed=JSON.parse(Buffer.concat(chunks).toString('utf8')); if (!parsed || Array.isArray(parsed) || typeof parsed!=='object') throw Error(); return parsed; }
   catch { fail(400,'Invalid JSON object.'); }
 }
-export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(store),publicOrigin,frontendOrigin=process.env.GPS_FRONTEND_ORIGIN,relayEnabled=false,staticDir=resolve(root,'dist')}={}) {
+export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(store),publicOrigin,frontendOrigin=process.env.GPS_FRONTEND_ORIGIN,relayEnabled=false,backgroundTasks=true,sessionStore=new Map(),rateLimit,clientAddressResolver,staticDir=resolve(root,'dist')}={}) {
   if (!adminToken || adminToken.length<24) throw new Error('Admin token must contain at least 24 characters.');
-  const sessions=new Map(), limits=new Map();
+  const sessions=sessionStore, limits=new Map();
+  const generationKey=id=>`tenant-generation:${id}`;
+  const saveSession=async(key,value)=>{
+    if(value.role==='customer')value.generation=(await sessions.get(generationKey(value.tenantId)))??null;
+    await sessions.set(key,value);
+  };
   const relay=new RelayService(store,bridge,{enabled:relayEnabled});
-  const limited=(key,max,ms=60000)=>{
+  const limited=async(key,max,ms=60000)=>{
+    if(rateLimit)return await rateLimit(key,max,ms);
     const now=Date.now(); let slot=limits.get(key);
     if (!slot || slot.reset<=now) { slot={count:0,reset:now+ms}; limits.set(key,slot); }
     if (++slot.count>max) fail(429,'Too many requests. Try again shortly.');
@@ -27,6 +39,7 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
   const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(data));};
   const server=createServer(async(req,res)=>{
     try {
+      await relay.ready;
       const url=new URL(req.url,'http://localhost'), path=url.pathname, method=req.method;
       if (path==='/api/gps/health') return json(res,200,{ok:true});
       if (!path.startsWith('/api/gps/')) {
@@ -44,142 +57,154 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
       const remoteAddress=req.socket.remoteAddress;
       const forwarded=String(req.headers['x-forwarded-for']||'').split(',').at(-1).trim();
       // Only the local production reverse proxy can supply client addresses.
-      const clientAddress=publicOrigin&&['127.0.0.1','::1','::ffff:127.0.0.1'].includes(remoteAddress)&&isIP(forwarded)?forwarded:remoteAddress;
-      limited(clientAddress,600);
+      const clientAddress=clientAddressResolver?clientAddressResolver(req):publicOrigin&&['127.0.0.1','::1','::ffff:127.0.0.1'].includes(remoteAddress)&&isIP(forwarded)?forwarded:remoteAddress;
+      await limited(clientAddress,600);
       if (path==='/api/gps/session' && method==='POST') {
-        limited(`login:${clientAddress}`,10);
+        await limited(`login:${clientAddress}`,10);
         const input=await body(req);
         if (typeof input.token!=='string' || hash(input.token)!==hash(adminToken)) fail(401,'Incorrect workspace access key.');
-        const session=token(); sessions.set(hash(session),{role:'admin',tenantId:'owner',name:'Workspace admin',expiresAt:Date.now()+12*3600000});
+        const session=token(); await saveSession(hash(session),{role:'admin',tenantId:'owner',name:'Workspace admin',expiresAt:Date.now()+12*3600000});
         res.setHeader('Set-Cookie',`waypoint_session=${session}; HttpOnly; SameSite=Strict; Path=/api/gps; Max-Age=43200${publicOrigin?.startsWith('https:')?'; Secure':''}`);
         return json(res,200,{ok:true});
       }
       if(path==='/api/gps/admin/session'&&method==='POST'){
-        limited(`admin-login:${clientAddress}`,10);
-        const input=await body(req),admin=store.adminLogin(input.email,input.password);
-        const session=token();sessions.set(hash(session),{role:'admin',tenantId:'owner',name:'Workspace admin',email:admin.email,expiresAt:Date.now()+12*3600000});
+        await limited(`admin-login:${clientAddress}`,10);
+        const input=await body(req),admin=await store.adminLogin(input.email,input.password);
+        const session=token();await saveSession(hash(session),{role:'admin',tenantId:'owner',name:'Workspace admin',email:admin.email,expiresAt:Date.now()+12*3600000});
         res.setHeader('Set-Cookie',`waypoint_session=${session}; HttpOnly; SameSite=Strict; Path=/api/gps; Max-Age=43200${publicOrigin?.startsWith('https:')?'; Secure':''}`);
         return json(res,200,{ok:true});
       }
       if(path==='/api/gps/customers/register'&&method==='POST'){
-        limited(`register:${clientAddress}`,5,3600000);
-        const customer=store.registerCustomer(await body(req));
-        const session=token();sessions.set(hash(session),{role:'customer',tenantId:customer.id,name:customer.name,email:customer.email,expiresAt:Date.now()+12*3600000});
+        await limited(`register:${clientAddress}`,5,3600000);
+        const customer=await store.registerCustomer(await body(req));
+        const session=token();await saveSession(hash(session),{role:'customer',tenantId:customer.id,name:customer.name,email:customer.email,expiresAt:Date.now()+12*3600000});
         res.setHeader('Set-Cookie',`waypoint_session=${session}; HttpOnly; SameSite=Strict; Path=/api/gps; Max-Age=43200${publicOrigin?.startsWith('https:')?'; Secure':''}`);
         return json(res,201,{role:'customer',tenantId:customer.id,name:customer.name,email:customer.email});
       }
       if(path==='/api/gps/customers/session'&&method==='POST'){
-        limited(`customer-login:${clientAddress}`,10);
-        const input=await body(req),customer=store.customerLogin(input.email,input.password);
-        const session=token();sessions.set(hash(session),{role:'customer',tenantId:customer.id,name:customer.name,email:customer.email,expiresAt:Date.now()+12*3600000});
+        await limited(`customer-login:${clientAddress}`,10);
+        const input=await body(req),customer=await store.customerLogin(input.email,input.password);
+        const session=token();await saveSession(hash(session),{role:'customer',tenantId:customer.id,name:customer.name,email:customer.email,expiresAt:Date.now()+12*3600000});
         res.setHeader('Set-Cookie',`waypoint_session=${session}; HttpOnly; SameSite=Strict; Path=/api/gps; Max-Age=43200${publicOrigin?.startsWith('https:')?'; Secure':''}`);
         return json(res,200,{ok:true});
       }
       if (path.startsWith('/api/gps/sender/')) {
         if(path==='/api/gps/sender/join' && method==='POST'){
-          limited(`join:${clientAddress}`,20);
-          const joined=store.joinDriver((await body(req)).code);
+          await limited(`join:${clientAddress}`,20);
+          const joined=await store.joinDriver((await body(req)).code);
           res.setHeader('Set-Cookie',`waypoint_sender=${joined.secret}; HttpOnly; SameSite=Strict; Path=/api/gps/sender; Max-Age=${Math.floor((joined.expiresAt-store.now())/1000)}${publicOrigin?.startsWith('https:')?'; Secure':''}`);
           return json(res,200,{device:{id:joined.device.id,name:joined.device.name,driver:joined.device.driver},expiresAt:joined.expiresAt});
         }
         const secret=req.headers.authorization?.replace(/^Bearer /,'');
         const senderCookie=req.headers.cookie?.split(';').map(v=>v.trim()).find(v=>v.startsWith('waypoint_sender='))?.slice(16);
-        const session=secret?null:store.driverSession(senderCookie);
-        const device=session?.device || store.authenticateDevice(secret);
-        limited(`device:${device.id}`,120);
+        const session=secret?null:await store.driverSession(senderCookie);
+        const device=session?.device || await store.authenticateDevice(secret);
+        await limited(`device:${device.id}`,120);
         if(path==='/api/gps/sender/me' && method==='GET')return json(res,200,{device:{id:device.id,name:device.name,driver:device.driver},expiresAt:session?.expiresAt});
         if ((path==='/api/gps/sender/position'||path==='/api/gps/sender/heartbeat') && method==='POST') {
           const payload=await body(req);
           if(session && payload.deviceId!==device.id)fail(409,'This browser is connected to a different vehicle. Reopen your driver link.');
-          if(path.endsWith('/position'))return json(res,200,store.ingest(device.id,payload));
-          store.seen(device.id);return json(res,200,{ok:true,commands:store.commands(device.id)});
+          if(path.endsWith('/position'))return json(res,200,await store.ingest(device.id,payload));
+          await store.seen(device.id);return json(res,200,{ok:true,commands:await store.commands(device.id)});
         }
-        if (path==='/api/gps/sender/commands' && method==='GET') return json(res,200,{commands:store.commands(device.id)});
+        if (path==='/api/gps/sender/commands' && method==='GET') return json(res,200,{commands:await store.commands(device.id)});
         fail(404,'Sender endpoint not found.');
       }
       const cookie=req.headers.cookie?.split(';').map(v=>v.trim()).find(v=>v.startsWith('waypoint_session='))?.slice(17);
-      const session=cookie&&sessions.get(hash(cookie));
-      if (!session||session.expiresAt<=Date.now()) fail(401,'Sign in to your workspace.');
-      if(session.role==='customer'&&!store.customer(session.tenantId).enabled)fail(403,'Customer access is disabled.');
-      const ownsDevice=id=>{const d=store.raw(id);if(d.tenantId!==session.tenantId)fail(404,'Device not found.');return d;};
+      const session=cookie&&await sessions.get(hash(cookie));
+      if (!session||session.expiresAt<=Date.now()) {
+        if(cookie)await sessions.delete(hash(cookie));
+        fail(401,'Sign in to your workspace.');
+      }
+      if(session.role==='customer'&&session.generation!==((await sessions.get(generationKey(session.tenantId)))??null))fail(401,'Sign in to your workspace.');
+      if(session.role==='customer'&&!(await store.customer(session.tenantId)).enabled)fail(403,'Customer access is disabled.');
+      const ownsDevice=async id=>{const d=await store.raw(id);if(d.tenantId!==session.tenantId)fail(404,'Device not found.');return d;};
       if(path==='/api/gps/session'&&method==='GET')return json(res,200,{role:session.role,tenantId:session.tenantId,name:session.name,email:session.email||null});
       const dataMatch=path.match(/^\/api\/gps\/workspace\/(documents|bills|preferences|ack)$/);
       if(dataMatch){
         const key=dataMatch[1];
-        if(method==='GET')return json(res,200,{value:store.workspaceData(session.tenantId,key)});
-        if(method==='PUT')return json(res,200,store.saveWorkspaceData(session.tenantId,key,(await body(req,26*1024*1024)).value));
+        if(method==='GET')return json(res,200,{value:await store.workspaceData(session.tenantId,key)});
+        if(method==='PUT')return json(res,200,await store.saveWorkspaceData(session.tenantId,key,(await body(req,26*1024*1024)).value));
         fail(405,'Method not allowed.');
       }
       if (path==='/api/gps/session' && method==='DELETE') {
-        sessions.delete(hash(cookie));res.setHeader('Set-Cookie','waypoint_session=; HttpOnly; SameSite=Strict; Path=/api/gps; Max-Age=0');return json(res,200,{ok:true});
+        await sessions.delete(hash(cookie));res.setHeader('Set-Cookie','waypoint_session=; HttpOnly; SameSite=Strict; Path=/api/gps; Max-Age=0');return json(res,200,{ok:true});
       }
-      if(path==='/api/gps/customers'&&method==='GET'){if(session.role!=='admin')fail(403,'Admin access required.');return json(res,200,{customers:store.customers()});}
-      if(path==='/api/gps/customers'&&method==='POST'){if(session.role!=='admin')fail(403,'Admin access required.');return json(res,201,store.createCustomer(await body(req)));}
+      if(path==='/api/gps/customers'&&method==='GET'){if(session.role!=='admin')fail(403,'Admin access required.');return json(res,200,{customers:await store.customers()});}
+      if(path==='/api/gps/customers'&&method==='POST'){if(session.role!=='admin')fail(403,'Admin access required.');return json(res,201,await store.createCustomer(await body(req)));}
       const customerMatch=path.match(/^\/api\/gps\/customers\/([\w-]+)\/(reset|access)$/);
       if(customerMatch){
         if(session.role!=='admin')fail(403,'Admin access required.');
         const [,id,action]=customerMatch,input=await body(req);
         if(action==='reset'&&method==='POST'){
-          const result=store.resetCustomer(id);for(const [key,value] of sessions)if(value.tenantId===id)sessions.delete(key);
+          const result=await store.resetCustomer(id);await sessions.set(generationKey(id),token());
           return json(res,200,result);
         }
         if(action==='access'&&method==='PUT'&&typeof input.enabled==='boolean'){
-          const result=store.setCustomerEnabled(id,input.enabled);if(!input.enabled)for(const [key,value] of sessions)if(value.tenantId===id)sessions.delete(key);
+          const result=await store.setCustomerEnabled(id,input.enabled);if(!input.enabled)await sessions.set(generationKey(id),token());
           return json(res,200,result);
         }
       }
-      if (path==='/api/gps/state' && method==='GET') {store.tick();return json(res,200,{devices:store.devices(session.tenantId),fences:store.fences(session.tenantId),alerts:store.alerts(session.tenantId),gateway:bridge.state,serverTime:Date.now()});}
-      if (path==='/api/gps/devices' && method==='POST') {const result=store.createDevice(await body(req),session.tenantId);void bridge.sync();return json(res,201,result);}
+      if (path==='/api/gps/state' && method==='GET') {await store.tick();return json(res,200,{devices:await store.devices(session.tenantId),fences:await store.fences(session.tenantId),alerts:await store.alerts(session.tenantId),gateway:bridge.state,serverTime:Date.now()});}
+      if (path==='/api/gps/devices' && method==='POST') {const result=await store.createDevice(await body(req),session.tenantId);if(backgroundTasks)void bridge.sync();return json(res,201,result);}
       const deviceMatch=path.match(/^\/api\/gps\/devices\/([\w-]+)\/(history|ping|token|driver-link|relay)$/);
       if (deviceMatch) {
-        const [,id,action]=deviceMatch,device=ownsDevice(id);
+        const [,id,action]=deviceMatch,device=await ownsDevice(id);
         if(action==='relay'&&method==='GET')return json(res,200,await relay.status(id));
         if(action==='relay'&&(method==='POST'||method==='PUT')){
-          limited(`relay:${id}`,6);
+          await limited(`relay:${id}`,6);
           const input=await body(req);
           if(typeof input.adminKey!=='string')fail(403,'Workspace re-authentication is required for relay changes.');
-          if(session.role==='admin'){if(hash(input.adminKey)!==hash(adminToken))fail(403,'Incorrect workspace key.');}
-          else store.customerLogin(session.email,input.adminKey);
-          return json(res,200,method==='PUT'?relay.configure(id,input):await relay.execute(id,input));
+          if(session.role==='admin'){if(session.email)await store.adminLogin(session.email,input.adminKey);else if(hash(input.adminKey)!==hash(adminToken))fail(403,'Incorrect workspace key.');}
+          else await store.customerLogin(session.email,input.adminKey);
+          return json(res,200,method==='PUT'?await relay.configure(id,input):await relay.execute(id,input));
         }
-        if(action==='driver-link' && method==='GET')return json(res,200,store.getDriverLink(id));
-        if(action==='driver-link' && method==='POST'){const input=await body(req);return json(res,201,store.createDriverLink(id,{regenerate:input.regenerate===true}));}
-        if(action==='driver-link' && method==='DELETE'){store.revokeDriverLinks(id);return json(res,200,{ok:true});}
+        if(action==='driver-link' && method==='GET')return json(res,200,await store.getDriverLink(id));
+        if(action==='driver-link' && method==='POST'){const input=await body(req);return json(res,201,await store.createDriverLink(id,{regenerate:input.regenerate===true}));}
+        if(action==='driver-link' && method==='DELETE'){await store.revokeDriverLinks(id);return json(res,200,{ok:true});}
         if (action==='history' && method==='GET') {
           const from=Date.parse(url.searchParams.get('from')),to=Date.parse(url.searchParams.get('to')),after=Number(url.searchParams.get('after') || 0);
-          store.history(id,from,to,after);let warning=null;
+          await store.history(id,from,to,after);let warning=null;
           if(device.model!=='Mobile' && after===0){
             try{await bridge.importHistory(device,from,to)}catch(e){warning=`Showing locally stored history only. ${e.message}`}
           }
-          return json(res,200,{...store.history(id,from,to,after),warning});
+          return json(res,200,{...await store.history(id,from,to,after),warning});
         }
-        if (action==='token' && method==='POST') {await body(req);return json(res,200,{token:store.rotateToken(id)});}
+        if (action==='token' && method==='POST') {await body(req);return json(res,200,{token:await store.rotateToken(id)});}
         if (action==='ping' && method==='POST') {
-          await body(req);limited(`ping:${id}`,6);
-          const command=store.queue(id);
+          await body(req);await limited(`ping:${id}`,6);
+          const command=await store.queue(id);
           if (device.model!=='Mobile' && command.detail==='Waiting for the sender.') {
-            store.updateCommand(command.id,'dispatching','Submitting request to gateway.');
-            try { const sent=await bridge.ping(device);store.updateCommand(command.id,sent.status,sent.detail); }
-            catch(e) {store.updateCommand(command.id,'failed',e.message);}
+            await store.updateCommand(command.id,'dispatching','Submitting request to gateway.');
+            try { const sent=await bridge.ping(device);await store.updateCommand(command.id,sent.status,sent.detail); }
+            catch(e) {await store.updateCommand(command.id,'failed',e.message);}
           }
-          return json(res,202,store.device(id).command);
+          return json(res,202,(await store.device(id)).command);
         }
       }
-      if (path==='/api/gps/fences' && method==='POST') return json(res,201,store.addFence(await body(req),session.tenantId));
+      if (path==='/api/gps/fences' && method==='POST') return json(res,201,await store.addFence(await body(req),session.tenantId));
       const fenceMatch=path.match(/^\/api\/gps\/fences\/([\w-]+)$/);
-      if (fenceMatch && method==='DELETE') {store.deleteFence(fenceMatch[1],session.tenantId);return json(res,200,{ok:true});}
+      if (fenceMatch && method==='DELETE') {await store.deleteFence(fenceMatch[1],session.tenantId);return json(res,200,{ok:true});}
       const alertMatch=path.match(/^\/api\/gps\/alerts\/([\w-]+)\/ack$/);
-      if (alertMatch && method==='POST') {await body(req);store.acknowledge(alertMatch[1],session.tenantId);return json(res,200,{ok:true});}
+      if (alertMatch && method==='POST') {await body(req);await store.acknowledge(alertMatch[1],session.tenantId);return json(res,200,{ok:true});}
       fail(404,'Endpoint not found.');
     } catch(e) {if (!res.headersSent) json(res,e.status || 500,{error:e.status?e.message:'The tracking service could not complete this request.'}); else res.end();}
   });
   server.requestTimeout=60000;server.headersTimeout=10000;
-  const timer=setInterval(()=>{
-    store.tick();void bridge.sync();
-    for(const [key,session] of sessions) if(session.expiresAt<=Date.now()) sessions.delete(key);
-    for(const [key,slot] of limits) if(slot.reset<=Date.now()) limits.delete(key);
-  },5000);
-  timer.unref();server.on('close',()=>clearInterval(timer));
+  if(backgroundTasks){
+    let working=false;
+    const timer=setInterval(async()=>{
+      if(working)return;
+      working=true;
+      try{
+        await store.tick();await bridge.sync();
+        if(sessions instanceof Map)for(const [key,session] of sessions)if(session?.expiresAt<=Date.now())await sessions.delete(key);
+        for(const [key,slot] of limits)if(slot.reset<=Date.now())limits.delete(key);
+      }catch(e){console.error('Tracking background task failed:',e.message);}
+      finally{working=false;}
+    },5000);
+    timer.unref();server.on('close',()=>clearInterval(timer));
+  }
   return server;
 }
 
@@ -193,6 +218,6 @@ if (process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)
   const server=createTrackingServer({store,adminToken,bridge,publicOrigin:process.env.GPS_PUBLIC_ORIGIN,relayEnabled:process.env.GPS_RELAY_ENABLED==='true'});
   const port=Number(process.env.GPS_PORT || 5180),host=process.env.GPS_HOST || '127.0.0.1';
   server.listen(port,host,()=>{console.log(`Waypoint GPS: http://${host}:${port}`);console.log(`Workspace access key: ${secretPath}`);void bridge.sync();});
-  const shutdown=()=>{server.close(()=>{store.close();process.exit(0)});server.closeAllConnections();};
+  const shutdown=()=>{server.close(async()=>{await store.close();process.exit(0)});server.closeAllConnections();};
   process.on('SIGINT',shutdown);process.on('SIGTERM',shutdown);
 }

@@ -1,9 +1,39 @@
+import { upload } from '@vercel/blob/client';
 export const DEMO_MODE=new URLSearchParams(location.search).has('demo')&&['localhost','127.0.0.1'].includes(location.hostname);
 let storageTenant='owner';
 export function setWorkspaceTenant(tenant:string){storageTenant=tenant}
 const scopedKey=(key:string)=>DEMO_MODE?'demo:'+key:storageTenant==='owner'?key:`tenant:${storageTenant}:${key}`;
 const cloudKeys:Record<string,string>={'waypoint-docs':'documents','waypoint-eway':'bills','workspace-preferences':'preferences','waypoint-ack':'ack'};
 const cloudCache=new Map<string,string>();
+const attachmentTypes:Record<string,string>={'application/pdf':'pdf','image/png':'png','image/jpeg':'jpg','image/webp':'webp'};
+async function cloudAttachments(value:unknown,tenant:string,uploaded:Map<string,string>):Promise<unknown>{
+  if(Array.isArray(value)){const result=[];for(const item of value)result.push(await cloudAttachments(item,tenant,uploaded));return result}
+  if(!value||typeof value!=='object')return value;
+  const result:Record<string,unknown>={};
+  for(const [key,item] of Object.entries(value)){
+    if(key==='file'&&typeof item==='string'&&item.startsWith('data:')){
+      let fileUrl=uploaded.get(item);
+      if(!fileUrl){
+        const match=/^data:(application\/pdf|image\/png|image\/jpeg|image\/webp);base64,([A-Za-z0-9+/]*={0,2})$/.exec(item);
+        if(!match)throw new Error('Choose a PDF, PNG, JPEG or WebP attachment.');
+        if(match[2].length>2796204)throw new Error('Attachment exceeds 2 MB.');
+        const binary=atob(match[2]);
+        if(!binary.length||binary.length>2097152)throw new Error('Attachment must be between 1 byte and 2 MB.');
+        if(!/^[A-Za-z0-9_-]+$/.test(tenant))throw new Error('Invalid workspace tenant.');
+        const blob=new Blob([Uint8Array.from(binary,c=>c.charCodeAt(0))],{type:match[1]});
+        const prefix=`tenants/${tenant}/files/`;
+        try{
+          const saved=await upload(`${prefix}${crypto.randomUUID()}.${attachmentTypes[match[1]]}`,blob,{access:'private',contentType:match[1],handleUploadUrl:'/api/gps/files/upload',abortSignal:AbortSignal.timeout(60000)});
+          if(!saved.pathname.startsWith(prefix)||saved.pathname.slice(prefix.length).includes('/'))throw new Error('Invalid uploaded attachment path.');
+          fileUrl=`/api/gps/files/download?pathname=${encodeURIComponent(saved.pathname)}`;
+          uploaded.set(item,fileUrl);
+        }catch(error){throw new Error(`Could not upload attachment: ${error instanceof Error?error.message:'Upload failed.'}`)}
+      }
+      result[key]=fileUrl;
+    }else result[key]=await cloudAttachments(item,tenant,uploaded);
+  }
+  return result;
+}
 export async function loadWorkspaceData(){
   if(DEMO_MODE)return;
   for(const [key,kind] of Object.entries(cloudKeys)){
@@ -19,11 +49,16 @@ export async function loadWorkspaceData(){
 export const workspaceStorage={
   getItem:(key:string)=>DEMO_MODE?window.localStorage.getItem(scopedKey(key)):cloudCache.get(key)||null,
   setItem:async(key:string,value:string)=>{
-    if(DEMO_MODE){window.localStorage.setItem(scopedKey(key),value);return}
+    if(DEMO_MODE){window.localStorage.setItem(scopedKey(key),value);return value}
     const kind=cloudKeys[key];if(!kind)throw new Error('Unknown workspace record.');
-    const response=await fetch(`/api/gps/workspace/${kind}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:JSON.parse(value)}),signal:AbortSignal.timeout(30000)});
+    const tenant=storageTenant;
+    const parsed=JSON.parse(value);
+    const transformed=kind==='documents'||kind==='bills'?await cloudAttachments(parsed,tenant,new Map()):parsed;
+    if(storageTenant!==tenant)throw new Error('Workspace changed during save. Please try again.');
+    const response=await fetch(`/api/gps/workspace/${kind}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:transformed}),signal:AbortSignal.timeout(30000)});
     if(!response.ok){const result=await response.json().catch(()=>({}));throw new Error(result.error||'Could not save cloud workspace data.')}
-    cloudCache.set(key,value);
+    if(storageTenant===tenant)cloudCache.set(key,JSON.stringify(transformed));
+    return JSON.stringify(transformed);
   }
 };
 const storageKey='waypoint-preview-v1';
