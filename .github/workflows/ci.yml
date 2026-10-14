@@ -31,5 +31,5 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - run: npm test
+      - run: node scripts/cloud-tests.mjs
       - run: npm run build
