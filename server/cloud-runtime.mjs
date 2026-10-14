@@ -50,7 +50,10 @@ export async function authenticateWorkspace(req,store,sessions){
   return session;
 }
 export async function cloudBridge(store,client){
-  const bridge=new TraccarBridge(store,{url:process.env.TRACCAR_URL,token:process.env.TRACCAR_TOKEN});
+  const bridge=new TraccarBridge(store,{url:process.env.GPS_COMMAND_URL||'https://92.4.84.227.sslip.io/gps-command',token:process.env.GPS_GATEWAY_SECRET});
+  // Durable history is imported by the outbound worker, not by exposing the
+  // receiver's management/history APIs through the public command channel.
+  bridge.importHistory=async()=>{};
   const {rows}=await client.query('SELECT * FROM gateway_state WHERE id=1');
   const state=rows[0];
   bridge.state={configured:!!process.env.GPS_GATEWAY_SECRET,connected:!!state?.connected&&Date.now()-Number(state.lastsync)<45000,lastSync:state?Number(state.lastsync):null,error:state?.error||(!state?'Awaiting GPS gateway connection.':null)};

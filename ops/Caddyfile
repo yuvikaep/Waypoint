@@ -1,3 +1,8 @@
 92.4.84.227.sslip.io {
-    redir https://waypoint-eta-pied.vercel.app{uri} 308
+    handle_path /gps-command/* {
+        reverse_proxy 127.0.0.1:8181
+    }
+    handle {
+        redir https://waypoint-eta-pied.vercel.app{uri} 308
+    }
 }

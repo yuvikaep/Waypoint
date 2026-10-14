@@ -1,0 +1,21 @@
+[Unit]
+Description=Waypoint authenticated GPS location command channel
+After=network-online.target traccar.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=opc
+WorkingDirectory=/opt/waypoint
+EnvironmentFile=/opt/waypoint/server/private/gateway-agent.env
+ExecStart=/opt/node/bin/node --max-old-space-size=64 /opt/waypoint/server/command-channel.mjs
+Restart=always
+RestartSec=10
+MemoryMax=128M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
