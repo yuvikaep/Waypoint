@@ -11,7 +11,10 @@ export class GatewayAgent {
   }
   async request(base,path,secret,options={}){
     const response=await this.fetcher(`${base}${path}`,{...options,headers:{Authorization:`Bearer ${secret}`,Accept:'application/json','Content-Type':'application/json'},signal:AbortSignal.timeout(10000)});
-    if(!response.ok)throw new Error(`Gateway dependency HTTP ${response.status}.`);
+    if(!response.ok){
+      const detail=await response.json().catch(()=>null);
+      throw new Error(`Gateway dependency HTTP ${response.status}.${typeof detail?.error==='string'?' '+detail.error:''}`);
+    }
     return response.status===204?null:response.json();
   }
   cloud(path,options){return this.request(this.cloudUrl,`/api/gps/gateway${path}`,this.cloudSecret,options);}
@@ -21,7 +24,8 @@ export class GatewayAgent {
     try{
       const remote=await this.tracker('/devices');
       const latest=await this.tracker('/positions');
-      for(const device of registered){
+      const failures=[];
+      for(const device of registered)try{
         let match=remote.find(item=>item.uniqueId===device.uniqueId);
         if(!match){match=await this.tracker('/devices',{method:'POST',body:JSON.stringify({name:device.name,uniqueId:device.uniqueId,model:device.model})});remote.push(match);}
         const from=Math.max(device.createdAt-60000,(device.cursor??device.createdAt)-60000);
@@ -34,7 +38,12 @@ export class GatewayAgent {
           const chunk=positions.slice(offset,offset+100);
           await this.cloud('/sync',{method:'POST',body:JSON.stringify({connected:true,devices:[{id:device.id,uniqueId:device.uniqueId,traccarId:match.id,status:match.status,lastUpdate:match.lastUpdate,positions:chunk,...(offset+100>=positions.length?{cursor:to}:{})}]})});
         }
+      }catch(error){
+        // Keep the rest of the fleet flowing; this device retries from its own checkpoint.
+        failures.push(`${device.name}: ${error.message}`);
+        console.error('GPS device sync failed:',device.uniqueId,error.message);
       }
+      if(failures.length)await this.cloud('/sync',{method:'POST',body:JSON.stringify({connected:true,devices:[],error:`Some trackers failed to sync: ${failures.join('; ')}`.slice(0,300)})});
       if(!registered.length)await this.cloud('/sync',{method:'POST',body:JSON.stringify({connected:true,devices:[]})});
     }catch(error){
       await this.cloud('/sync',{method:'POST',body:JSON.stringify({connected:false,devices:[],error:`GPS receiver sync failed: ${String(error.message||error.name).slice(0,200)}`})}).catch(()=>{});

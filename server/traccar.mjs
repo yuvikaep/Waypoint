@@ -50,10 +50,22 @@ export class TraccarBridge {
   async ingest(id,p) {
     if (!p.id || !Number.isFinite(p.latitude) || !Number.isFinite(p.longitude) || (p.latitude === 0 && p.longitude === 0)) return;
     const attrs=p.attributes || {};
-    return await this.store.ingest(id,{eventId:`traccar:${p.id}`,recordedAt:p.fixTime,latitude:p.latitude,longitude:p.longitude,
-      speed:Math.max(0,p.speed*1.852),heading:p.course,accuracy:p.accuracy,
-      ignition:attrs.ignition,battery:attrs.batteryLevel,satellites:attrs.sat,valid:!!p.valid},
-    {receivedAt:Date.parse(p.serverTime) || this.store.now(),heartbeat:false});
+    const receivedAt=Date.parse(p.serverTime) || this.store.now();
+    // Cheap GT06 clones often report local time as UTC or an unset RTC. Fall back to
+    // reception time rather than rejecting the point, which would stall the whole sync.
+    const fixAt=Date.parse(p.fixTime);
+    const recordedAt=Number.isFinite(fixAt) && fixAt >= Date.UTC(2020,0,1) && fixAt <= Math.min(receivedAt,this.store.now())+60000 ? p.fixTime : new Date(Math.min(receivedAt,this.store.now())).toISOString();
+    const within=(value,min,max)=>Number.isFinite(value) && value>=min && value<=max ? value : null;
+    try {
+      return await this.store.ingest(id,{eventId:`traccar:${p.id}`,recordedAt,latitude:p.latitude,longitude:p.longitude,
+        speed:within(p.speed*1.852,0,400) ?? 0,heading:within(p.course,0,360),accuracy:within(p.accuracy,0,100000),
+        ignition:typeof attrs.ignition==='boolean'?attrs.ignition:null,battery:within(attrs.batteryLevel,0,100),satellites:within(attrs.sat,0,100),valid:!!p.valid},
+      {receivedAt,heartbeat:false});
+    } catch (e) {
+      // One malformed receiver point must not block every later fix for the fleet.
+      if (e.status===400) { console.warn(`Skipped receiver position ${p.id}: ${e.message}`); return; }
+      throw e;
+    }
   }
   async importHistory(device,from,to) {
     if(!device.traccarId)throw new Error('Device is not yet linked to the gateway.');

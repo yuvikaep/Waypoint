@@ -230,3 +230,16 @@ test('Traccar position without a satellite fix is kept as last known but never r
   assert.equal(d.fresh,false);assert.equal(d.status,'No GPS fix');
   assert.equal(store.history(device.id,store.now()-1000,store.now()+1000).positions.length,1);
 });
+
+test('receiver points with a skewed tracker clock or odd attributes are stored, never stall the sync',async t=>{
+  const {store}=fixture(t);
+  const device=store.createDevice({name:'TEST GT06 clock',model:'GT06',uniqueId:'123456789012347'}).device;
+  const bridge=new TraccarBridge(store,{url:'http://gateway',token:'x',fetcher:async()=>{throw Error('unused')}});
+  const server=new Date(store.now()).toISOString();
+  // IST reported as UTC: five and a half hours in the future.
+  const ahead=new Date(store.now()+5.5*3600000).toISOString();
+  await bridge.ingest(device.id,{id:11,deviceId:7,valid:true,fixTime:ahead,serverTime:server,latitude:18.52,longitude:73.85,speed:5,course:400,attributes:{batteryLevel:150,sat:9}});
+  const p=store.device(device.id).position;
+  assert.equal(p.recordedAt,store.now());assert.equal(p.battery,null);assert.equal(p.heading,null);assert.equal(p.satellites,9);
+  assert.equal(store.device(device.id).fresh,true);
+});
