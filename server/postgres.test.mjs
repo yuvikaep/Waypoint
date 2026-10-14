@@ -47,5 +47,9 @@ test('PostgreSQL durable fleet, links, sessions, and real heartbeat contracts', 
     let result;const res={writeHead(){},end(value){result=JSON.parse(value)}};
     assert.equal(await gatewayRequest(req,res,store,client,new TraccarBridge(store)),true);
     assert.equal(result.ok,true);assert.equal((await store.device(hardware.id)).lastSeen,now);
+    const tracked=(await store.devices(customer.id)).find(d=>d.id===hardware.id);
+    assert.equal(tracked.position.latitude,28.4);assert.equal(tracked.position.longitude,77.04);
+    assert.equal(tracked.position.recordedAt,now);assert.equal(tracked.status,'Stopped');
+    assert.equal((await store.history(hardware.id,now-60000,now+60000)).positions.length,1);
   }finally{await store?.close();await client.end();}
 });

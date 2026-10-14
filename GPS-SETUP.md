@@ -102,6 +102,16 @@ reconciles IMEIs and sends real fixes/last-packet timestamps to Vercel.
 Checkpoint advancement happens only after a successful cloud write. A replay
 does not refresh a fix or heartbeat. An offline gateway is shown as disconnected.
 
+On an Oracle jumbo-MTU NIC, `sudo /opt/node/bin/node
+/opt/waypoint/scripts/configure-gps-tcp.mjs --apply` installs an idempotent
+firewalld MSS clamp of 1300 only for outgoing IPv4 GT06 SYN/SYN-ACK packets.
+It does not open any ports or change the NIC MTU. This is a compatibility
+guard, not proof that a particular modem problem was caused by MTU. Remove
+the same direct rule in both runtime and permanent firewalld configurations
+to roll it back. Verify the advertised MSS with packet capture and check for
+actual login and position packets; do not interpret a TCP connection alone
+as a tracker heartbeat or GPS fix.
+
 After the approved fresh-data reset, the VM has no registered devices or live fixes. Registration by IMEI only associates
 future packets; it does not configure the physical tracker or prove it can
 connect. After setting the final server address by SMS, check the device's
