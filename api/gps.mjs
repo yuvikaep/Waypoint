@@ -2,17 +2,13 @@ import { PostgresTrackingStore } from '../server/postgres-store.mjs';
 import { createTrackingServer } from '../server/tracking.mjs';
 import { createCloudFileHandler } from '../server/cloud-files.mjs';
 import { isIP } from 'node:net';
+import { normalizeCloudRequest } from '../server/cloud-routing.mjs';
 import { databasePool,initializeDatabase,CloudSessions,cloudRateLimit,authenticateWorkspace,cloudBridge,gatewayRequest } from '../server/cloud-runtime.mjs';
 
 export default async function handler(req,res){
   let client,store;
   try{
-    const requestUrl=new URL(req.url,'http://localhost');
-    const route=req.query?.__route??requestUrl.searchParams.get('__route');
-    if(route!==undefined&&route!==null){
-      if(typeof route!=='string'||!/^[A-Za-z0-9_/-]+$/.test(route))throw Object.assign(new Error('Invalid API route.'),{status:400});
-      requestUrl.pathname=`/api/gps/${route}`;requestUrl.searchParams.delete('__route');req.url=requestUrl.pathname+requestUrl.search;
-    }
+    normalizeCloudRequest(req);
     await initializeDatabase();
     client=await databasePool().connect();store=new PostgresTrackingStore(client);
     const sessions=new CloudSessions(client);

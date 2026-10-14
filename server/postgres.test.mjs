@@ -39,7 +39,7 @@ test('PostgreSQL durable fleet, links, sessions, and real heartbeat contracts', 
     await store.createDriverLink(mobile.id,{regenerate:true});
     await assert.rejects(store.driverSession(joined.secret),e=>e.status===401);
     now=Date.now();
-    const hardware=(await store.createDevice({name:'GT06',model:'GT06',uniqueId:'867111062240426'},customer.id)).device;
+    const hardware=(await store.createDevice({name:'GT06',model:'GT06',uniqueId:'123456789012345'},customer.id)).device;
     process.env.GPS_GATEWAY_SECRET='test-gateway-secret';
     const req={url:'/api/gps/gateway/sync',method:'POST',headers:{authorization:'Bearer test-gateway-secret'},body:{connected:true,devices:[{id:hardware.id,uniqueId:hardware.uniqueId,traccarId:7,status:'online',lastUpdate:new Date(now).toISOString(),positions:[{deviceId:7,id:1,valid:true,fixTime:new Date(now).toISOString(),serverTime:new Date(now).toISOString(),latitude:28.4,longitude:77.04,speed:0,course:0,accuracy:5,attributes:{sat:8}}]}]}};
     // Cloud runtime checks actual clock; reset the controlled store clock first.
