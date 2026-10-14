@@ -24,7 +24,7 @@ test('relay is default-disabled and mobile devices cannot be commissioned',async
   await assert.rejects(disabled.execute(f.device.id,f.input),/disabled/);
   const mobile=f.store.createDevice({name:'Phone',model:'Mobile'}).device;
   await assert.rejects(()=>f.relay.configure(mobile.id,{starterOnly:true,polarityVerified:true,installer:'x'}),/no relay profile/);
-  assert.throws(()=>f.relay.configure(f.device.id,{starterOnly:false,polarityVerified:true,installer:'x'}),/Fuel\/ignition/);
+  await assert.rejects(()=>f.relay.configure(f.device.id,{starterOnly:false,polarityVerified:true,installer:'x'}),/Fuel\/ignition/);
   assert.equal(f.sends(),0);
 });
 for(const [name,change] of [['moving',{speed:12}],['ignition on',{ignition:true}],['unknown ignition',{ignition:null}],['poor accuracy',{accuracy:100}],['unknown accuracy',{accuracy:0}],['position drift',{latitude:18.6}]]){

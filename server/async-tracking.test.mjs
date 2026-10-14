@@ -180,7 +180,8 @@ test('relay async audit failure prevents dispatch and safety is rechecked after 
   await relay.configure(device.id,{installer:'Bench',starterOnly:true,polarityVerified:true});
   const input={action:'inhibit',confirmation:device.uniqueId,requestId:'moving',reason:'Bench test'};
   assert.equal((await relay.execute(device.id,input)).status,'blocked');assert.equal(sends,0);
-  await fix(0);
+  await db.prepare('DELETE FROM positions WHERE deviceId=?').run(device.id);
+  await fix(-30000);await fix(0);
   await db.prepare('DELETE FROM relay_commands').run();
   const prepare=db.prepare;
   db.prepare=sql=>sql.startsWith('INSERT INTO relay_commands')?{run:async()=>{await turn();throw Error('audit unavailable');}}:prepare(sql);
