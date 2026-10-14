@@ -4,7 +4,7 @@ import {createIcons,Navigation,Map,Route,RadioTower,Bell,Files,Plus,Search,Scan,
 import './live.css';
 import {DEMO_MODE,demoRequest,workspaceStorage,setWorkspaceTenant,loadWorkspaceData} from './demo';
 
-type Fix={id:number;deviceId:string;recordedAt:number;receivedAt:number;latitude:number;longitude:number;speed:number;heading:number|null;accuracy:number|null;ignition:number|null;battery:number|null;satellites:number|null};
+type Fix={id:number;deviceId:string;recordedAt:number;receivedAt:number;latitude:number;longitude:number;speed:number;heading:number|null;accuracy:number|null;ignition:number|null;battery:number|null;satellites:number|null;valid?:number};
 type Device={id:string;name:string;uniqueId:string;model:'GT06'|'GT06N'|'PT06'|'FMB920'|'FMB125'|'FMC920'|'FMC130'|'Mobile';driver:string;lastSeen:number|null;offlineSeconds:number;speedLimit:number;bridgeStatus:string|null;traccarId:number|null;status:string;online:boolean;fresh:boolean;position:Fix|null;command:{status:string;detail:string;createdAt:number}|null};
 type Fence={id:string;name:string;latitude:number;longitude:number;radius:number};
 type Alert={id:string;deviceId:string;deviceName:string;type:string;message:string;createdAt:number;acknowledged:number};
@@ -180,7 +180,7 @@ function tracking(){
   updateTracking();
 }
 function point(p:Fix|Fence):L.LatLngTuple{return [p.latitude,p.longitude]}
-function statusText(d:Device){return d.status==='No GPS fix'?(d.position?'Location stale':'Awaiting location report'):d.status}
+function statusText(d:Device){return d.status==='No GPS fix'?(d.position?(d.position.valid===0?'No GPS fix \u00b7 last known':'Location stale'):'Awaiting location report'):d.status}
 function updateTracking(){
   if(!state||!map)return;
   const visible=devices();if(!visible.some(d=>d.id===selected)){selected=visible[0]?.id||'';clearHistory()}

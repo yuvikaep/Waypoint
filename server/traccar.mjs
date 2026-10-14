@@ -48,11 +48,11 @@ export class TraccarBridge {
     finally { this.busy=false; }
   }
   async ingest(id,p) {
-    if (!p.valid || !p.id) return;
+    if (!p.id || !Number.isFinite(p.latitude) || !Number.isFinite(p.longitude) || (p.latitude === 0 && p.longitude === 0)) return;
     const attrs=p.attributes || {};
     return await this.store.ingest(id,{eventId:`traccar:${p.id}`,recordedAt:p.fixTime,latitude:p.latitude,longitude:p.longitude,
       speed:Math.max(0,p.speed*1.852),heading:p.course,accuracy:p.accuracy,
-      ignition:attrs.ignition,battery:attrs.batteryLevel,satellites:attrs.sat},
+      ignition:attrs.ignition,battery:attrs.batteryLevel,satellites:attrs.sat,valid:!!p.valid},
     {receivedAt:Date.parse(p.serverTime) || this.store.now(),heartbeat:false});
   }
   async importHistory(device,from,to) {

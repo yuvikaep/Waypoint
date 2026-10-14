@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS positions (
   ignition INTEGER, battery DOUBLE PRECISION, satellites DOUBLE PRECISION,
   UNIQUE(deviceId,eventId)
 );
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS valid INTEGER NOT NULL DEFAULT 1;
 CREATE INDEX IF NOT EXISTS position_time ON positions(deviceId,recordedAt,id);
 CREATE INDEX IF NOT EXISTS devices_tenant ON devices(tenantId,createdAt);
 CREATE TABLE IF NOT EXISTS fences (id TEXT PRIMARY KEY,name TEXT NOT NULL,latitude DOUBLE PRECISION NOT NULL,longitude DOUBLE PRECISION NOT NULL,radius DOUBLE PRECISION NOT NULL,tenantId TEXT NOT NULL DEFAULT 'owner');

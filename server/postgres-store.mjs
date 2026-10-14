@@ -155,7 +155,7 @@ export class PostgresTrackingStore {
     const { tokenHash, ...device } = (await this.raw(id));
     const position = (await this.db.prepare('SELECT * FROM positions WHERE deviceId=? ORDER BY recordedAt DESC,id DESC LIMIT 1').get(id)) || null;
     const online = device.lastSeen !== null && this.now()-device.lastSeen < device.offlineSeconds*1000;
-    const fresh = position && this.now()-position.recordedAt < device.offlineSeconds*1000;
+    const fresh = position && position.valid !== 0 && this.now()-position.recordedAt < device.offlineSeconds*1000;
     const status = !device.lastSeen ? 'Waiting' : !online ? 'Offline' : !fresh ? 'No GPS fix' : position.speed >= 3 ? 'Moving' : 'Stopped';
     const command = (await this.db.prepare('SELECT * FROM commands WHERE deviceId=? ORDER BY createdAt DESC,rowid DESC LIMIT 1').get(id)) || null;
     return { ...device, position, online, fresh: !!fresh, status, command };
@@ -178,13 +178,15 @@ export class PostgresTrackingStore {
     if (body.ignition != null && typeof body.ignition !== 'boolean') fail(400, 'Ignition must be boolean.');
     const values = [optional('heading',0,360),optional('accuracy',0,100000),body.ignition == null ? null : Number(body.ignition),optional('battery',0,100),optional('satellites',0,100)];
     if (body.commandId != null && !(await this.db.prepare('SELECT id FROM commands WHERE id=? AND deviceId=?').get(text(body.commandId,'Command ID'), id))) fail(400, 'Command does not belong to this device.');
+    // A tracker without a satellite fix reports its last known point; keep it for display but never alert on it.
+    const valid = body.valid === false ? 0 : 1;
     const previous = (await this.device(id)).position;
     
     try {
-      const inserted = (await this.db.prepare('INSERT INTO positions(deviceId,eventId,recordedAt,receivedAt,latitude,longitude,speed,heading,accuracy,ignition,battery,satellites) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(deviceId,eventId) DO NOTHING')
-        .run(id,eventId,recordedAt,receivedAt,latitude,longitude,speed,...values)).changes > 0;
+      const inserted = (await this.db.prepare('INSERT INTO positions(deviceId,eventId,recordedAt,receivedAt,latitude,longitude,speed,heading,accuracy,ignition,battery,satellites,valid) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(deviceId,eventId) DO NOTHING')
+        .run(id,eventId,recordedAt,receivedAt,latitude,longitude,speed,...values,valid)).changes > 0;
       if (heartbeat) (await this.seen(id, receivedAt));
-      if (inserted && (!previous || recordedAt > previous.recordedAt)) {
+      if (inserted && valid && (!previous || recordedAt > previous.recordedAt)) {
         if (speed > device.speedLimit && (!previous || previous.speed <= device.speedLimit)) (await this.alert(id,'speed',`Speed ${Math.round(speed)} km/h exceeds ${device.speedLimit} km/h.`,recordedAt));
         for (const fence of (await this.fences(device.tenantId))) {
           const inside = Number(distance({latitude,longitude},fence) <= fence.radius);

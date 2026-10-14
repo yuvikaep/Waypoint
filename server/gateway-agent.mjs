@@ -37,7 +37,7 @@ export class GatewayAgent {
       }
       if(!registered.length)await this.cloud('/sync',{method:'POST',body:JSON.stringify({connected:true,devices:[]})});
     }catch(error){
-      await this.cloud('/sync',{method:'POST',body:JSON.stringify({connected:false,devices:[],error:'GPS receiver connection interrupted.'})}).catch(()=>{});
+      await this.cloud('/sync',{method:'POST',body:JSON.stringify({connected:false,devices:[],error:`GPS receiver sync failed: ${String(error.message||error.name).slice(0,200)}`})}).catch(()=>{});
       throw error;
     }
   }
@@ -48,7 +48,7 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
   let stopping=false;process.on('SIGTERM',()=>{stopping=true});process.on('SIGINT',()=>{stopping=true});
   while(!stopping){
     try{await agent.sync();console.info('GPS cloud sync completed.');}
-    catch(error){console.error('GPS cloud sync failed:',error.name);}
+    catch(error){console.error('GPS cloud sync failed:',error.name,error.message);}
     if(!stopping)await new Promise(resolve=>setTimeout(resolve,10000));
   }
 }

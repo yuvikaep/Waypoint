@@ -216,3 +216,17 @@ test('driver cookie authenticates only assigned sender; revocation blocks active
   store.revokeDriverLinks(device.id);
   assert.equal((await post('/sender/heartbeat',{deviceId:device.id},{Cookie:cookie})).status,401);
 });
+
+test('Traccar position without a satellite fix is kept as last known but never reported as a live fix',async t=>{
+  const {store}=fixture(t);
+  const device=store.createDevice({name:'TEST GT06',model:'GT06',uniqueId:'123456789012346',offlineSeconds:180}).device;
+  const bridge=new TraccarBridge(store,{url:'http://gateway',token:'x',fetcher:async()=>{throw Error('unused')}});
+  const at=new Date(store.now()).toISOString();
+  await bridge.ingest(device.id,{id:1,deviceId:7,valid:false,fixTime:at,serverTime:at,latitude:18.52,longitude:73.85,speed:0,course:0,attributes:{}});
+  await bridge.ingest(device.id,{id:2,deviceId:7,valid:false,fixTime:at,serverTime:at,latitude:0,longitude:0,speed:0,course:0,attributes:{}});
+  store.seen(device.id,store.now());
+  const d=store.device(device.id);
+  assert.equal(d.position.latitude,18.52);assert.equal(d.position.valid,0);
+  assert.equal(d.fresh,false);assert.equal(d.status,'No GPS fix');
+  assert.equal(store.history(device.id,store.now()-1000,store.now()+1000).positions.length,1);
+});

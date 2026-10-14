@@ -33,7 +33,7 @@ export class TrackingStore {
         id INTEGER PRIMARY KEY, deviceId TEXT NOT NULL REFERENCES devices(id), eventId TEXT NOT NULL,
         recordedAt INTEGER NOT NULL, receivedAt INTEGER NOT NULL,
         latitude REAL NOT NULL, longitude REAL NOT NULL, speed REAL NOT NULL,
-        heading REAL, accuracy REAL, ignition INTEGER, battery REAL, satellites INTEGER,
+        heading REAL, accuracy REAL, ignition INTEGER, battery REAL, satellites INTEGER, valid INTEGER NOT NULL DEFAULT 1,
         UNIQUE(deviceId,eventId)
       );
       CREATE INDEX IF NOT EXISTS position_time ON positions(deviceId,recordedAt,id);
@@ -48,6 +48,7 @@ export class TrackingStore {
       CREATE TABLE IF NOT EXISTS workspace_data (tenantId TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updatedAt INTEGER NOT NULL, PRIMARY KEY(tenantId,key));
     `);
     if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name==='tenantId'))this.db.exec("ALTER TABLE devices ADD COLUMN tenantId TEXT NOT NULL DEFAULT 'owner'");
+    if(!this.db.prepare('PRAGMA table_info(positions)').all().some(c=>c.name==='valid'))this.db.exec('ALTER TABLE positions ADD COLUMN valid INTEGER NOT NULL DEFAULT 1');
     if(!this.db.prepare('PRAGMA table_info(fences)').all().some(c=>c.name==='tenantId'))this.db.exec("ALTER TABLE fences ADD COLUMN tenantId TEXT NOT NULL DEFAULT 'owner'");
     if(!this.db.prepare('PRAGMA table_info(driver_links)').all().some(c=>c.name==='code')){
       this.db.exec('ALTER TABLE driver_links ADD COLUMN code TEXT');
@@ -178,7 +179,7 @@ export class TrackingStore {
     const { tokenHash, ...device } = this.raw(id);
     const position = this.db.prepare('SELECT * FROM positions WHERE deviceId=? ORDER BY recordedAt DESC,id DESC LIMIT 1').get(id) || null;
     const online = device.lastSeen !== null && this.now()-device.lastSeen < device.offlineSeconds*1000;
-    const fresh = position && this.now()-position.recordedAt < device.offlineSeconds*1000;
+    const fresh = position && position.valid !== 0 && this.now()-position.recordedAt < device.offlineSeconds*1000;
     const status = !device.lastSeen ? 'Waiting' : !online ? 'Offline' : !fresh ? 'No GPS fix' : position.speed >= 3 ? 'Moving' : 'Stopped';
     const command = this.db.prepare('SELECT * FROM commands WHERE deviceId=? ORDER BY createdAt DESC,rowid DESC LIMIT 1').get(id) || null;
     return { ...device, position, online, fresh: !!fresh, status, command };
@@ -201,13 +202,15 @@ export class TrackingStore {
     if (body.ignition != null && typeof body.ignition !== 'boolean') fail(400, 'Ignition must be boolean.');
     const values = [optional('heading',0,360),optional('accuracy',0,100000),body.ignition == null ? null : Number(body.ignition),optional('battery',0,100),optional('satellites',0,100)];
     if (body.commandId != null && !this.db.prepare('SELECT id FROM commands WHERE id=? AND deviceId=?').get(text(body.commandId,'Command ID'), id)) fail(400, 'Command does not belong to this device.');
+    // A tracker without a satellite fix reports its last known point; keep it for display but never alert on it.
+    const valid = body.valid === false ? 0 : 1;
     const previous = this.device(id).position;
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      const inserted = this.db.prepare('INSERT OR IGNORE INTO positions(deviceId,eventId,recordedAt,receivedAt,latitude,longitude,speed,heading,accuracy,ignition,battery,satellites) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
-        .run(id,eventId,recordedAt,receivedAt,latitude,longitude,speed,...values).changes > 0;
+      const inserted = this.db.prepare('INSERT OR IGNORE INTO positions(deviceId,eventId,recordedAt,receivedAt,latitude,longitude,speed,heading,accuracy,ignition,battery,satellites,valid) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        .run(id,eventId,recordedAt,receivedAt,latitude,longitude,speed,...values,valid).changes > 0;
       if (heartbeat) this.seen(id, receivedAt);
-      if (inserted && (!previous || recordedAt > previous.recordedAt)) {
+      if (inserted && valid && (!previous || recordedAt > previous.recordedAt)) {
         if (speed > device.speedLimit && (!previous || previous.speed <= device.speedLimit)) this.alert(id,'speed',`Speed ${Math.round(speed)} km/h exceeds ${device.speedLimit} km/h.`,recordedAt);
         for (const fence of this.fences(device.tenantId)) {
           const inside = Number(distance({latitude,longitude},fence) <= fence.radius);
