@@ -1,0 +1,22 @@
+[Unit]
+Description=Waypoint alternate GT06 TCP entry
+After=network-online.target caddy.service traccar.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=opc
+WorkingDirectory=/opt/waypoint
+ExecStart=/opt/node/bin/node --max-old-space-size=64 /opt/waypoint/server/tcp-entry.mjs
+Restart=always
+RestartSec=10
+MemoryMax=128M
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

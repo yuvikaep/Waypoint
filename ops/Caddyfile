@@ -1,3 +1,6 @@
+{
+    http_port 8080
+}
 92.4.84.227.sslip.io {
     handle_path /gps-command/* {
         reverse_proxy 127.0.0.1:8181

@@ -104,13 +104,24 @@ does not refresh a fix or heartbeat. An offline gateway is shown as disconnected
 
 On an Oracle jumbo-MTU NIC, `sudo /opt/node/bin/node
 /opt/waypoint/scripts/configure-gps-tcp.mjs --apply` installs an idempotent
-firewalld MSS clamp of 1300 only for outgoing IPv4 GT06 SYN/SYN-ACK packets.
+firewalld MSS clamp of 1300 for outgoing IPv4 SYN/SYN-ACK packets on the
+primary GT06 port 5023 and the alternative port 80.
 It does not open any ports or change the NIC MTU. This is a compatibility
 guard, not proof that a particular modem problem was caused by MTU. Remove
 the same direct rule in both runtime and permanent firewalld configurations
 to roll it back. Verify the advertised MSS with packet capture and check for
 actual login and position packets; do not interpret a TCP connection alone
 as a tracker heartbeat or GPS fix.
+
+`waypoint-tcp-entry.service` offers a second raw GT06 entry at the same public
+IP on TCP 80 for a controlled comparison with port 5023. It forwards GT06
+frames unchanged to Traccar and forwards HTTP requests to Caddy on local
+port 8080, preserving redirects and certificate challenges. HTTPS commands
+remain on port 443. Do not open port 8080 publicly. The alternative entry
+uses the same registrations, decoder and cloud data; it does not generate
+locations. Both entry ports must pass `scripts/probe-gt06-response.mjs` with
+an isolated receiver-only test registration. Set `GPS_PROBE_PORT=80` for the
+alternate probe. Delete that test registration afterward.
 
 After the approved fresh-data reset, the VM has no registered devices or live fixes. Registration by IMEI only associates
 future packets; it does not configure the physical tracker or prove it can

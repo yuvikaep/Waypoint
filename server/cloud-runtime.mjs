@@ -56,7 +56,7 @@ export async function cloudBridge(store,client){
   bridge.importHistory=async()=>{};
   const {rows}=await client.query('SELECT * FROM gateway_state WHERE id=1');
   const state=rows[0];
-  bridge.state={configured:!!process.env.GPS_GATEWAY_SECRET,connected:!!state?.connected&&Date.now()-Number(state.lastsync)<45000,lastSync:state?Number(state.lastsync):null,error:state?.error||(!state?'Awaiting GPS gateway connection.':null),trackerHost:process.env.GPS_TRACKER_PUBLIC_HOST||'92.4.84.227',gt06Port:5023,teltonikaPort:5027};
+  bridge.state={configured:!!process.env.GPS_GATEWAY_SECRET,connected:!!state?.connected&&Date.now()-Number(state.lastsync)<45000,lastSync:state?Number(state.lastsync):null,error:state?.error||(!state?'Awaiting GPS gateway connection.':null),trackerHost:process.env.GPS_TRACKER_PUBLIC_HOST||'92.4.84.227',gt06Port:5023,gt06AlternativePort:80,teltonikaPort:5027};
   return bridge;
 }
 export async function readJson(req,max=2*1024*1024){

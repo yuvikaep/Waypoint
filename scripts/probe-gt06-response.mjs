@@ -9,7 +9,9 @@ const data=Buffer.concat([Buffer.from([0x0d,1]),Buffer.from('0'+identifier,'hex'
 for(const byte of data){crc^=byte;for(let bit=0;bit<8;bit++)crc=crc&1?(crc>>>1)^0x8408:crc>>>1;}
 const checksum=Buffer.alloc(2);checksum.writeUInt16BE((crc^0xffff)&0xffff);
 const packet=Buffer.concat([Buffer.from('7878','hex'),data,checksum,Buffer.from('0d0a','hex')]);
-const socket=createConnection({host:'92.4.84.227',port:5023});
+const port=Number(process.env.GPS_PROBE_PORT||5023);
+if(![80,5023].includes(port))throw Error('Choose the primary or alternate GPS port.');
+const socket=createConnection({host:'92.4.84.227',port});
 try{
   const reply=await new Promise((resolve,reject)=>{
     const chunks=[];let length=0;
