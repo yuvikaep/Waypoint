@@ -1,30 +1,15 @@
 import L from 'leaflet';
+import {api} from './core';
 
-// Landmarks around the vehicles (petrol pumps, dhabas, temples, hospitals, tolls...) from
-// OpenStreetMap through the free Overpass service. Coverage is only as good as OpenStreetMap's in
-// that area. Lookups are made per ~2.5 km tile, cached for a week in this browser, and a refused
-// or failing service is left alone for a while instead of being retried in a loop.
+// Landmarks around the vehicles (petrol pumps, dhabas, temples, hospitals, tolls...). The server
+// fetches them per ~2.8 km tile (TomTom when configured, otherwise OpenStreetMap) and caches them;
+// this browser keeps tiles for a week too, and a failing lookup is left alone for a while.
 export type Poi={id:string;name:string;kind:Kind;lat:number;lon:number};
 type Kind='fuel'|'food'|'worship'|'health'|'police'|'money'|'toll'|'stay'|'school'|'parking'|'bus';
 const ICON:Record<Kind,[string,string]>={fuel:['⛽','#e5484d'],food:['🍽','#f76808'],worship:['🛕','#8e4ec6'],health:['✚','#e5484d'],police:['🚓','#0b68cb'],money:['₹','#12a150'],toll:['🛂','#192a51'],stay:['🛏','#0b68cb'],school:['🎓','#6b7590'],parking:['P','#0b68cb'],bus:['🚌','#12a150']};
 const LABEL:Record<Kind,string>={fuel:'Petrol pump',food:'Restaurant / dhaba',worship:'Temple / place of worship',health:'Hospital / clinic',police:'Police',money:'Bank / ATM',toll:'Toll',stay:'Hotel',school:'School',parking:'Parking',bus:'Bus stand'};
-function kindOf(t:Record<string,string>):Kind|null{
-  const a=t.amenity;
-  if(a==='fuel')return 'fuel';
-  if(a==='restaurant'||a==='fast_food'||a==='cafe'||a==='food_court')return 'food';
-  if(a==='place_of_worship')return 'worship';
-  if(a==='hospital'||a==='clinic'||a==='doctors'||a==='pharmacy')return 'health';
-  if(a==='police')return 'police';
-  if(a==='bank'||a==='atm')return 'money';
-  if(a==='school'||a==='college'||a==='university')return 'school';
-  if(a==='parking'||a==='truck_parking')return 'parking';
-  if(a==='bus_station'||t.highway==='bus_stop')return 'bus';
-  if(t.barrier==='toll_booth')return 'toll';
-  if(t.tourism==='hotel'||t.tourism==='motel'||t.tourism==='guest_house')return 'stay';
-  return null;
-}
-const ENDPOINTS=['https://overpass-api.de/api/interpreter','https://maps.mail.ru/osm/tools/overpass/api/interpreter','https://overpass.private.coffee/api/interpreter'];
-const STEP=0.025,WEEK=7*86400000,STORE='waypoint.poi.v1';
+const ENDPOINT='/landmarks';
+const STEP=0.025,WEEK=7*86400000,STORE='waypoint.poi.v2';
 const tiles=new Map<string,{at:number;pois:Poi[]}>(),loading=new Map<string,Promise<Poi[]>>();
 let pausedUntil=0,chain=Promise.resolve();
 try{for(const [k,v] of Object.entries(JSON.parse(localStorage.getItem(STORE)||'{}') as Record<string,{at:number;pois:Poi[]}>))if(Date.now()-v.at<WEEK)tiles.set(k,v)}catch{}
@@ -32,24 +17,11 @@ function remember(){try{const keep=[...tiles.entries()].slice(-150);localStorage
 const tileKey=(lat:number,lon:number)=>`${Math.floor(lat/STEP)}:${Math.floor(lon/STEP)}`;
 
 async function fetchTile(key:string):Promise<Poi[]>{
-  const [y,x]=key.split(':').map(Number),s=y*STEP,w=x*STEP,bbox=`${s.toFixed(4)},${w.toFixed(4)},${(s+STEP).toFixed(4)},${(w+STEP).toFixed(4)}`;
-  const q=`[out:json][timeout:20];(nwr["amenity"~"^(fuel|restaurant|fast_food|cafe|food_court|place_of_worship|hospital|clinic|doctors|pharmacy|police|bank|atm|school|college|university|parking|truck_parking|bus_station)$"](${bbox});node["barrier"="toll_booth"](${bbox});nwr["tourism"~"^(hotel|motel|guest_house)$"](${bbox}););out center 400;`;
-  for(const url of ENDPOINTS){
-    try{
-      const r=await fetch(url,{method:'POST',body:new URLSearchParams({data:q}),signal:AbortSignal.timeout(25000)});
-      if(!r.ok)continue;
-      const data=await r.json() as {elements:{type:string;id:number;lat?:number;lon?:number;center?:{lat:number;lon:number};tags?:Record<string,string>}[]};
-      const pois:Poi[]=[];
-      for(const e of data.elements){
-        const t=e.tags||{},kind=kindOf(t),lat=e.lat??e.center?.lat,lon=e.lon??e.center?.lon;
-        if(!kind||lat==null||lon==null)continue;
-        pois.push({id:`${e.type}${e.id}`,kind,lat,lon,name:t['name:en']||t.name||t.brand||t.operator||LABEL[kind]});
-      }
-      tiles.set(key,{at:Date.now(),pois});remember();return pois;
-    }catch{/* try the next mirror */}
-  }
-  pausedUntil=Date.now()+5*60000;
-  throw new Error('Landmarks unavailable');
+  try{
+    const r=await api<{pois:Poi[]}>(`${ENDPOINT}?tile=${encodeURIComponent(key)}`);
+    const pois=r.pois.map(p=>({...p,name:p.name||LABEL[p.kind]}));
+    tiles.set(key,{at:Date.now(),pois});remember();return pois;
+  }catch(e){pausedUntil=Date.now()+2*60000;throw e}
 }
 // One tile at a time, so a map pan does not fire a burst of requests at a shared free service.
 function tile(key:string):Promise<Poi[]>{

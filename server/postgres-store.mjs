@@ -50,6 +50,9 @@ export class PostgresTrackingStore {
     return {email:row.email};
   }
   async customer(id){return (await this.db.prepare('SELECT id,name,email,createdAt,enabled FROM customers WHERE id=?').get(id))||fail(404,'Customer not found.');}
+  // Map landmarks per tile, shared by every customer (public place data, no tenant).
+  async landmarkTile(key){const row=(await this.db.prepare('SELECT value FROM landmark_tiles WHERE key=?').get(key));return row?JSON.parse(row.value):null;}
+  async saveLandmarkTile(key,value){(await this.db.prepare('INSERT INTO landmark_tiles(key,value,fetchedAt) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,fetchedAt=excluded.fetchedAt').run(key,JSON.stringify(value),value.fetchedAt));}
   async workspaceData(tenantId,key){
     const row=(await this.db.prepare('SELECT value FROM workspace_data WHERE tenantId=? AND key=?').get(tenantId,key));
     return row?JSON.parse(row.value):null;

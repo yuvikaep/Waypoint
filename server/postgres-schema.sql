@@ -53,3 +53,5 @@ CREATE INDEX IF NOT EXISTS rate_limits_expiry ON rate_limits(resetAt);
 CREATE TABLE IF NOT EXISTS cloud_sessions (key TEXT PRIMARY KEY,value JSONB NOT NULL,expiresAt BIGINT);
 CREATE INDEX IF NOT EXISTS cloud_sessions_expiry ON cloud_sessions(expiresAt);
 CREATE TABLE IF NOT EXISTS gateway_state (id INTEGER PRIMARY KEY CHECK(id=1),connected BOOLEAN NOT NULL,lastSync BIGINT NOT NULL,error TEXT);
+
+CREATE TABLE IF NOT EXISTS landmark_tiles (key TEXT PRIMARY KEY,value TEXT NOT NULL,fetchedAt BIGINT NOT NULL);

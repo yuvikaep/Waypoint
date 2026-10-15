@@ -56,6 +56,7 @@ export class TrackingStore {
     if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name==='speedAlert'))this.db.exec('ALTER TABLE devices ADD COLUMN speedAlert INTEGER NOT NULL DEFAULT 1');
     for(const column of ['simOperator','simType','simNumber','apn','apnUser','apnPass'])
       if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name===column))this.db.exec(`ALTER TABLE devices ADD COLUMN ${column} TEXT`);
+    this.db.exec('CREATE TABLE IF NOT EXISTS landmark_tiles (key TEXT PRIMARY KEY,value TEXT NOT NULL,fetchedAt INTEGER NOT NULL)');
     this.db.exec('CREATE TABLE IF NOT EXISTS provision_steps (id TEXT PRIMARY KEY,deviceId TEXT NOT NULL,seq INTEGER NOT NULL,command TEXT NOT NULL,label TEXT NOT NULL,status TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,commandId TEXT,sentAt INTEGER,doneAt INTEGER,reply TEXT)');
     if(!this.db.prepare('PRAGMA table_info(fences)').all().some(c=>c.name==='tenantId'))this.db.exec("ALTER TABLE fences ADD COLUMN tenantId TEXT NOT NULL DEFAULT 'owner'");
     if(!this.db.prepare('PRAGMA table_info(driver_links)').all().some(c=>c.name==='code')){
@@ -83,6 +84,9 @@ export class TrackingStore {
     return {email:row.email};
   }
   customer(id){return this.db.prepare('SELECT id,name,email,createdAt,enabled FROM customers WHERE id=?').get(id)||fail(404,'Customer not found.');}
+  // Map landmarks per tile, shared by every customer (public place data, no tenant).
+  landmarkTile(key){const row=this.db.prepare('SELECT value FROM landmark_tiles WHERE key=?').get(key);return row?JSON.parse(row.value):null;}
+  saveLandmarkTile(key,value){this.db.prepare('INSERT OR REPLACE INTO landmark_tiles(key,value,fetchedAt) VALUES (?,?,?)').run(key,JSON.stringify(value),value.fetchedAt);}
   workspaceData(tenantId,key){
     const row=this.db.prepare('SELECT value FROM workspace_data WHERE tenantId=? AND key=?').get(tenantId,key);
     return row?JSON.parse(row.value):null;
