@@ -26,7 +26,7 @@ export function alertWords(a:Alert){
     case 'ignition_off':return {title:'Engine off',text:`Vehicle ${name} engine off`};
     case 'enter':return {title:'Entered geofence',text:`${name} ${a.message.replace(/\.$/,'').replace(/^Entered/,'entered')}`};
     case 'exit':return {title:'Left geofence',text:`${name} ${a.message.replace(/\.$/,'').replace(/^Left/,'left')}`};
-    case 'speed':return {title:'Overspeed',text:`${name} is overspeeding`};
+    case 'speed':{const [now,limit]=[...a.message.matchAll(/(\d+) km\/h/g)].map(m=>m[1]);return {title:'Overspeed',text:now?`Vehicle ${name} overspeeding, ${now} kilometre per hour. Limit ${limit}`:`Vehicle ${name} is overspeeding`}}
     case 'offline':return {title:'Signal lost',text:`${name} signal lost`};
     case 'online':return {title:'Signal restored',text:`${name} signal restored`};
     default:return {title:'Vehicle alarm',text:`${name}. ${a.message.replace(/\.$/,'')}`};

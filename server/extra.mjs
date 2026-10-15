@@ -31,3 +31,8 @@ export function powerTimeline(rows, limit = 10) {
   }
   return { connected: last, events: events.reverse().slice(0, limit) };
 }
+
+// Overspeed: alert when a vehicle whose owner kept the alert on crosses its limit. Speed hovering
+// around the limit would otherwise alert on every fix, so a repeat waits a few minutes.
+export const SPEED_REPEAT = 3 * 60000;
+export const overspeed = (device, speed, previous) => Number(device.speedAlert ?? 1) !== 0 && speed > device.speedLimit && (!previous || previous.speed <= device.speedLimit);

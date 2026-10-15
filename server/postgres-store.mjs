@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { PgAdapter } from './pg-adapter.mjs';
-import { cleanExtra, alarmText } from './extra.mjs';
+import { cleanExtra, alarmText, overspeed, SPEED_REPEAT } from './extra.mjs';
 import { cleanSetup } from './provision.mjs';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 
@@ -141,6 +141,7 @@ export class PostgresTrackingStore {
     let tenantId=device.tenantId;
     if(body.customerId!==undefined){tenantId=body.customerId?String(body.customerId):'owner';if(tenantId!=='owner')(await this.customer(tenantId));}
     (await this.db.prepare('UPDATE devices SET name=?,driver=?,offlineSeconds=?,speedLimit=?,tenantId=? WHERE id=?').run(name,driver,offlineSeconds,speedLimit,tenantId,id));
+    if(body.speedAlert!==undefined)(await this.db.prepare('UPDATE devices SET speedAlert=? WHERE id=?').run(body.speedAlert?1:0,id));
     // A vehicle changing hands must not keep the previous owner's geofence state or driver links.
     if(tenantId!==device.tenantId){(await this.db.prepare('DELETE FROM fence_state WHERE deviceId=?').run(id));(await this.revokeDriverLinks(id));}
     return (await this.device(id));
@@ -269,7 +270,7 @@ export class PostgresTrackingStore {
       if (!inserted && extra) (await this.db.prepare('UPDATE positions SET extra=? WHERE deviceId=? AND eventId=? AND extra IS NULL').run(extra,id,eventId));
       if (heartbeat) (await this.seen(id, receivedAt));
       if (inserted && valid && (!previous || recordedAt > previous.recordedAt)) {
-        if (speed > device.speedLimit && (!previous || previous.speed <= device.speedLimit)) (await this.alert(id,'speed',`Speed ${Math.round(speed)} km/h exceeds ${device.speedLimit} km/h.`,recordedAt));
+        if (overspeed(device,speed,previous) && !(await this.db.prepare("SELECT id FROM alerts WHERE deviceId=? AND type='speed' AND createdAt>?").get(id,recordedAt-SPEED_REPEAT))) (await this.alert(id,'speed',`Speed ${Math.round(speed)} km/h exceeds ${device.speedLimit} km/h.`,recordedAt));
         for (const fence of (await this.fences(device.tenantId))) {
           const inside = Number(distance({latitude,longitude},fence) <= fence.radius);
           const old = (await this.db.prepare('SELECT inside FROM fence_state WHERE deviceId=? AND fenceId=?').get(id,fence.id));

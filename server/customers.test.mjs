@@ -38,6 +38,12 @@ test('customer sessions scope fleet, commands, fences, alerts, links and relay a
   assert.equal((await as(aCookie,'/devices','POST',{name:'A phone',model:'Mobile'})).status,403);
   store.createDevice({name:'A phone',model:'Mobile'},a.customer.id);
   const aState=await (await as(aCookie,'/state')).json();
+  // Owners set their own overspeed limit and alert switch, only for their own vehicles.
+  const speed=await as(aCookie,`/devices/${aDevice.id}/speed`,'PUT',{speedLimit:55,speedAlert:false});
+  assert.equal(speed.status,200);assert.deepEqual(await speed.json(),{speedLimit:55,speedAlert:false});
+  assert.equal(store.raw(aDevice.id).speedLimit,55);
+  assert.equal((await as(aCookie,`/devices/${bDevice.id}/speed`,'PUT',{speedLimit:20})).status,404);
+  assert.equal((await as(aCookie,`/devices/${aDevice.id}/speed`,'PUT',{speedLimit:999})).status,400);
   // Customer state carries no tracker identifiers, receiver status or gateway details.
   assert.equal(aState.gateway,undefined);
   for(const d of aState.devices){for(const key of ['uniqueId','model','traccarId','bridgeStatus','cursor','command','tenantId','tokenHash'])assert.equal(key in d,false,key);}

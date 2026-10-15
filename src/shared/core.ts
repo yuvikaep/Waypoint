@@ -3,7 +3,7 @@ import {DEMO_MODE,demoRequest} from '../demo';
 import './theme.css';
 
 export type Fix={id:number;recordedAt:number;latitude:number;longitude:number;speed:number;heading:number|null;ignition:number|null;battery:number|null;satellites:number|null;valid?:number;accuracy?:number|null;receivedAt?:number};
-export type Vehicle={id:string;name:string;driver:string;status:string;online:boolean;fresh:boolean;lastSeen:number|null;speedLimit:number;ignition:number|null;stoppedSince:number|null;position:Fix|null;isMobile?:boolean;model?:string};
+export type Vehicle={id:string;name:string;driver:string;status:string;online:boolean;fresh:boolean;lastSeen:number|null;speedLimit:number;speedAlert?:boolean;ignition:number|null;stoppedSince:number|null;position:Fix|null;isMobile?:boolean;model?:string};
 export type Fence={id:string;name:string;latitude:number;longitude:number;radius:number};
 export type Alert={id:string;deviceId:string;deviceName:string;type:string;message:string;createdAt:number;acknowledged:number};
 export type Identity={role:'admin'|'customer';tenantId:string;name:string;email:string|null};

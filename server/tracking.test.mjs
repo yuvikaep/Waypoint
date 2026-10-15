@@ -333,3 +333,16 @@ test('stored rows that are a time-zone offset behind can be moved forward, other
   const rows=Object.fromEntries(store.db.prepare('SELECT eventId,recordedAt FROM positions').all().map(r=>[r.eventId,r.recordedAt]));
   assert.equal(rows.late,now);assert.equal(rows.fresh,now-5000);assert.equal(rows.buffered,now-90*60000);
 });
+
+test('overspeed alerts follow the owner limit, repeat only after a pause and can be switched off',t=>{
+  const {store,device,position,advance}=fixture(t);
+  store.updateDevice(device.id,{speedLimit:40});
+  let n=0;const drive=speed=>{advance(20000);store.ingest(device.id,position({eventId:`s${n++}`,recordedAt:new Date(store.now()).toISOString(),speed}))};
+  const count=()=>store.alerts().filter(a=>a.type==='speed').length;
+  drive(30);drive(45);assert.equal(count(),1);
+  assert.match(store.alerts().find(a=>a.type==='speed').message,/45 km\/h exceeds 40 km\/h/);
+  drive(38);drive(46);assert.equal(count(),1,'hovering at the limit does not repeat within minutes');
+  advance(4*60000);drive(30);drive(50);assert.equal(count(),2);
+  store.updateDevice(device.id,{speedAlert:false});
+  advance(4*60000);drive(30);drive(60);assert.equal(count(),2,'switched off by the owner');
+});

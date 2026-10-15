@@ -32,7 +32,7 @@ export function commandText(model,action,input={}){
 }
 // Customers see their vehicles, never tracker identifiers, receiver state or command plumbing.
 const customerPosition=p=>p&&{id:p.id,recordedAt:p.recordedAt,latitude:p.latitude,longitude:p.longitude,speed:p.speed,heading:p.heading,ignition:p.ignition,battery:p.battery,satellites:p.satellites,valid:p.valid};
-export const customerDevice=d=>({id:d.id,name:d.name,driver:d.driver,status:d.status,online:d.online,fresh:d.fresh,lastSeen:d.lastSeen,speedLimit:d.speedLimit,ignition:d.ignition,stoppedSince:d.stoppedSince,isMobile:d.model==='Mobile',position:customerPosition(d.position)});
+export const customerDevice=d=>({id:d.id,name:d.name,driver:d.driver,status:d.status,online:d.online,fresh:d.fresh,lastSeen:d.lastSeen,speedLimit:d.speedLimit,speedAlert:Number(d.speedAlert??1)!==0,ignition:d.ignition,stoppedSince:d.stoppedSince,isMobile:d.model==='Mobile',position:customerPosition(d.position)});
 async function body(req,maxBytes=16384) {
   if (!req.headers['content-type']?.startsWith('application/json')) fail(415,'Send application/json.');
   if(req.body!==undefined){
@@ -290,6 +290,15 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
         fail(404,'Endpoint not found.');
       }
       if (path==='/api/gps/devices' && method==='POST') {if(session.role!=='admin')fail(403,'Only your fleet administrator can add devices.');const result=await store.createDevice(await body(req),session.tenantId);if(backgroundTasks)void bridge.sync();return json(res,201,result);}
+      // Owners set their own overspeed limit and switch the alert on or off per vehicle.
+      const speedMatch=path.match(/^\/api\/gps\/devices\/([\w-]+)\/speed$/);
+      if(speedMatch&&method==='PUT'){
+        await ownsDevice(speedMatch[1]);const input=await body(req),change={};
+        if(input.speedLimit!==undefined)change.speedLimit=input.speedLimit;
+        if(input.speedAlert!==undefined){if(typeof input.speedAlert!=='boolean')fail(400,'Overspeed alert must be on or off.');change.speedAlert=input.speedAlert;}
+        const d=await store.updateDevice(speedMatch[1],change);
+        return json(res,200,{speedLimit:d.speedLimit,speedAlert:Number(d.speedAlert??1)!==0});
+      }
       const deviceMatch=path.match(/^\/api\/gps\/devices\/([\w-]+)\/(history|ping|token|driver-link|relay)$/);
       if (deviceMatch) {
         const [,id,action]=deviceMatch,device=await ownsDevice(id);

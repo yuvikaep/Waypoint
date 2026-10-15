@@ -28,6 +28,11 @@ test('PostgreSQL durable fleet, links, sessions, and real heartbeat contracts', 
     assert.equal(device.status,'No GPS fix');assert.equal(device.position.recordedAt,now-200000);
     assert.equal(device.lastSeen,now);assert.equal(device.position.deviceId,mobile.id);
     assert.equal((await store.history(mobile.id,now-300000,now)).positions.length,1);
+    // Owner's overspeed limit and switch.
+    await store.updateDevice(mobile.id,{speedLimit:40,speedAlert:true});
+    await store.ingest(mobile.id,{...point,eventId:'fast-1',recordedAt:new Date(now).toISOString(),speed:50});
+    assert.equal((await store.alerts(customer.id)).filter(a=>a.type==='speed').length,1);
+    await store.updateDevice(mobile.id,{speedAlert:false});assert.equal((await store.raw(mobile.id)).speedAlert,0);
     await store.saveWorkspaceData(customer.id,'documents',[{number:'cloud-document'}]);
     assert.equal((await store.workspaceData(customer.id,'documents'))[0].number,'cloud-document');
     assert.equal(await store.workspaceData('other-tenant','documents'),null);

@@ -21,6 +21,7 @@ ALTER TABLE positions ADD COLUMN IF NOT EXISTS extra TEXT;
 CREATE INDEX IF NOT EXISTS position_moving ON positions(deviceId,recordedAt) WHERE valid=1 AND speed>=3;
 CREATE INDEX IF NOT EXISTS position_ignition ON positions(deviceId,receivedAt) WHERE ignition IS NOT NULL;
 CREATE INDEX IF NOT EXISTS position_time ON positions(deviceId,recordedAt,id);
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS speedAlert INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS simOperator TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS simType TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS simNumber TEXT;

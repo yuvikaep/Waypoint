@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 const names = Object.fromEntries([
   'uniqueId','tokenHash','createdAt','lastSeen','traccarId','bridgeStatus',
-  'offlineSeconds','speedLimit','offlineAlert','tenantId','deviceId','eventId',
+  'offlineSeconds','speedLimit','speedAlert','offlineAlert','tenantId','deviceId','eventId',
   'recordedAt','receivedAt','fenceId','updatedAt','expiresAt','linkHash',
   'passwordHash','deviceName','verifiedAt','resetAt',
   'simOperator','simType','simNumber','apnUser','apnPass','commandId','sentAt','doneAt',

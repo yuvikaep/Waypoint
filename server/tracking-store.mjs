@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
-import { cleanExtra, alarmText } from './extra.mjs';
+import { cleanExtra, alarmText, overspeed, SPEED_REPEAT } from './extra.mjs';
 import { cleanSetup } from './provision.mjs';
 
 export const hash = value => createHash('sha256').update(value).digest('hex');
@@ -53,6 +53,7 @@ export class TrackingStore {
     if(!this.db.prepare('PRAGMA table_info(positions)').all().some(c=>c.name==='valid'))this.db.exec('ALTER TABLE positions ADD COLUMN valid INTEGER NOT NULL DEFAULT 1');
     if(!this.db.prepare('PRAGMA table_info(positions)').all().some(c=>c.name==='extra'))this.db.exec('ALTER TABLE positions ADD COLUMN extra TEXT');
     this.db.exec('CREATE INDEX IF NOT EXISTS position_moving ON positions(deviceId,recordedAt) WHERE valid=1 AND speed>=3; CREATE INDEX IF NOT EXISTS position_ignition ON positions(deviceId,receivedAt) WHERE ignition IS NOT NULL;');
+    if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name==='speedAlert'))this.db.exec('ALTER TABLE devices ADD COLUMN speedAlert INTEGER NOT NULL DEFAULT 1');
     for(const column of ['simOperator','simType','simNumber','apn','apnUser','apnPass'])
       if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name===column))this.db.exec(`ALTER TABLE devices ADD COLUMN ${column} TEXT`);
     this.db.exec('CREATE TABLE IF NOT EXISTS provision_steps (id TEXT PRIMARY KEY,deviceId TEXT NOT NULL,seq INTEGER NOT NULL,command TEXT NOT NULL,label TEXT NOT NULL,status TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,commandId TEXT,sentAt INTEGER,doneAt INTEGER,reply TEXT)');
@@ -170,6 +171,7 @@ export class TrackingStore {
     let tenantId=device.tenantId;
     if(body.customerId!==undefined){tenantId=body.customerId?String(body.customerId):'owner';if(tenantId!=='owner')this.customer(tenantId);}
     this.db.prepare('UPDATE devices SET name=?,driver=?,offlineSeconds=?,speedLimit=?,tenantId=? WHERE id=?').run(name,driver,offlineSeconds,speedLimit,tenantId,id);
+    if(body.speedAlert!==undefined)this.db.prepare('UPDATE devices SET speedAlert=? WHERE id=?').run(body.speedAlert?1:0,id);
     // A vehicle changing hands must not keep the previous owner's geofence state or driver links.
     if(tenantId!==device.tenantId){this.db.prepare('DELETE FROM fence_state WHERE deviceId=?').run(id);this.revokeDriverLinks(id);}
     return this.device(id);
@@ -297,7 +299,7 @@ export class TrackingStore {
       if (!inserted && extra) this.db.prepare('UPDATE positions SET extra=? WHERE deviceId=? AND eventId=? AND extra IS NULL').run(extra,id,eventId);
       if (heartbeat) this.seen(id, receivedAt);
       if (inserted && valid && (!previous || recordedAt > previous.recordedAt)) {
-        if (speed > device.speedLimit && (!previous || previous.speed <= device.speedLimit)) this.alert(id,'speed',`Speed ${Math.round(speed)} km/h exceeds ${device.speedLimit} km/h.`,recordedAt);
+        if (overspeed(device,speed,previous) && !this.db.prepare("SELECT id FROM alerts WHERE deviceId=? AND type='speed' AND createdAt>?").get(id,recordedAt-SPEED_REPEAT)) this.alert(id,'speed',`Speed ${Math.round(speed)} km/h exceeds ${device.speedLimit} km/h.`,recordedAt);
         for (const fence of this.fences(device.tenantId)) {
           const inside = Number(distance({latitude,longitude},fence) <= fence.radius);
           const old = this.db.prepare('SELECT inside FROM fence_state WHERE deviceId=? AND fenceId=?').get(id,fence.id);

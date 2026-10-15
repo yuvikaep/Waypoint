@@ -101,6 +101,7 @@ export async function demoRequest(path:string,options:RequestInit={}):Promise<an
     if(action==='history'){const from=Date.parse(url.searchParams.get('from')||''),to=Date.parse(url.searchParams.get('to')||'');result={positions:(data.routes[id]||[]).filter(p=>p.recordedAt>=from&&p.recordedAt<=to),next:null};}
     else if(action==='ping'){
       d.command={status:'answered',detail:'Demo response received. No real tracker was contacted.',createdAt:now()};d.lastSeen=now();d.online=true;d.fresh=true;if(d.position)d.position.recordedAt=now();d.status=d.position?.speed?'Moving':'Stopped';result=d.command;
+    }else if(action==='speed'){if(body.speedLimit!==undefined)d.speedLimit=Number(body.speedLimit);if(body.speedAlert!==undefined)d.speedAlert=body.speedAlert;result={speedLimit:d.speedLimit,speedAlert:d.speedAlert!==false};
     }else if(action==='driver-link'){result=method==='DELETE'?{ok:true}:{code:`demo:${d.id}`,expiresAt:now()+7*86400000};}
     else throw new Error('Not available in the demo.');
   }else if(url.pathname==='/fences'&&method==='POST'){

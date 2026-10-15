@@ -156,12 +156,13 @@ function renderSheet(){
   el.hidden=false;
   el.innerHTML=`<div class="head"><div><h2>${esc(d.name)}</h2>${d.driver?`<span class="small muted">${i('user-round')} ${esc(d.driver)}</span>`:''}</div><div style="display:flex;gap:8px;align-items:center">${chip(d)}<button class="icon-btn" id="close-sheet" aria-label="Close">${i('x')}</button></div></div>
     <div><div class="place">${i('map-pin')}${placeSpan(p,d.id)}</div><div class="since">${esc(statusLine(d))}</div></div>
-    <div class="stats"><div><span>Speed</span><b>${p&&d.fresh?Math.round(p.speed):0} km/h</b></div><div><span>Ignition</span><b>${d.ignition==null?'—':d.ignition?'On':'Off'}</b></div><div><span>Today</span><b>${km?.km==null?'…':`${km.km} km`}</b></div><div><span>Updated</span><b>${ago(p?.recordedAt??d.lastSeen)}</b></div></div>
-    <div class="acts"><button class="btn btn-primary btn-sm" id="sheet-history">${i('route')}History</button>${p?`<a class="btn btn-ghost btn-sm" href="${mapsLink(p)}" target="_blank" rel="noopener">${i('external-link')}Google Maps</a><button class="btn btn-ghost btn-sm" id="sheet-share">${i('share-2')}Share</button>`:''}${d.isMobile?`<button class="btn btn-ghost btn-sm" id="sheet-driver">${i('smartphone')}Driver link</button>`:''}</div>`;
+    <div class="stats"><div><span>Speed</span><b${p&&d.fresh&&p.speed>d.speedLimit?' style="color:var(--stopped)"':''}>${p&&d.fresh?Math.round(p.speed):0} km/h</b></div><div><span>Ignition</span><b>${d.ignition==null?'—':d.ignition?'On':'Off'}</b></div><div><span>Today</span><b>${km?.km==null?'…':`${km.km} km`}</b></div><div><span>Updated</span><b>${ago(p?.recordedAt??d.lastSeen)}</b></div></div>
+    <div class="acts"><button class="btn btn-primary btn-sm" id="sheet-history">${i('route')}History</button>${p?`<a class="btn btn-ghost btn-sm" href="${mapsLink(p)}" target="_blank" rel="noopener">${i('external-link')}Google Maps</a><button class="btn btn-ghost btn-sm" id="sheet-share">${i('share-2')}Share</button>`:''}<button class="btn btn-ghost btn-sm" id="sheet-speed">${i('gauge')}Limit ${d.speedLimit} km/h${d.speedAlert===false?' · off':''}</button>${d.isMobile?`<button class="btn btn-ghost btn-sm" id="sheet-driver">${i('smartphone')}Driver link</button>`:''}</div>`;
   on('#close-sheet',()=>{selected='';$('#live').classList.remove('sheet-open');updateLive()},el);
   on('#sheet-history',()=>{historyVehicle=d.id;go('history')},el);
   on('#sheet-share',async()=>{const text=`${d.name}: ${places.get(placeKey(p!))?.label||coords(p!)}\n${mapsLink(p!)}`;if(navigator.share)await navigator.share({title:d.name,text}).catch(()=>{});else{await navigator.clipboard.writeText(text);toast('Location copied.')}},el);
   on('#sheet-driver',()=>driverLink(d),el);
+  on('#sheet-speed',()=>speedSettings(d),el);
   icons();
 }
 const dayStart=(offset=0)=>{const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()+offset);return d};
@@ -334,6 +335,27 @@ function addFence(){
 }
 
 /* ---------- Driver link (phone senders only) ---------- */
+// The owner's own overspeed limit and on/off switch for one vehicle.
+function speedForm(d:Vehicle,compact=false){
+  return `<form class="form" data-speed="${d.id}">${compact?`<b>${esc(d.name)}</b>`:''}
+    <div class="form-row"><label class="field">Speed limit (km/h)<input class="input" type="number" name="speedLimit" min="1" max="250" step="1" required value="${d.speedLimit}"></label>
+    <label class="check" style="align-self:end;padding-bottom:10px"><input type="checkbox" name="speedAlert" ${d.speedAlert===false?'':'checked'}>Alert me when crossed</label></div>
+    <p class="error"></p><button class="btn btn-primary btn-sm" type="submit" style="align-self:flex-start">${i('save')}Save</button></form>`;
+}
+function bindSpeedForms(root:ParentNode,done?:()=>void){
+  root.querySelectorAll<HTMLFormElement>('form[data-speed]').forEach(form=>form.addEventListener('submit',async e=>{
+    e.preventDefault();const f=new FormData(form),err=form.querySelector('.error')!;err.textContent='';
+    try{
+      const r=await post<{speedLimit:number;speedAlert:boolean}>(`/devices/${form.dataset.speed}/speed`,{speedLimit:Number(f.get('speedLimit')),speedAlert:f.has('speedAlert')},'PUT');
+      const v=vehicle(form.dataset.speed!);if(v){v.speedLimit=r.speedLimit;v.speedAlert=r.speedAlert}
+      unlockVoice();toast(r.speedAlert?`Overspeed alert on at ${r.speedLimit} km/h.`:'Overspeed alert switched off.');done?.();
+    }catch(x){err.textContent=(x as Error).message}
+  }));
+}
+function speedSettings(d:Vehicle){
+  modal(`${d.name} · Overspeed`,`<p class="hint">As soon as this vehicle goes faster than this you get an alert, a pop-up and a voice message. Choose which alerts pop up or speak in Settings.</p>${speedForm(d)}`);
+  bindSpeedForms(document.querySelector('dialog.modal')!,()=>{closeModal();renderSheet()});
+}
 function driverLink(d:Vehicle){
   modal(`${d.name} · Driver link`,`<p>Driver ko yeh link bhejein. Link kholkar "Location shuru karein" dabane par gaadi map par dikhegi.</p><div id="link-box"><p class="muted">Loading…</p></div><p class="error" id="link-error"></p>
     <div class="toolbar"><button class="btn btn-primary" id="make-link">${i('plus')}Create link</button><button class="btn btn-ghost" id="stop-link">Disable link</button></div>`);
@@ -378,6 +400,8 @@ function renderSettings(){
       <h3 style="margin-top:6px">Which alerts?</h3>
       ${CATEGORIES.map(c=>`<label class="check" style="align-items:flex-start"><input type="checkbox" data-cat-n="${c.key}" style="margin-top:3px"><span><b>${esc(c.label)}</b><br><span class="hint">${esc(c.hint)}</span></span></label>`).join('')}
       <p class="hint">Voice and notifications work while Waypoint is open in a browser tab, including a background tab. They stop when the tab or browser is closed or the phone suspends it.</p></div>
+    <div class="card card-pad form" id="speed-limits"><h2>Overspeed limits</h2><p class="hint">Set your own limit for each vehicle. When it is crossed you get an alert right away, with pop-up and voice if Overspeed is switched on above.</p>
+      ${fleet.devices.length?fleet.devices.map(d=>speedForm(d,true)).join('<hr style="border:0;border-top:1px solid var(--line);margin:4px 0">'):'<p class="muted">No vehicles yet.</p>'}</div>
     ${DEMO_MODE?'':`<form class="card card-pad form" id="password"><h2>Change password</h2><p class="hint">Signed in as ${esc(me.email)}. Your other devices will be signed out.</p>
       <label class="field">Current password<input class="input" type="password" name="currentPassword" required autocomplete="current-password"></label>
       <div class="form-row"><label class="field">New password<input class="input" type="password" name="newPassword" required minlength="12" maxlength="128" autocomplete="new-password"></label><label class="field">Confirm new password<input class="input" type="password" name="confirmPassword" required minlength="12" maxlength="128" autocomplete="new-password"></label></div>
@@ -391,6 +415,7 @@ function renderSettings(){
     np[k]=box.checked;await saveNotify(np);note();toast('Saved.')})});
   $$<HTMLInputElement>('[data-cat-n]').forEach(box=>{const k=box.dataset.catN as Category;box.checked=np.categories[k];box.addEventListener('change',async()=>{np.categories[k]=box.checked;await saveNotify(np);toast('Saved.')})});
   on('#test-voice',()=>{unlockVoice();speak('Vehicle started')});note();
+  bindSpeedForms($('#speed-limits'));
   document.querySelector('#password')?.addEventListener('submit',async e=>{e.preventDefault();const form=e.target as HTMLFormElement,f=new FormData(form);$('#password-error').textContent='';try{if(f.get('newPassword')!==f.get('confirmPassword'))throw Error('New passwords do not match.');await post('/account/password',{currentPassword:f.get('currentPassword'),newPassword:f.get('newPassword')});form.reset();toast('Password changed.')}catch(err){$('#password-error').textContent=(err as Error).message}});
   on('[data-logout]',logout);icons();
 }
