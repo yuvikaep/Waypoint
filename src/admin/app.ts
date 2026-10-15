@@ -5,7 +5,10 @@ import {showLogin} from '../auth';
 
 type View='overview'|'devices'|'device'|'customers'|'admins'|'settings'|'more';
 type Gateway={configured:boolean;connected:boolean;lastSync:number|null;error:string|null;trackerHost?:string;gt06Port?:number;gt06AlternativePort?:number;teltonikaPort?:number};
-type AdminDevice=Vehicle&{uniqueId:string;model:string;bridgeStatus:string|null;traccarId:number|null;offlineSeconds:number;customerId:string|null;customerName:string|null;createdAt:number};
+type Step={id:string;seq:number;command:string;label:string;status:'pending'|'sent'|'ok'|'failed';attempts:number;reply:string|null;sentAt:number|null;doneAt:number|null};
+type Provisioning={steps:Step[];sms:{label:string;text:string}[];operators?:Record<string,{label:string;apn:Record<string,string>}>};
+const OPERATORS:Record<string,{label:string;apn:Record<string,string>}>={airtel:{label:'Airtel',apn:{personal:'airtelgprs.com'}},jio:{label:'Jio',apn:{personal:'jionet'}},bsnl:{label:'BSNL',apn:{personal:'bsnlnet'}},vi:{label:'Vi (Vodafone Idea)',apn:{}},other:{label:'Other',apn:{}}};
+type AdminDevice=Vehicle&{simOperator?:string|null;simType?:string|null;simNumber?:string|null;apn?:string|null;apnUser?:string|null;uniqueId:string;model:string;bridgeStatus:string|null;traccarId:number|null;offlineSeconds:number;customerId:string|null;customerName:string|null;createdAt:number};
 type Customer={id:string;name:string;email:string;enabled:number|boolean;createdAt:number;devices:number};
 type Overview={customers:{total:number;enabled:number};devices:{total:number;moving:number;stopped:number;offline:number;waiting:number;noFix:number;unassigned:number};gateway:Gateway;admins:string[];serverTime:number};
 
@@ -96,27 +99,88 @@ function deviceForm(d?:AdminDevice){
     <label class="field">Customer<select class="input" name="customerId"><option value="">Unassigned</option>${customers.map(c=>`<option value="${c.id}" ${d?.customerId===c.id?'selected':''}>${esc(c.name)} · ${esc(c.email)}</option>`).join('')}</select></label>
     ${editing?`<dl class="facts"><dt>Tracker</dt><dd>${esc(d!.model)} · <span class="mono">${esc(d!.uniqueId)}</span></dd></dl>`:`<div class="form-row"><label class="field">Tracker model<select class="input" name="model" id="model">${MODELS.map(m=>`<option>${m}</option>`).join('')}</select></label><label class="field" id="imei-field">IMEI (15 digits)<input class="input mono" name="uniqueId" inputmode="numeric" maxlength="15" pattern="\\d{15}" required autocomplete="off"></label></div>`}
     <label class="field">Driver (optional)<input class="input" name="driver" maxlength="100" value="${esc(d?.driver||'')}"></label>
+    <div id="sim-block"><h3 style="margin:4px 0 8px">SIM card in the tracker</h3>
+      <div class="form-row"><label class="field">Operator<select class="input" name="simOperator" id="sim-op"><option value="">Select…</option>${Object.entries(OPERATORS).map(([k,o])=>`<option value="${k}" ${d?.simOperator===k?'selected':''}>${o.label}</option>`).join('')}</select></label>
+        <label class="field">SIM type<select class="input" name="simType" id="sim-type"><option value="personal" ${d?.simType!=='iot'?'selected':''}>Personal / normal</option><option value="iot" ${d?.simType==='iot'?'selected':''}>IoT / M2M</option></select></label></div>
+      <div class="form-row"><label class="field">APN<input class="input mono" name="apn" id="sim-apn" maxlength="40" placeholder="e.g. airtelgprs.com" value="${esc(d?.apn||'')}"></label><label class="field">SIM mobile number (optional)<input class="input" name="simNumber" maxlength="20" inputmode="tel" value="${esc(d?.simNumber||'')}"></label></div>
+      <p class="hint" id="apn-hint" style="margin:0 0 8px"></p>
+      <details><summary class="small muted">APN login (only if your SIM provider gave a username and password)</summary><div class="form-row" style="margin-top:8px"><label class="field">APN user<input class="input" name="apnUser" maxlength="40" value="${esc(d?.apnUser||'')}"></label><label class="field">APN password<input class="input" name="apnPass" maxlength="40" type="password" autocomplete="off" placeholder="${editing?'unchanged':''}"></label></div></details></div>
+    ${editing?'':`<div id="auto-block" class="card card-pad" style="background:var(--soft)"><label class="check"><input type="checkbox" name="autoSetup" checked>Set the tracker up automatically after its first connection</label><p class="hint" style="margin:6px 0 10px">One command at a time, each waits for the tracker's reply: time zone, upload interval, ignition reports, data on, status, settings, restart.</p><div class="form-row"><label class="field">Upload when moving (sec)<input class="input" type="number" name="moving" min="5" max="18000" value="10"></label><label class="field">Upload when parked (sec)<input class="input" type="number" name="parked" min="5" max="18000" value="60"></label></div></div>`}
     <div class="form-row"><label class="field">Speed limit (km/h)<input class="input" type="number" name="speedLimit" min="1" max="250" value="${d?.speedLimit??80}" required></label><label class="field">Offline after (seconds)<input class="input" type="number" name="offlineSeconds" min="30" max="86400" value="${d?.offlineSeconds??600}" required></label></div>
     ${editing&&d!.customerId?'<p class="hint">Moving a vehicle to another customer disables its driver link and geofence state.</p>':''}
     <p class="error" id="device-error"></p><button class="btn btn-primary" type="submit">${editing?'Save changes':'Add device'}</button></form>`);
   const form=$<HTMLFormElement>('#device-form');
-  document.querySelector<HTMLSelectElement>('#model')?.addEventListener('change',e=>{const mobile=(e.target as HTMLSelectElement).value==='Mobile';$('#imei-field').hidden=mobile;$<HTMLInputElement>('#imei-field input').required=!mobile});
+  const syncApn=()=>{
+    const op=$<HTMLSelectElement>('#sim-op').value,type=$<HTMLSelectElement>('#sim-type').value,apn=$<HTMLInputElement>('#sim-apn'),want=OPERATORS[op]?.apn[type]||'';
+    if(!apn.dataset.touched||!apn.value)apn.value=want;
+    // IoT / M2M SIMs use a secure APN from the seller; never guessed.
+    $('#apn-hint').textContent=type==='iot'?'IoT / M2M SIM: the APN (and login, if any) is assigned by your SIM provider. Enter exactly what they gave you.':op&&!want?'No standard APN is on file for this operator. Enter the APN printed with the SIM or given by the operator.':want?'Standard APN for this operator. Change it if your SIM came with a different one.':'';
+  };
+  $<HTMLSelectElement>('#sim-op').addEventListener('change',syncApn);$<HTMLSelectElement>('#sim-type').addEventListener('change',syncApn);$<HTMLInputElement>('#sim-apn').addEventListener('input',e=>{(e.target as HTMLInputElement).dataset.touched='1'});
+  document.querySelector<HTMLSelectElement>('#model')?.addEventListener('change',e=>{const mobile=(e.target as HTMLSelectElement).value==='Mobile';$('#imei-field').hidden=mobile;$<HTMLInputElement>('#imei-field input').required=!mobile;$('#sim-block').hidden=mobile;const auto=document.querySelector<HTMLElement>('#auto-block');if(auto)auto.hidden=mobile});
   form.addEventListener('submit',async e=>{
     e.preventDefault();const v=Object.fromEntries(new FormData(form)) as Record<string,string>;const button=form.querySelector<HTMLButtonElement>('button[type=submit]')!;button.disabled=true;
     try{
-      const body={name:v.name,driver:v.driver,customerId:v.customerId||null,speedLimit:Number(v.speedLimit),offlineSeconds:Number(v.offlineSeconds)};
+      const sim={simOperator:v.simOperator||null,simType:v.simOperator?v.simType:null,apn:v.apn||null,simNumber:v.simNumber||null,apnUser:v.apnUser||null,...(v.apnPass?{apnPass:v.apnPass}:{})};
+      const body={name:v.name,driver:v.driver,customerId:v.customerId||null,speedLimit:Number(v.speedLimit),offlineSeconds:Number(v.offlineSeconds),...(v.model==='Mobile'?{}:sim)};
       if(editing)await api(`/admin/devices/${d!.id}`,{method:'PATCH',body:JSON.stringify(body)});
-      else{const r=await post<{device:AdminDevice}>('/admin/devices',{...body,model:v.model,uniqueId:v.model==='Mobile'?undefined:v.uniqueId});closeModal();toast('Device added.');if(view==='devices')await renderDevices();setupInfo({...r.device,customerId:body.customerId,customerName:customers.find(c=>c.id===body.customerId)?.name||null});return}
+      else{
+        const auto=form.querySelector<HTMLInputElement>('[name=autoSetup]')?.checked!==false;
+        const r=await post<{device:AdminDevice;provisioning:Provisioning}>('/admin/devices',{...body,model:v.model,uniqueId:v.model==='Mobile'?undefined:v.uniqueId,autoSetup:auto,moving:Number(v.moving||10),parked:Number(v.parked||60)});
+        closeModal();toast('Device added.');if(view==='devices')await renderDevices();
+        if(v.model==='Mobile')setupInfo({...r.device,customerId:body.customerId,customerName:customers.find(c=>c.id===body.customerId)?.name||null});else onboardingGuide(r.device.id,r.device.name);
+        return}
       closeModal();toast('Saved.');if(view==='devices')void renderDevices();else if(view==='overview')void renderOverview();else if(view==='device')void renderDevice();
     }catch(err){$('#device-error').textContent=(err as Error).message;button.disabled=false}
   });
+}
+/* ---------- Onboarding guide and automatic set-up ---------- */
+const STEP_CHIP:Record<Step['status'],[string,string]>={pending:['Waiting','neutral'],sent:['Sent · waiting for reply','neutral'],ok:['Done','ok'],failed:['Failed','bad']};
+function stepsHtml(steps:Step[]){
+  if(!steps.length)return '<p class="muted small">No automatic set-up is queued for this tracker.</p>';
+  return steps.map(st=>{const [label,cls]=STEP_CHIP[st.status];return `<div class="alert-item"><div class="body"><b>${st.seq}. ${esc(st.label)}</b><p class="mono small">${esc(st.command)}${st.reply?` → ${esc(st.reply.slice(0,160))}`:''}</p>${st.attempts>1?`<span class="small muted">${st.attempts} tries</span>`:''}</div><span class="chip ${cls} plain">${label}</span></div>`}).join('');
+}
+function smsHtml(sms:Provisioning['sms']){
+  if(!sms.length)return '<p class="muted small">No SMS needed for this tracker.</p>';
+  return sms.map((m,n)=>`<div class="alert-item"><div class="body"><b>${n+1}. ${esc(m.label)}</b><p class="mono">${esc(m.text)}</p></div><button class="btn btn-ghost btn-sm" data-copy="${esc(m.text)}">${i('copy')}Copy</button></div>`).join('');
+}
+// Shown right after a tracker is added: the SMS to send by hand, then the automatic set-up as it runs.
+function onboardingGuide(id:string,name:string){
+  const dialog=modal(`${name} · Set up the tracker`,`<div id="guide"><p class="muted">Loading…</p></div>`,{wide:true});
+  const load=async()=>{
+    if(!dialog.open)return;
+    try{
+      const data=await api<Detail>(`/admin/devices/${id}?tz=${new Date().getTimezoneOffset()}`);
+      const d=data.device,pr=data.provisioning,steps=pr.steps,connected=!!d.lastSeen&&Date.now()-d.lastSeen<=240000;
+      const open=steps.filter(x=>x.status==='pending'||x.status==='sent').length,failed=steps.filter(x=>x.status==='failed').length;
+      $('#guide').innerHTML=`<h3>Step 1 · Send these SMS to the tracker's SIM</h3><p class="hint" style="margin:4px 0 8px">A brand-new tracker cannot receive anything over data yet, so these go by SMS (from any phone). Send them in this order. Syntax can differ by maker; check the manual.</p>${d.apn?'':`<p class="gap-note" style="margin-bottom:8px">${i('triangle-alert')}No APN was entered, so there is no APN text below. Get it from the SIM provider (IoT / M2M SIMs use a private one), then add it from Edit.</p>`}<div class="card">${smsHtml(pr.sms)}</div>
+        <h3 style="margin-top:18px">Step 2 · Automatic set-up</h3>
+        <p class="${connected?'hint':'gap-note'}" style="margin:4px 0 8px">${connected?'The tracker is connected. The app sends each command, waits for the reply and moves on.':`${i('triangle-alert')}Waiting for the tracker's first connection. Once the SMS above are applied and it has mobile data, set-up starts by itself.`}</p>
+        <div class="card" id="guide-steps">${stepsHtml(steps)}</div>
+        <p class="small ${failed?'':'muted'}" style="margin-top:10px">${!steps.length?'':open?`${open} step${open===1?'':'s'} left. You can close this window; set-up continues and is also on the device page.`:failed?`Finished with ${failed} failed step${failed===1?'':'s'}. Open the device page to retry.`:'All steps finished. The tracker is ready.'}</p>`;
+      wireCopy($('#guide'));icons();
+      if(open||!steps.length)setTimeout(()=>void load(),5000);
+    }catch(e){$('#guide').innerHTML=`<p class="error">${esc((e as Error).message)}</p>`}
+  };
+  void load();
+}
+function renderProvisioningCard(data:Detail){
+  const d=data.device,pr=data.provisioning,host=document.querySelector('#dp-provision');if(!host)return;
+  if(d.model==='Mobile'){host.innerHTML='';return}
+  const steps=pr.steps,open=steps.filter(x=>x.status==='pending'||x.status==='sent').length;
+  host.innerHTML=`<div class="section-title"><h2>Set-up</h2><div class="toolbar"><button class="btn btn-ghost btn-sm" id="pv-sms">${i('copy')}SMS texts</button><button class="btn btn-primary btn-sm" id="pv-run">${i('refresh-cw')}${steps.length?'Run set-up again':'Run automatic set-up'}</button>${open?`<button class="btn btn-ghost btn-sm" id="pv-cancel">Cancel</button>`:''}</div></div>
+    <dl class="facts" style="margin-bottom:12px"><dt>SIM</dt><dd>${d.simOperator?`${esc(OPERATORS[d.simOperator]?.label||d.simOperator)} · ${d.simType==='iot'?'IoT / M2M':'Personal'}`:'<span class="muted">Not recorded</span>'}${d.simNumber?` · ${esc(d.simNumber)}`:''}</dd><dt>APN</dt><dd class="mono">${esc(d.apn||'—')}</dd></dl>
+    ${stepsHtml(steps)}`;
+  on('#pv-sms',()=>onboardingGuide(d.id,d.name),host);
+  on('#pv-run',async()=>{if(steps.length&&!confirm('Send the whole set-up again, one command at a time?'))return;await post(`/admin/devices/${d.id}/provision`,{action:'start'});toast('Set-up queued. It starts when the tracker connects.');void renderDevice()},host);
+  on('#pv-cancel',async()=>{await post(`/admin/devices/${d.id}/provision`,{action:'cancel'});toast('Set-up cancelled.');void renderDevice()},host);
 }
 function setupInfo(d:AdminDevice){
   const gt06=['GT06','GT06N','PT06'].includes(d.model);
   modal(`${d.name} · Setup`,d.model==='Mobile'
     ?`<p>This vehicle reports from the driver's phone. The customer shares the driver link from their app (vehicle card → Driver link).</p>`
     :`<dl class="facts"><dt>IMEI</dt><dd class="mono">${esc(d.uniqueId)}</dd><dt>Protocol</dt><dd>${protocolOf(d.model)}</dd><dt>Server IP</dt><dd class="mono">${esc(gateway.trackerHost||'—')}</dd><dt>Port</dt><dd class="mono">TCP ${gt06?(gateway.gt06Port??5023):(gateway.teltonikaPort??5027)}${gt06&&gateway.gt06AlternativePort?` (alternative ${gateway.gt06AlternativePort})`:''}</dd><dt>Receiver</dt><dd>${d.traccarId?'Linked':'Waiting for first sync'} · ${esc(d.bridgeStatus||'—')}</dd><dt>Last packet</dt><dd>${time(d.lastSeen)}</dd><dt>Last GPS fix</dt><dd>${d.position?time(d.position.recordedAt):'Never'}</dd></dl>
-      ${gt06?`<div class="card card-pad" style="background:var(--soft)"><h3>SMS to the tracker SIM</h3><p class="small muted" style="margin:6px 0 10px">Syntax varies by maker; check the manual.</p><p class="mono">SERVER,1,${esc(gateway.trackerHost||'IP')},${gateway.gt06Port??5023},0#</p><p class="mono">APN,airtelgprs.com#  (personal Airtel)</p><p class="mono">APN,airteliot.com#  (Airtel IoT)</p><p class="mono">RESET#   then   STATUS#</p><p class="small muted" style="margin-top:8px">STATUS# should show GPRS: Link Up and GPS: FIXED.</p></div>`:''}
+      ${gt06?`<div class="card card-pad" style="background:var(--soft)"><h3>SMS to the tracker SIM</h3><p class="small muted" style="margin:6px 0 10px">Syntax varies by maker; check the manual.</p><p class="mono">SERVER,1,${esc(gateway.trackerHost||'IP')},${gateway.gt06Port??5023},0#</p><p class="mono">APN,${esc(d.apn||'your-apn')}#${d.apn?'':'  (IoT SIMs: the APN comes from your SIM seller)'}</p><p class="mono">RESET#   then   STATUS#</p><p class="small muted" style="margin-top:8px">STATUS# should show GPRS: Link Up and GPS: FIXED.</p></div>`:''}
       <button class="btn btn-ghost" id="relay">${i('shield-check')}Starter relay</button>`);
   on('#relay',()=>relayDialog(d));
 }
@@ -133,7 +197,7 @@ type Packet={id:number;recordedAt:number;receivedAt:number;latitude:number;longi
 type CommandRow={id:string;status:string;detail:string;createdAt:number;updatedAt:number};
 type RawPacket={at:string;session:string;direction:'in'|'out'|'event'|'decoded';remote:string;hex:string;tag:string};
 type PowerEvent={at:number;connected:boolean;battery:number|null};
-type Detail={device:AdminDevice;commands:CommandRow[];power:{connected:boolean|null;events:PowerEvent[]};sim:{iccid:string|null};packets:Packet[];alerts:{id:string;type:string;message:string;createdAt:number;acknowledged:number}[];today:{distanceKm:number;runningMinutes:number;idleMinutes:number;maxSpeed:number;gaps:{from:number;to:number;minutes:number;movedKm:number|null}[]}|null;gateway:Gateway};
+type Detail={device:AdminDevice;provisioning:Provisioning;commands:CommandRow[];power:{connected:boolean|null;events:PowerEvent[]};sim:{iccid:string|null};packets:Packet[];alerts:{id:string;type:string;message:string;createdAt:number;acknowledged:number}[];today:{distanceKm:number;runningMinutes:number;idleMinutes:number;maxSpeed:number;gaps:{from:number;to:number;minutes:number;movedKm:number|null}[]}|null;gateway:Gateway};
 let detailMap:{map:ReturnType<typeof createMap>;marker:ReturnType<typeof L.marker>}|undefined;
 // Heartbeats are stored as copies of the last fix: a row repeating an earlier row's GPS time and place,
 // or arriving long after its GPS time, is a heartbeat rather than a new location.
@@ -157,7 +221,7 @@ async function renderDevice(){
     detailMap?.map.remove();detailMap=undefined;
     $('#view').innerHTML=`<div class="page" id="device-page"><div class="toolbar"><button class="btn btn-ghost btn-sm" data-go="devices">${i('chevron-left')}All devices</button></div><div id="dp-head"></div><div class="grid-kpi" id="dp-kpi"></div>
       <div style="display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:14px" class="dp-cols"><div class="card"><div style="height:300px;border-radius:16px 16px 0 0;overflow:hidden;position:relative"><div class="map" id="dp-map"></div></div><div class="card-pad" id="dp-place"></div></div><div class="card card-pad" id="dp-today"></div></div>
-      <div class="card card-pad" id="dp-health"></div><div class="card card-pad" id="dp-commands"></div><div class="card card-pad" id="dp-tracker"></div><div class="card" id="dp-terminal"></div><div class="card" id="dp-packets"></div><div class="card" id="dp-alerts"></div></div>`;
+      <div class="card card-pad" id="dp-health"></div><div class="card card-pad" id="dp-provision"></div><div class="card card-pad" id="dp-commands"></div><div class="card card-pad" id="dp-tracker"></div><div class="card" id="dp-terminal"></div><div class="card" id="dp-packets"></div><div class="card" id="dp-alerts"></div></div>`;
     on('#view [data-go]',el=>go(el.dataset.go as View));
   }
   const kinds=packetKinds(data.packets),kind=data.packets[0]?kinds.get(data.packets[0].id)!:['—',''];
@@ -173,7 +237,7 @@ async function renderDevice(){
   $('#dp-today').innerHTML=`<h2>Today</h2>${t?`<div class="summary" style="margin-top:12px"><div><span>Distance</span><b>${t.distanceKm} km</b></div><div><span>Running</span><b>${hm(t.runningMinutes)}</b></div><div><span>Idle</span><b>${hm(t.idleMinutes)}</b></div><div><span>Max speed</span><b>${t.maxSpeed} km/h</b></div></div>${t.gaps.map(x=>`<p class="gap-note" style="margin-top:10px">${i('triangle-alert')}No data ${esc(clockOf(x.from))} – ${esc(clockOf(x.to))} (${x.minutes} min)${x.movedKm?` · moved ${x.movedKm} km`:''}</p>`).join('')}`:'<p class="muted" style="margin-top:8px">Nothing recorded today.</p>'}`;
   const gt06=['GT06','GT06N','PT06'].includes(d.model);
   $('#dp-tracker').innerHTML=`<h2>Tracker</h2><dl class="facts" style="margin-top:12px"><dt>Model / protocol</dt><dd>${esc(d.model)} · ${protocolOf(d.model)}</dd><dt>IMEI</dt><dd class="mono">${esc(d.uniqueId)}</dd><dt>SIM (ICCID)</dt><dd class="mono">${data.sim?.iccid?esc(data.sim.iccid):'<span class="muted">Not reported yet</span>'}</dd><dt>Receiver</dt><dd>${d.traccarId?`Linked (#${d.traccarId})`:'Not yet linked'} · ${esc(d.bridgeStatus||'—')}</dd>${d.model==='Mobile'?'':`<dt>Server</dt><dd class="mono">${esc(g.trackerHost||'—')} : ${gt06?(g.gt06Port??5023):(g.teltonikaPort??5027)}</dd>`}<dt>Speed limit</dt><dd>${d.speedLimit} km/h</dd><dt>Offline after</dt><dd>${Math.round(d.offlineSeconds/60)} min without a packet</dd><dt>Registered</dt><dd>${time(d.createdAt)}</dd></dl>`;
-  renderHealth(data);renderCommands(data);renderTerminal(d);
+  renderHealth(data);renderProvisioningCard(data);renderCommands(data);renderTerminal(d);
   $('#dp-packets').innerHTML=`<div class="card-pad section-title" style="margin:0"><h2>Last ${data.packets.length} packets</h2><span class="small muted">Newest first · refreshes every 10 s</span></div>${data.packets.length?`<div class="table-wrap" style="max-height:460px"><table class="table"><thead><tr><th>Received</th><th>GPS time</th><th>Type</th><th>Speed</th><th>Ignition</th><th>Sats</th><th>Battery</th><th>Position</th></tr></thead><tbody>${data.packets.map(x=>{const [label,cls]=kinds.get(x.id)!;return `<tr><td class="nowrap">${hhmmss(x.receivedAt)}<small>${new Date(x.receivedAt).toLocaleDateString('en-IN',{day:'2-digit',month:'short'})}</small></td><td class="nowrap">${hhmmss(x.recordedAt)}</td><td><span class="chip ${cls} plain">${label}</span></td><td>${Math.round(x.speed)} km/h</td><td>${x.ignition==null?'—':x.ignition?'On':'Off'}</td><td>${x.satellites??'—'}</td><td>${x.battery!=null?Math.round(x.battery)+'%':'—'}</td><td class="mono">${x.latitude.toFixed(5)}, ${x.longitude.toFixed(5)}</td></tr>`}).join('')}</tbody></table></div>`:'<div class="empty"><p>No packets stored yet.</p></div>'}`;
   $('#dp-alerts').innerHTML=`<div class="card-pad section-title" style="margin:0"><h2>Recent alerts</h2></div>${data.alerts.length?data.alerts.map(a=>`<div class="alert-item ${a.acknowledged?'done':''}"><div class="body"><b>${esc(a.type)}</b><p>${esc(a.message)}</p><span class="small muted">${time(a.createdAt)}</span></div></div>`).join(''):'<div class="empty"><p>No alerts.</p></div>'}`;
   if(p){

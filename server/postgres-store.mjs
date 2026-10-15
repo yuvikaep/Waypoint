@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { PgAdapter } from './pg-adapter.mjs';
 import { cleanExtra, alarmText } from './extra.mjs';
+import { cleanSetup } from './provision.mjs';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 
 export const hash = value => createHash('sha256').update(value).digest('hex');
@@ -146,12 +147,31 @@ export class PostgresTrackingStore {
   }
   // Removes the vehicle and everything recorded for it.
   async deleteDevice(id) {
-    (await this.raw(id));
+    (await this.raw(id));(await this.db.prepare('DELETE FROM provision_steps WHERE deviceId=?').run(id));
     await this.db.transaction(async()=>{
       (await this.db.prepare('DELETE FROM driver_sessions WHERE linkHash IN (SELECT hash FROM driver_links WHERE deviceId=?)').run(id));
       for (const table of ['driver_links','positions','fence_state','alerts','commands','relay_installations','relay_commands']) (await this.db.prepare(`DELETE FROM ${table} WHERE deviceId=?`).run(id));
       (await this.db.prepare('DELETE FROM devices WHERE id=?').run(id));
     });
+  }
+  // SIM and APN details given when the device is onboarded (admin only; the APN password never leaves the server).
+  async setDeviceSetup(id,input){
+    (await this.raw(id));const set=cleanSetup(input),keys=Object.keys(set);
+    if(keys.length)(await this.db.prepare(`UPDATE devices SET ${keys.map(k=>`${k}=?`).join(',')} WHERE id=?`).run(...keys.map(k=>set[k]),id));
+    return (await this.raw(id));
+  }
+  async provisionReplace(id,steps){
+    (await this.raw(id));
+    await this.db.transaction(async()=>{
+      (await this.db.prepare('DELETE FROM provision_steps WHERE deviceId=?').run(id));
+      for(const s of steps)(await this.db.prepare("INSERT INTO provision_steps(id,deviceId,seq,command,label,status) VALUES (?,?,?,?,?,'pending')").run(randomUUID(),id,s.seq,s.command,s.label));
+    });
+  }
+  async provisionSteps(id){return (await this.db.prepare('SELECT * FROM provision_steps WHERE deviceId=? ORDER BY seq').all(id));}
+  async pendingProvisioning(){return (await this.db.prepare("SELECT DISTINCT deviceId FROM provision_steps WHERE status IN ('pending','sent')").all()).map(r=>r.deviceId);}
+  async provisionUpdate(stepId,patch){
+    const keys=Object.keys(patch).filter(k=>['status','attempts','commandId','sentAt','doneAt','reply'].includes(k));
+    if(keys.length)(await this.db.prepare(`UPDATE provision_steps SET ${keys.map(k=>`${k}=?`).join(',')} WHERE id=?`).run(...keys.map(k=>patch[k]),stepId));
   }
   async rotateToken(id) {
     if ((await this.raw(id)).model !== 'Mobile') fail(400, 'Only mobile devices use a sender token.');
@@ -196,7 +216,7 @@ export class PostgresTrackingStore {
     return {...session,device:(await this.raw(session.deviceId))};
   }
   async device(id) {
-    const { tokenHash, ...device } = (await this.raw(id));
+    const { tokenHash, apnPass, ...device } = (await this.raw(id));
     const position = (await this.db.prepare('SELECT * FROM positions WHERE deviceId=? ORDER BY recordedAt DESC,id DESC LIMIT 1').get(id)) || null;
     const online = device.lastSeen !== null && this.now()-device.lastSeen < device.offlineSeconds*1000;
     const fresh = position && position.valid !== 0 && this.now()-position.recordedAt < device.offlineSeconds*1000;

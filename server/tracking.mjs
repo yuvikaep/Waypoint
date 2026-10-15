@@ -9,6 +9,7 @@ import { RelayService } from './relay.mjs';
 import { vehicleReport } from './reports.mjs';
 import { commandAllowed } from './command-channel.mjs';
 import { powerTimeline } from './extra.mjs';
+import { apnFor, bootstrapSms, buildPlan, cleanIntervals, OPERATORS } from './provision.mjs';
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 // Admin maintenance macros, translated to the tracker family's own command text.
@@ -227,7 +228,14 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
         if(path==='/api/gps/admin/devices'&&method==='POST'){
           const input=await body(req);const tenant=input.customerId?String(input.customerId):'owner';
           if(tenant!=='owner')await store.customer(tenant);
-          const result=await store.createDevice(input,tenant);if(backgroundTasks)void bridge.sync();return json(res,201,result);
+          const result=await store.createDevice(input,tenant);
+          // SIM details, then the automatic set-up that runs after the tracker's first connection.
+          const setup={...input};if(setup.apn===undefined&&setup.simOperator)setup.apn=apnFor(setup.simOperator,setup.simType);
+          let raw=await store.setDeviceSetup(result.device.id,setup);
+          const plan=input.autoSetup===false?[]:buildPlan(raw,cleanIntervals(input));
+          if(plan.length)await store.provisionReplace(result.device.id,plan);
+          if(backgroundTasks)void bridge.sync();
+          return json(res,201,{...result,provisioning:{steps:await store.provisionSteps(result.device.id),sms:bootstrapSms(raw,bridge.state)}});
         }
         const adminDevice=path.match(/^\/api\/gps\/admin\/devices\/([\w-]+)$/);
         if(adminDevice&&method==='GET'){
@@ -236,7 +244,19 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
           // Today in the admin's own time zone.
           const start=new Date(Date.now()-tz*60000);start.setUTCHours(0,0,0,0);const from=start.getTime()+tz*60000;
           const today=(await vehicleReport(store,[device],from,Date.now(),Number.isInteger(tz)?tz:-330)).vehicles[0]?.days.at(-1)||null;
-          return json(res,200,{device:{...device,customerId:customer?.id||null,customerName:customer?.name||null},packets:await store.recentPackets(id,100),alerts:await store.deviceAlerts(id,20),commands:await store.deviceCommands(id,20),power:powerTimeline(await store.powerRows(id,Date.now()-3*86400000)),sim:{iccid:await store.latestIccid(id)},today,gateway:bridge.state});
+          return json(res,200,{device:{...device,customerId:customer?.id||null,customerName:customer?.name||null},packets:await store.recentPackets(id,100),alerts:await store.deviceAlerts(id,20),commands:await store.deviceCommands(id,20),provisioning:{steps:await store.provisionSteps(id),sms:bootstrapSms(await store.raw(id),bridge.state),operators:Object.fromEntries(Object.entries(OPERATORS).map(([k,v])=>[k,{label:v.label,apn:v.apn}]))},power:powerTimeline(await store.powerRows(id,Date.now()-3*86400000)),sim:{iccid:await store.latestIccid(id)},today,gateway:bridge.state});
+        }
+        const provisionMatch=path.match(/^\/api\/gps\/admin\/devices\/([\w-]+)\/provision$/);
+        if(provisionMatch&&method==='POST'){
+          const id=provisionMatch[1],input=await body(req);let raw=await store.raw(id);
+          if(input.action==='cancel'){await store.provisionReplace(id,[]);return json(res,200,{steps:[]})}
+          if(input.action!=='start')fail(400,'Unknown set-up action.');
+          if(input.simOperator!==undefined||input.simType!==undefined||input.apn!==undefined||input.apnUser!==undefined||input.apnPass!==undefined||input.simNumber!==undefined){
+            const setup={...input};if(setup.apn===undefined&&setup.simOperator)setup.apn=apnFor(setup.simOperator,setup.simType);raw=await store.setDeviceSetup(id,setup);
+          }
+          const plan=buildPlan(raw,cleanIntervals(input));if(!plan.length)fail(400,'This vehicle needs no tracker set-up.');
+          await store.provisionReplace(id,plan);
+          return json(res,200,{steps:await store.provisionSteps(id),sms:bootstrapSms(raw,bridge.state)});
         }
         const adminDeviceAction=path.match(/^\/api\/gps\/admin\/devices\/([\w-]+)\/(packets|command)$/);
         if(adminDeviceAction){
@@ -252,7 +272,11 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
             catch(e){await store.recordCommand(id,'failed',`CMD ${text} not sent: ${e.message}`);fail(409,e.message)}
           }
         }
-        if(adminDevice&&method==='PATCH')return json(res,200,await store.updateDevice(adminDevice[1],await body(req)));
+        if(adminDevice&&method==='PATCH'){
+          const input=await body(req),updated=await store.updateDevice(adminDevice[1],input);
+          if(['simOperator','simType','simNumber','apn','apnUser','apnPass'].some(k=>input[k]!==undefined)){const setup={...input};if(setup.apn===undefined&&setup.simOperator)setup.apn=apnFor(setup.simOperator,setup.simType);await store.setDeviceSetup(adminDevice[1],setup)}
+          return json(res,200,{...updated,...(await store.device(adminDevice[1]))});
+        }
         if(adminDevice&&method==='DELETE'){await store.deleteDevice(adminDevice[1]);return json(res,200,{ok:true});}
         if(path==='/api/gps/admin/admins'&&method==='GET')return json(res,200,{admins:await store.admins()});
         if(path==='/api/gps/admin/admins'&&method==='POST')return json(res,201,await store.createAdmin((await body(req)).email));

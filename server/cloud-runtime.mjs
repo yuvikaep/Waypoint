@@ -3,6 +3,7 @@ import { randomBytes, scryptSync } from 'node:crypto';
 import { PostgresTrackingStore } from './postgres-store.mjs';
 import { fail, hash } from './tracking-store.mjs';
 import { TraccarBridge } from './traccar.mjs';
+import { provisionTick } from './provision.mjs';
 
 let pool, initialized;
 export function databasePool(){
@@ -89,10 +90,16 @@ export async function gatewayRequest(req,res,store,client,bridge){
         if(Number.isFinite(lastSeen)&&lastSeen<=Date.now()+60000)await store.seen(device.id,lastSeen);
         for(const position of incoming.positions.sort((a,b)=>Date.parse(a.fixTime)-Date.parse(b.fixTime))){
           if(position.deviceId!==incoming.traccarId)fail(409,'Position belongs to another tracker.');
-          if(Date.parse(position.fixTime)>=device.createdAt-60000)await bridge.ingest(device.id,position);
+          // A tracker's reply to a command carries the time of its last fix, which may predate a new device.
+          if(Date.parse(position.fixTime)>=device.createdAt-60000||position.attributes?.result)await bridge.ingest(device.id,position);
         }
         if(Number.isFinite(incoming.cursor)&&incoming.cursor<=Date.now()+60000&&incoming.cursor>=device.createdAt-60000)await store.db.prepare('UPDATE devices SET cursor=GREATEST(COALESCE(cursor,0),?) WHERE id=?').run(incoming.cursor,device.id);
       });
+    }
+    // Automatic set-up of newly onboarded trackers: at most one command per tracker per sync.
+    for(const incoming of data.devices){
+      try{const fresh=await store.raw(incoming.id);if(fresh.model!=='Mobile')await provisionTick(store,bridge,fresh)}
+      catch(e){console.error('Provisioning step failed:',e.message)}
     }
     await client.query('INSERT INTO gateway_state(id,connected,lastSync,error) VALUES (1,$1,$2,$3) ON CONFLICT(id) DO UPDATE SET connected=excluded.connected,lastSync=excluded.lastSync,error=excluded.error',[data.connected,Date.now(),typeof data.error==='string'?data.error.slice(0,300):null]);
     res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end('{"ok":true}');return true;

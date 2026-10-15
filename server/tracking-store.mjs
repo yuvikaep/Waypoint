@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { cleanExtra, alarmText } from './extra.mjs';
+import { cleanSetup } from './provision.mjs';
 
 export const hash = value => createHash('sha256').update(value).digest('hex');
 export const token = () => randomBytes(32).toString('base64url');
@@ -52,6 +53,9 @@ export class TrackingStore {
     if(!this.db.prepare('PRAGMA table_info(positions)').all().some(c=>c.name==='valid'))this.db.exec('ALTER TABLE positions ADD COLUMN valid INTEGER NOT NULL DEFAULT 1');
     if(!this.db.prepare('PRAGMA table_info(positions)').all().some(c=>c.name==='extra'))this.db.exec('ALTER TABLE positions ADD COLUMN extra TEXT');
     this.db.exec('CREATE INDEX IF NOT EXISTS position_moving ON positions(deviceId,recordedAt) WHERE valid=1 AND speed>=3; CREATE INDEX IF NOT EXISTS position_ignition ON positions(deviceId,receivedAt) WHERE ignition IS NOT NULL;');
+    for(const column of ['simOperator','simType','simNumber','apn','apnUser','apnPass'])
+      if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name===column))this.db.exec(`ALTER TABLE devices ADD COLUMN ${column} TEXT`);
+    this.db.exec('CREATE TABLE IF NOT EXISTS provision_steps (id TEXT PRIMARY KEY,deviceId TEXT NOT NULL,seq INTEGER NOT NULL,command TEXT NOT NULL,label TEXT NOT NULL,status TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,commandId TEXT,sentAt INTEGER,doneAt INTEGER,reply TEXT)');
     if(!this.db.prepare('PRAGMA table_info(fences)').all().some(c=>c.name==='tenantId'))this.db.exec("ALTER TABLE fences ADD COLUMN tenantId TEXT NOT NULL DEFAULT 'owner'");
     if(!this.db.prepare('PRAGMA table_info(driver_links)').all().some(c=>c.name==='code')){
       this.db.exec('ALTER TABLE driver_links ADD COLUMN code TEXT');
@@ -172,7 +176,7 @@ export class TrackingStore {
   }
   // Removes the vehicle and everything recorded for it.
   deleteDevice(id) {
-    this.raw(id);
+    this.raw(id);this.db.prepare('DELETE FROM provision_steps WHERE deviceId=?').run(id);
     const has=table=>!!this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
     this.db.exec('BEGIN IMMEDIATE');
     try {
@@ -181,6 +185,22 @@ export class TrackingStore {
       this.db.prepare('DELETE FROM devices WHERE id=?').run(id);
       this.db.exec('COMMIT');
     } catch (e) { this.db.exec('ROLLBACK'); throw e; }
+  }
+  // SIM and APN details given when the device is onboarded (admin only; the APN password never leaves the server).
+  setDeviceSetup(id,input){
+    this.raw(id);const set=cleanSetup(input),keys=Object.keys(set);
+    if(keys.length)this.db.prepare(`UPDATE devices SET ${keys.map(k=>`${k}=?`).join(',')} WHERE id=?`).run(...keys.map(k=>set[k]),id);
+    return this.raw(id);
+  }
+  provisionReplace(id,steps){
+    this.raw(id);this.db.prepare('DELETE FROM provision_steps WHERE deviceId=?').run(id);
+    for(const s of steps)this.db.prepare("INSERT INTO provision_steps(id,deviceId,seq,command,label,status) VALUES (?,?,?,?,?,'pending')").run(randomUUID(),id,s.seq,s.command,s.label);
+  }
+  provisionSteps(id){return this.db.prepare('SELECT * FROM provision_steps WHERE deviceId=? ORDER BY seq').all(id);}
+  pendingProvisioning(){return this.db.prepare("SELECT DISTINCT deviceId FROM provision_steps WHERE status IN ('pending','sent')").all().map(r=>r.deviceId);}
+  provisionUpdate(stepId,patch){
+    const keys=Object.keys(patch).filter(k=>['status','attempts','commandId','sentAt','doneAt','reply'].includes(k));
+    if(keys.length)this.db.prepare(`UPDATE provision_steps SET ${keys.map(k=>`${k}=?`).join(',')} WHERE id=?`).run(...keys.map(k=>patch[k]),stepId);
   }
   rotateToken(id) {
     if (this.raw(id).model !== 'Mobile') fail(400, 'Only mobile devices use a sender token.');
@@ -225,7 +245,7 @@ export class TrackingStore {
     return {...session,device:this.raw(session.deviceId)};
   }
   device(id) {
-    const { tokenHash, ...device } = this.raw(id);
+    const { tokenHash, apnPass, ...device } = this.raw(id);
     const position = this.db.prepare('SELECT * FROM positions WHERE deviceId=? ORDER BY recordedAt DESC,id DESC LIMIT 1').get(id) || null;
     const online = device.lastSeen !== null && this.now()-device.lastSeen < device.offlineSeconds*1000;
     const fresh = position && position.valid !== 0 && this.now()-position.recordedAt < device.offlineSeconds*1000;
