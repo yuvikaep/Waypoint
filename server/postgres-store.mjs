@@ -32,7 +32,8 @@ export class PostgresTrackingStore {
     return store;
   }
   async close() { await this.db.close(); }
-  async customers(){return (await this.db.prepare('SELECT id,name,email,createdAt,enabled FROM customers ORDER BY createdAt').all());}
+  async customers(){return (await this.db.prepare('SELECT c.id,c.name,c.email,c.createdAt,c.enabled,(SELECT COUNT(*) FROM devices d WHERE d.tenantId=c.id)::int AS devices FROM customers c ORDER BY c.createdAt').all());}
+  async admins(){return (await this.db.prepare('SELECT email,createdAt,enabled FROM admins ORDER BY createdAt').all());}
   async createAdmin(email){
     email=text(email,'Admin email',254).toLowerCase();
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail(400,'Enter a valid admin email.');
@@ -127,6 +128,29 @@ export class PostgresTrackingStore {
         .run(id,name,uniqueId,body.model,driver,secret ? hash(secret) : null,this.now(),offlineSeconds,speedLimit,tenantId));
     } catch (e) { if (e.code === '23505') fail(409, 'This device identifier is already registered.'); throw e; }
     return { device: (await this.device(id)), token: secret };
+  }
+  // Admin edits a vehicle or moves it to another customer ('owner' = unassigned).
+  async updateDevice(id,body) {
+    const device=(await this.raw(id));
+    const name=body.name===undefined?device.name:text(body.name,'Vehicle name');
+    const driver=body.driver===undefined?device.driver:typeof body.driver==='string'?body.driver.trim().slice(0,100):'';
+    const offlineSeconds=body.offlineSeconds===undefined?device.offlineSeconds:number(body.offlineSeconds,'Offline threshold',30,86400);
+    const speedLimit=body.speedLimit===undefined?device.speedLimit:number(body.speedLimit,'Speed limit',1,250);
+    let tenantId=device.tenantId;
+    if(body.customerId!==undefined){tenantId=body.customerId?String(body.customerId):'owner';if(tenantId!=='owner')(await this.customer(tenantId));}
+    (await this.db.prepare('UPDATE devices SET name=?,driver=?,offlineSeconds=?,speedLimit=?,tenantId=? WHERE id=?').run(name,driver,offlineSeconds,speedLimit,tenantId,id));
+    // A vehicle changing hands must not keep the previous owner's geofence state or driver links.
+    if(tenantId!==device.tenantId){(await this.db.prepare('DELETE FROM fence_state WHERE deviceId=?').run(id));(await this.revokeDriverLinks(id));}
+    return (await this.device(id));
+  }
+  // Removes the vehicle and everything recorded for it.
+  async deleteDevice(id) {
+    (await this.raw(id));
+    await this.db.transaction(async()=>{
+      (await this.db.prepare('DELETE FROM driver_sessions WHERE linkHash IN (SELECT hash FROM driver_links WHERE deviceId=?)').run(id));
+      for (const table of ['driver_links','positions','fence_state','alerts','commands','relay_installations','relay_commands']) (await this.db.prepare(`DELETE FROM ${table} WHERE deviceId=?`).run(id));
+      (await this.db.prepare('DELETE FROM devices WHERE id=?').run(id));
+    });
   }
   async rotateToken(id) {
     if ((await this.raw(id)).model !== 'Mobile') fail(400, 'Only mobile devices use a sender token.');

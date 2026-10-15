@@ -57,7 +57,8 @@ export class TrackingStore {
     }
   }
   close() { this.db.close(); }
-  customers(){return this.db.prepare('SELECT id,name,email,createdAt,enabled FROM customers ORDER BY createdAt').all();}
+  customers(){return this.db.prepare('SELECT c.id,c.name,c.email,c.createdAt,c.enabled,(SELECT COUNT(*) FROM devices d WHERE d.tenantId=c.id) AS devices FROM customers c ORDER BY c.createdAt').all();}
+  admins(){return this.db.prepare('SELECT email,createdAt,enabled FROM admins ORDER BY createdAt').all();}
   createAdmin(email){
     email=text(email,'Admin email',254).toLowerCase();
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail(400,'Enter a valid admin email.');
@@ -152,6 +153,32 @@ export class TrackingStore {
         .run(id,name,uniqueId,body.model,driver,secret ? hash(secret) : null,this.now(),offlineSeconds,speedLimit,tenantId);
     } catch (e) { if (String(e).includes('UNIQUE')) fail(409, 'This device identifier is already registered.'); throw e; }
     return { device: this.device(id), token: secret };
+  }
+  // Admin edits a vehicle or moves it to another customer ('owner' = unassigned).
+  updateDevice(id,body) {
+    const device=this.raw(id);
+    const name=body.name===undefined?device.name:text(body.name,'Vehicle name');
+    const driver=body.driver===undefined?device.driver:typeof body.driver==='string'?body.driver.trim().slice(0,100):'';
+    const offlineSeconds=body.offlineSeconds===undefined?device.offlineSeconds:number(body.offlineSeconds,'Offline threshold',30,86400);
+    const speedLimit=body.speedLimit===undefined?device.speedLimit:number(body.speedLimit,'Speed limit',1,250);
+    let tenantId=device.tenantId;
+    if(body.customerId!==undefined){tenantId=body.customerId?String(body.customerId):'owner';if(tenantId!=='owner')this.customer(tenantId);}
+    this.db.prepare('UPDATE devices SET name=?,driver=?,offlineSeconds=?,speedLimit=?,tenantId=? WHERE id=?').run(name,driver,offlineSeconds,speedLimit,tenantId,id);
+    // A vehicle changing hands must not keep the previous owner's geofence state or driver links.
+    if(tenantId!==device.tenantId){this.db.prepare('DELETE FROM fence_state WHERE deviceId=?').run(id);this.revokeDriverLinks(id);}
+    return this.device(id);
+  }
+  // Removes the vehicle and everything recorded for it.
+  deleteDevice(id) {
+    this.raw(id);
+    const has=table=>!!this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare('DELETE FROM driver_sessions WHERE linkHash IN (SELECT hash FROM driver_links WHERE deviceId=?)').run(id);
+      for (const table of ['driver_links','positions','fence_state','alerts','commands','relay_installations','relay_commands']) if (has(table)) this.db.prepare(`DELETE FROM ${table} WHERE deviceId=?`).run(id);
+      this.db.prepare('DELETE FROM devices WHERE id=?').run(id);
+      this.db.exec('COMMIT');
+    } catch (e) { this.db.exec('ROLLBACK'); throw e; }
   }
   rotateToken(id) {
     if (this.raw(id).model !== 'Mobile') fail(400, 'Only mobile devices use a sender token.');

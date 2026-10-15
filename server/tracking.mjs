@@ -6,8 +6,12 @@ import { fileURLToPath } from 'node:url';
 import { TrackingStore, fail, hash, token } from './tracking-store.mjs';
 import { TraccarBridge } from './traccar.mjs';
 import { RelayService } from './relay.mjs';
+import { vehicleReport } from './reports.mjs';
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
+// Customers see their vehicles, never tracker identifiers, receiver state or command plumbing.
+const customerPosition=p=>p&&{id:p.id,recordedAt:p.recordedAt,latitude:p.latitude,longitude:p.longitude,speed:p.speed,heading:p.heading,ignition:p.ignition,battery:p.battery,satellites:p.satellites,valid:p.valid};
+export const customerDevice=d=>({id:d.id,name:d.name,driver:d.driver,status:d.status,online:d.online,fresh:d.fresh,lastSeen:d.lastSeen,speedLimit:d.speedLimit,ignition:d.ignition,stoppedSince:d.stoppedSince,isMobile:d.model==='Mobile',position:customerPosition(d.position)});
 async function body(req,maxBytes=16384) {
   if (!req.headers['content-type']?.startsWith('application/json')) fail(415,'Send application/json.');
   if(req.body!==undefined){
@@ -132,7 +136,8 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
       }
       if(session.role==='customer'&&session.generation!==((await sessions.get(generationKey(session.tenantId)))??null))fail(401,'Sign in to your workspace.');
       if(session.role==='customer'&&!(await store.customer(session.tenantId)).enabled)fail(403,'Customer access is disabled.');
-      const ownsDevice=async id=>{const d=await store.raw(id);if(d.tenantId!==session.tenantId)fail(404,'Device not found.');return d;};
+      // Admins manage every customer's devices; customers only their own.
+      const ownsDevice=async id=>{const d=await store.raw(id);if(session.role!=='admin'&&d.tenantId!==session.tenantId)fail(404,'Device not found.');return d;};
       if(path==='/api/gps/session'&&method==='GET')return json(res,200,{role:session.role,tenantId:session.tenantId,name:session.name,email:session.email||null});
       const dataMatch=path.match(/^\/api\/gps\/workspace\/(documents|bills|preferences|ack)$/);
       if(dataMatch){
@@ -173,11 +178,50 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
           return json(res,200,result);
         }
       }
-      if (path==='/api/gps/state' && method==='GET') {await store.tick();return json(res,200,{devices:await store.devices(session.tenantId),fences:await store.fences(session.tenantId),alerts:await store.alerts(session.tenantId),gateway:bridge.state,serverTime:Date.now()});}
-      if (path==='/api/gps/devices' && method==='POST') {const result=await store.createDevice(await body(req),session.tenantId);if(backgroundTasks)void bridge.sync();return json(res,201,result);}
+      if (path==='/api/gps/state' && method==='GET') {
+        await store.tick();const devices=await store.devices(session.tenantId);
+        if(session.role==='customer')return json(res,200,{devices:devices.map(customerDevice),fences:await store.fences(session.tenantId),alerts:await store.alerts(session.tenantId),serverTime:Date.now()});
+        return json(res,200,{devices,fences:await store.fences(session.tenantId),alerts:await store.alerts(session.tenantId),gateway:bridge.state,serverTime:Date.now()});
+      }
+      if(path==='/api/gps/reports'&&method==='GET'){
+        const from=Date.parse(url.searchParams.get('from')),to=Date.parse(url.searchParams.get('to')),tz=Number(url.searchParams.get('tz')??-330);
+        if(!Number.isFinite(from)||!Number.isFinite(to)||from>to||to-from>31*86400000)fail(400,'Choose a valid date range of up to 31 days.');
+        if(!Number.isInteger(tz)||Math.abs(tz)>840)fail(400,'Invalid time zone.');
+        await limited(`report:${session.tenantId}`,20);
+        const only=url.searchParams.get('device');
+        const devices=(await store.devices(session.tenantId)).filter(d=>!only||d.id===only);
+        return json(res,200,await vehicleReport(store,devices,from,to,tz));
+      }
+      if(path.startsWith('/api/gps/admin/')){
+        if(session.role!=='admin')fail(403,'Admin access required.');
+        if(path==='/api/gps/admin/overview'&&method==='GET'){
+          const [devices,customers,admins]=[await store.devices(),await store.customers(),await store.admins()];
+          const count=status=>devices.filter(d=>d.status===status).length;
+          return json(res,200,{customers:{total:customers.length,enabled:customers.filter(c=>c.enabled).length},
+            devices:{total:devices.length,moving:count('Moving'),stopped:count('Stopped'),offline:count('Offline'),waiting:count('Waiting'),noFix:count('No GPS fix'),unassigned:devices.filter(d=>d.tenantId==='owner').length},
+            gateway:bridge.state,admins:admins.map(a=>a.email),serverTime:Date.now()});
+        }
+        if(path==='/api/gps/admin/devices'&&method==='GET'){
+          const names=new Map((await store.customers()).map(c=>[c.id,c.name]));
+          return json(res,200,{devices:(await store.devices()).map(d=>({...d,customerId:d.tenantId==='owner'?null:d.tenantId,customerName:names.get(d.tenantId)||null})),gateway:bridge.state});
+        }
+        if(path==='/api/gps/admin/devices'&&method==='POST'){
+          const input=await body(req);const tenant=input.customerId?String(input.customerId):'owner';
+          if(tenant!=='owner')await store.customer(tenant);
+          const result=await store.createDevice(input,tenant);if(backgroundTasks)void bridge.sync();return json(res,201,result);
+        }
+        const adminDevice=path.match(/^\/api\/gps\/admin\/devices\/([\w-]+)$/);
+        if(adminDevice&&method==='PATCH')return json(res,200,await store.updateDevice(adminDevice[1],await body(req)));
+        if(adminDevice&&method==='DELETE'){await store.deleteDevice(adminDevice[1]);return json(res,200,{ok:true});}
+        if(path==='/api/gps/admin/admins'&&method==='GET')return json(res,200,{admins:await store.admins()});
+        if(path==='/api/gps/admin/admins'&&method==='POST')return json(res,201,await store.createAdmin((await body(req)).email));
+        fail(404,'Endpoint not found.');
+      }
+      if (path==='/api/gps/devices' && method==='POST') {if(session.role!=='admin')fail(403,'Only your fleet administrator can add devices.');const result=await store.createDevice(await body(req),session.tenantId);if(backgroundTasks)void bridge.sync();return json(res,201,result);}
       const deviceMatch=path.match(/^\/api\/gps\/devices\/([\w-]+)\/(history|ping|token|driver-link|relay)$/);
       if (deviceMatch) {
         const [,id,action]=deviceMatch,device=await ownsDevice(id);
+        if(session.role==='customer'&&!(action==='history'||(action==='driver-link'&&device.model==='Mobile')))fail(403,'Not available for customer accounts.');
         if(action==='relay'&&method==='GET')return json(res,200,await relay.status(id));
         if(action==='relay'&&(method==='POST'||method==='PUT')){
           await limited(`relay:${id}`,6);
@@ -196,7 +240,7 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
           if(device.model!=='Mobile' && after===0){
             try{await bridge.importHistory(device,from,to)}catch(e){warning=`Showing locally stored history only. ${e.message}`}
           }
-          return json(res,200,{...await store.history(id,from,to,after),warning});
+          return json(res,200,{...await store.history(id,from,to,after),warning:session.role==='customer'?null:warning});
         }
         if (action==='token' && method==='POST') {await body(req);return json(res,200,{token:await store.rotateToken(id)});}
         if (action==='ping' && method==='POST') {

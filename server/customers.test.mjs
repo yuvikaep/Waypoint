@@ -34,9 +34,19 @@ test('customer sessions scope fleet, commands, fences, alerts, links and relay a
   };
   const aCookie=await login(a),bCookie=await login(b);
   const as=(cookie,path,method='GET',body)=>request(path,{method,headers:{cookie},...(body?{body:JSON.stringify(body)}:{})});
-  const created=await (await as(aCookie,'/devices','POST',{name:'A phone',model:'Mobile'})).json();
-  assert.equal(created.device.tenantId,a.customer.id);
+  // Only the admin registers devices; customers get a clear refusal.
+  assert.equal((await as(aCookie,'/devices','POST',{name:'A phone',model:'Mobile'})).status,403);
+  store.createDevice({name:'A phone',model:'Mobile'},a.customer.id);
   const aState=await (await as(aCookie,'/state')).json();
+  // Customer state carries no tracker identifiers, receiver status or gateway details.
+  assert.equal(aState.gateway,undefined);
+  for(const d of aState.devices){for(const key of ['uniqueId','model','traccarId','bridgeStatus','cursor','command','tenantId','tokenHash'])assert.equal(key in d,false,key);}
+  assert.equal(aState.devices.find(d=>d.name==='A phone').isMobile,true);
+  assert.equal((await as(aCookie,`/devices/${aDevice.id}/ping`,'POST',{})).status,403);
+  assert.equal((await as(aCookie,`/devices/${aDevice.id}/relay`)).status,403);
+  assert.equal((await as(aCookie,`/devices/${aDevice.id}/token`,'POST',{})).status,403);
+  assert.equal((await as(aCookie,'/admin/overview')).status,403);
+  assert.equal((await as(aCookie,'/admin/devices')).status,403);
   assert.deepEqual(aState.devices.map(d=>d.name).sort(),['A phone','A vehicle']);assert.deepEqual(aState.alerts.map(x=>x.deviceName),['A vehicle']);
   const bState=await (await as(bCookie,'/state')).json();assert.deepEqual(bState.devices.map(d=>d.name),['B vehicle']);
   assert.equal((await as(aCookie,`/devices/${bDevice.id}/driver-link`)).status,404);
@@ -128,4 +138,55 @@ test('users change their own password; a maintenance-key reset gives the admin a
   store.createAdmin('second@example.test');
   assert.equal((await post('/admin/reset-password',{token:adminKey})).status,409);
   assert.equal((await post('/admin/reset-password',{token:adminKey,email:'second@example.test'})).status,200);
+});
+
+test('admin console manages every customer vehicle; customers only see their own',async t=>{
+  let now=Date.parse('2026-10-15T06:00:00Z');
+  const store=new TrackingStore(':memory:',{now:()=>now});t.after(()=>store.close());
+  const adminKey='customer-test-admin-secret-12345';
+  const a=store.createCustomer({name:'Alpha Fleet',email:'alpha@example.test'});
+  const b=store.createCustomer({name:'Beta Fleet',email:'beta@example.test'});
+  const server=createTrackingServer({store,adminToken:adminKey,bridge:{state:{configured:true,connected:true},sync:async()=>{}}});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>{server.close(resolve);server.closeAllConnections()}));
+  const base=`http://127.0.0.1:${server.address().port}/api/gps`;
+  const call=(path,method='GET',body,cookie)=>fetch(base+path,{method,headers:{'Content-Type':'application/json',...(cookie?{cookie}:{})},...(body?{body:JSON.stringify(body)}:{})});
+  const cookieOf=r=>r.headers.get('set-cookie').split(';')[0];
+  const admin=cookieOf(await call('/session','POST',{token:adminKey}));
+  const alpha=cookieOf(await call('/customers/session','POST',{email:a.customer.email,password:a.password}));
+  const beta=cookieOf(await call('/customers/session','POST',{email:b.customer.email,password:b.password}));
+
+  const created=await call('/admin/devices','POST',{name:'MH 12 AB 1234',model:'GT06',uniqueId:'867111062240426',customerId:a.customer.id},admin);
+  assert.equal(created.status,201);const truck=(await created.json()).device;
+  assert.equal((await call('/admin/devices','POST',{name:'Ghost',model:'GT06',uniqueId:'867111062240427',customerId:'missing'},admin)).status,404);
+  store.ingest(truck.id,{eventId:'p1',recordedAt:new Date(now).toISOString(),latitude:25.28,longitude:82.79,speed:20});
+  store.alert(truck.id,'speed','Over limit');
+  assert.deepEqual((await (await call('/state','GET',null,alpha)).json()).devices.map(d=>d.name),['MH 12 AB 1234']);
+  assert.deepEqual((await (await call('/state','GET',null,beta)).json()).devices,[]);
+
+  const list=await (await call('/admin/devices','GET',null,admin)).json();
+  assert.equal(list.devices[0].customerName,'Alpha Fleet');assert.equal(list.devices[0].uniqueId,'867111062240426');
+  const overview=await (await call('/admin/overview','GET',null,admin)).json();
+  assert.equal(overview.devices.total,1);assert.equal(overview.customers.total,2);assert.equal(overview.devices.unassigned,0);
+  assert.equal((await (await call('/customers','GET',null,admin)).json()).customers.find(c=>c.id===a.customer.id).devices,1);
+
+  // Reassign to Beta: it leaves Alpha's fleet and joins Beta's.
+  const moved=await call(`/admin/devices/${truck.id}`,'PATCH',{customerId:b.customer.id,name:'MH 12 AB 9999',speedLimit:60},admin);
+  assert.equal(moved.status,200);assert.equal((await moved.json()).name,'MH 12 AB 9999');
+  assert.deepEqual((await (await call('/state','GET',null,alpha)).json()).devices,[]);
+  assert.deepEqual((await (await call('/state','GET',null,beta)).json()).devices.map(d=>d.name),['MH 12 AB 9999']);
+  assert.equal((await call(`/admin/devices/${truck.id}`,'PATCH',{customerId:null},admin)).status,200);
+  assert.equal((await (await call('/admin/overview','GET',null,admin)).json()).devices.unassigned,1);
+
+  // Delete removes the vehicle with its history and alerts.
+  assert.equal((await call(`/admin/devices/${truck.id}`,'DELETE',null,admin)).status,200);
+  assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM positions').get().n,0);
+  assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM alerts').get().n,0);
+  assert.equal((await call(`/admin/devices/${truck.id}`,'DELETE',null,admin)).status,404);
+
+  // Admin accounts.
+  const made=await (await call('/admin/admins','POST',{email:'ops@example.test'},admin)).json();
+  assert.equal(made.email,'ops@example.test');assert.ok(made.password.length>=16);
+  assert.deepEqual((await (await call('/admin/admins','GET',null,admin)).json()).admins.map(x=>x.email),['ops@example.test']);
+  assert.equal((await call('/admin/admins','POST',{email:'x@example.test'},alpha)).status,403);
 });
