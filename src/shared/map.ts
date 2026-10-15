@@ -18,6 +18,16 @@ const TRUCK='<svg class="truck-icon" viewBox="0 0 24 40" aria-hidden="true"><rec
 export function truckIcon(v:Vehicle,selected=false){
   return L.divIcon({className:'gps-marker',html:`<div class="gps-pin ${statusOf(v)} ${selected?'on':''}"><span style="transform:rotate(${v.position?.heading||0}deg)">${TRUCK}</span></div>`,iconSize:[40,40],iconAnchor:[20,20]});
 }
+// Route playback truck: green while moving, red when standing, pointing the way it travels.
+export function playbackIcon(heading:number,moving:boolean){
+  return L.divIcon({className:'gps-marker playback',html:`<div class="gps-pin on ${moving?'running':'stopped'}"><span style="transform:rotate(${heading}deg)">${TRUCK}</span></div>`,iconSize:[40,40],iconAnchor:[20,20]});
+}
+// Compass bearing from a to b, for fixes that carry no course.
+export function bearing(a:Point,b:Point){
+  const r=Math.PI/180,y=Math.sin((b.longitude-a.longitude)*r)*Math.cos(b.latitude*r);
+  const x=Math.cos(a.latitude*r)*Math.sin(b.latitude*r)-Math.sin(a.latitude*r)*Math.cos(b.latitude*r)*Math.cos((b.longitude-a.longitude)*r);
+  return (Math.atan2(y,x)/r+360)%360;
+}
 // Vehicle name and road/area tag that stays readable without zooming in.
 export function truckTag(v:Vehicle){
   const tag=document.createElement('span');tag.className='truck-tag';

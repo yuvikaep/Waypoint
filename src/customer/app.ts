@@ -1,5 +1,5 @@
 import {$,$$,api,post,brand,chip,clock,closeModal,coords,esc,hm,i,icons,localInput,mapsLink,modal,on,since,STATUS_LABEL,statusLine,statusOf,time,ago,toast,whenUnauthorized,type Alert,type Fence,type Fix,type Identity,type StatusKey,type Vehicle} from '../shared/core';
-import {createMap,drawRoute,point,truckIcon,truckTag,L} from '../shared/map';
+import {bearing,createMap,drawRoute,playbackIcon,point,truckIcon,truckTag,L} from '../shared/map';
 import {placeSpan,places,placeKey} from '../shared/places';
 import {DEMO_MODE,workspaceStorage} from '../demo';
 import {showLogin} from '../auth';
@@ -202,18 +202,23 @@ function renderHistory(){
       <p class="hint" id="hstatus">${fleet.devices.length?'Choose a day and press Show route.':'No vehicles yet.'}</p>
       <button class="btn btn-ghost btn-sm" id="csv" hidden>${i('download')}Download CSV</button>
     </aside><div class="map-wrap"><div class="map" id="hmap"></div></div></div>`;
-  const hmap=createMap($('#hmap')),layer=L.layerGroup().addTo(hmap);let dot:L.CircleMarker|undefined;
+  const hmap=createMap($('#hmap')),layer=L.layerGroup().addTo(hmap);let truck:L.Marker|undefined;
   teardown=()=>{clearInterval(playTimer);hmap.remove()};
   let preset='today';
   on('[data-preset]',el=>{preset=el.dataset.preset!;$$('[data-preset]').forEach(b=>b.classList.toggle('on',b===el));$('#custom').hidden=preset!=='custom';if(preset!=='custom')void load()});
   $<HTMLSelectElement>('#hv').onchange=e=>{historyVehicle=(e.target as HTMLSelectElement).value;void load()};
   const showPoint=(n:number)=>{
-    const p=track[n];if(!p)return;dot?.remove();
-    dot=L.circleMarker(point(p),{radius:9,color:'#fff',weight:3,fillColor:'#192a51',fillOpacity:1}).addTo(hmap);
+    const p=track[n];if(!p)return;
+    // Course from the tracker when it moves; otherwise face the next (or previous) point on the route.
+    const next=track[n+1]||p,prev=track[n-1]||p,heading=p.speed>=3&&p.heading!=null?p.heading:next!==p?bearing(p,next):prev!==p?bearing(prev,p):0;
+    // Reuse one marker element so it glides between points instead of jumping.
+    if(!truck)truck=L.marker(point(p),{icon:playbackIcon(heading,p.speed>=3),zIndexOffset:1000}).addTo(hmap);
+    else{truck.setLatLng(point(p));const pin=truck.getElement()?.querySelector<HTMLElement>('.gps-pin');if(pin){pin.className=`gps-pin on ${p.speed>=3?'running':'stopped'}`;pin.querySelector<HTMLElement>('span')!.style.transform=`rotate(${heading}deg)`}}
     $<HTMLInputElement>('#slider').value=String(n);
     // Look places up only while paused; during playback show what is already known.
     $('#hpoint').innerHTML=`<b>${clock(p.recordedAt)}</b> · ${Math.round(p.speed)} km/h<br><span class="muted">${placeSpan(p,'history',{lookup:!playTimer})}</span>`;
-    if(following)hmap.panTo(point(p));
+    // Keep the truck on screen while it plays, however far the user has zoomed in.
+    if(following||!hmap.getBounds().pad(-0.15).contains(point(p)))hmap.panTo(point(p),{animate:true});
   };
   const stopPlay=()=>{clearInterval(playTimer);playTimer=undefined;$('#play').innerHTML=i('play');icons()};
   on('#play',()=>{if(playTimer){stopPlay();return}let n=Number($<HTMLInputElement>('#slider').value);if(n>=track.length-1)n=0;$('#play').innerHTML=i('pause');icons();playTimer=setInterval(()=>{showPoint(n++);if(n>=track.length){stopPlay();showPoint(track.length-1)}},400)});
@@ -223,7 +228,7 @@ function renderHistory(){
     if(!historyVehicle)return;
     const [from,to]=preset==='custom'?[new Date($<HTMLInputElement>('#hfrom').value),new Date($<HTMLInputElement>('#hto').value)]:rangeFor(preset);
     if(!(+from<+to)||+to-+from>31*86400000){toast('Choose a range of up to 31 days.',true);return}
-    stopPlay();layer.clearLayers();dot?.remove();track=[];
+    stopPlay();layer.clearLayers();truck?.remove();truck=undefined;track=[];
     $('#hstatus').textContent='Loading route…';$('#hplayer').hidden=true;$('#hsum').hidden=true;$('#csv').hidden=true;
     try{
       const points:Fix[]=[];let after:number|null=0;
