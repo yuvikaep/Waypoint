@@ -92,12 +92,16 @@ export function createCommandChannel({secret,traccarUrl,traccarToken,fetcher=fet
         const id=deviceId(input.deviceId);
         const devices=(await request(`/devices?id=${id}`)).data;
         const device=devices.find(item=>item.id===id),lastUpdate=Date.parse(device?.lastUpdate);
-        // GT06 trackers heartbeat every few minutes; older than five means the link is gone.
-        if(!device||device.status!=='online'||!Number.isFinite(lastUpdate)||now()-lastUpdate>300000||lastUpdate>now()+60000)fail(409,'Tracker is offline or has no recent connection. No command was queued.');
         if(custom){
-          const result=await request('/commands/send',{method:'POST',body:JSON.stringify({deviceId:id,type:'custom',textChannel:false,attributes:{data:input.attributes.data,noQueue:true}})});
+          // Some trackers (PT06) connect for a few seconds every minute and hang up, so there is rarely an
+          // open socket. Approved maintenance text is harmless, so it may wait in the receiver's queue and
+          // goes out at the next connection, as long as the tracker has been heard from in the last 10 minutes.
+          if(!device||!Number.isFinite(lastUpdate)||now()-lastUpdate>600000||lastUpdate>now()+60000)fail(409,'No signal from this tracker in the last 10 minutes, so the command was not queued. Send it by SMS instead.');
+          const result=await request('/commands/send',{method:'POST',body:JSON.stringify({deviceId:id,type:'custom',textChannel:false,attributes:{data:input.attributes.data}})});
           return reply(res,result.status,result.data);
         }
+        // Location queries are only useful right now: never queue them for a tracker that is not connected.
+        if(!device||device.status!=='online'||!Number.isFinite(lastUpdate)||now()-lastUpdate>300000||lastUpdate>now()+60000)fail(409,'Tracker is offline or has no recent connection. No command was queued.');
         const types=(await request(`/commands/types?deviceId=${id}&textChannel=false`)).data;
         if(!types.some(item=>item.type==='positionSingle'))fail(409,'Tracker does not support an on-demand location query.');
         // Never forward caller-supplied custom/relay payloads or queue a command

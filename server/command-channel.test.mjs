@@ -55,7 +55,7 @@ test('maintenance commands: only approved text reaches an online tracker; packet
   const base=`http://127.0.0.1:${server.address().port}`,headers={Authorization:`Bearer ${secret}`,'Content-Type':'application/json'};
   const send=data=>fetch(base+'/api/commands/send',{method:'POST',headers,body:JSON.stringify({deviceId:3,type:'custom',textChannel:false,attributes:{data}})});
   assert.equal((await send('TIMER,10,60#')).status,200);
-  assert.deepEqual(sent[0],{deviceId:3,type:'custom',textChannel:false,attributes:{data:'TIMER,10,60#',noQueue:true}});
+  assert.deepEqual(sent[0],{deviceId:3,type:'custom',textChannel:false,attributes:{data:'TIMER,10,60#'}},'maintenance text may queue');
   for(const bad of ['RELAY,1#','FACTORY#','TIMER,1,60#','SERVER,1,evil host,1,0#'])assert.equal((await send(bad)).status,403,bad);
   assert.equal(sent.length,1);
   const packets=await (await fetch(base+'/api/packets?uniqueId=867111062240426&limit=10',{headers})).json();
