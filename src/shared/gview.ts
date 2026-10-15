@@ -1,5 +1,5 @@
-import {esc,statusOf,type Vehicle} from './core';
-import {TRUCK} from './map';
+import {type Vehicle} from './core';
+import {markerHtml} from './map';
 
 // Google view with our trucks on top. Google's keyless embed cannot carry markers, so the frame is
 // locked (no dragging) at a known centre and zoom; with Google's standard Web Mercator projection we
@@ -54,7 +54,7 @@ export function googleLive(host:HTMLElement,{onSelect,zoom=17,covered=()=>0}:{on
       seen.add(v.id);const on=v.id===state.selected;
       let pin=pins.get(v.id);
       if(!pin){pin=document.createElement('div');pin.className='gl-mark';pin.addEventListener('click',()=>onSelect?.(v.id));marks.append(pin);pins.set(v.id,pin)}
-      pin.innerHTML=`<div class="gps-pin ${statusOf(v)} ${on?'on':''}"><span style="transform:rotate(${v.position.heading||0}deg)">${TRUCK}</span></div>${on||state.vehicles.length<=3?`<span class="gl-label">${esc(v.name)}</span>`:''}`;
+      pin.innerHTML=markerHtml(v,on,on||state.vehicles.length<=3);
       pin.style.transform=`translate(${x-20}px,${y-20}px)`;pin.style.zIndex=on?'2':'1';
     }
     for(const [id,pin] of pins)if(!seen.has(id)){pin.remove();pins.delete(id)}

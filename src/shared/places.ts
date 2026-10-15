@@ -1,4 +1,5 @@
 import {coords} from './core';
+import {t} from './i18n';
 
 // Place names come from OpenStreetMap: Nominatim gives the road; Photon (komoot) is the fallback
 // and gives the nearest named place. Both are free shared services, so every lookup is cached per
@@ -76,7 +77,7 @@ export function placeText(p:Point,owner:string,lookup=true){
 }
 // Markup for a label that fills itself when the name arrives.
 export function placeSpan(p:Point|null,owner:string,{short=false,lookup=true}={}){
-  if(!p)return '<span>No location yet</span>';
+  if(!p)return `<span>${t('No location yet')}</span>`;
   const {key,text}=placeText(p,owner,lookup);
   const shown=text?(short?shortPlace(text):text):coords(p);
   return `<span data-place="${key}"${short?' data-short="1"':''}>${shown.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]!))}</span>`;

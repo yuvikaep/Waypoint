@@ -1,5 +1,6 @@
-import {createIcons,Navigation,Map,Truck,Route,Bell,FileText,Files,Settings,LogOut,Search,X,ChevronRight,ChevronLeft,MapPin,Clock,Gauge,KeyRound,Power,Plus,Trash2,Pencil,Users,RadioTower,Server,ShieldCheck,Copy,Share2,Play,Pause,Download,Calendar,ChartColumn,Ellipsis,LocateFixed,Scan,UserRound,ExternalLink,Smartphone,TriangleAlert,Activity,WifiOff,Check,CircleParking,Menu,Save,Timer,Milestone,Battery,Satellite,Eye,RefreshCw,Info,House,Landmark,Siren,OctagonAlert} from 'lucide';
+import {createIcons,Navigation,Map,Truck,Route,Bell,FileText,Files,Settings,LogOut,Search,X,ChevronRight,ChevronLeft,MapPin,Clock,Gauge,KeyRound,Power,Plus,Trash2,Pencil,Users,RadioTower,Server,ShieldCheck,Copy,Share2,Play,Pause,Download,Calendar,ChartColumn,Ellipsis,LocateFixed,Scan,UserRound,ExternalLink,Smartphone,TriangleAlert,Activity,WifiOff,Check,CircleParking,Menu,Save,Timer,Milestone,Battery,Satellite,Eye,RefreshCw,Info,House,Landmark,Siren,OctagonAlert,Layers,History,Mail,MessageSquare,Volume2,BellRing,Languages,SlidersHorizontal} from 'lucide';
 import {DEMO_MODE,demoRequest} from '../demo';
+import {t,locale} from './i18n';
 import './theme.css';
 
 export type Fix={id:number;recordedAt:number;latitude:number;longitude:number;speed:number;heading:number|null;ignition:number|null;battery:number|null;satellites:number|null;valid?:number;accuracy?:number|null;receivedAt?:number};
@@ -8,7 +9,7 @@ export type Fence={id:string;name:string;latitude:number;longitude:number;radius
 export type Alert={id:string;deviceId:string;deviceName:string;type:string;message:string;createdAt:number;acknowledged:number};
 export type Identity={role:'admin'|'customer';tenantId:string;name:string;email:string|null};
 
-const iconSet={Navigation,Map,Truck,Route,Bell,FileText,Files,Settings,LogOut,Search,X,ChevronRight,ChevronLeft,MapPin,Clock,Gauge,KeyRound,Power,Plus,Trash2,Pencil,Users,RadioTower,Server,ShieldCheck,Copy,Share2,Play,Pause,Download,Calendar,ChartColumn,Ellipsis,LocateFixed,Scan,UserRound,ExternalLink,Smartphone,TriangleAlert,Activity,WifiOff,Check,CircleParking,Menu,Save,Timer,Milestone,Battery,Satellite,Eye,RefreshCw,Info,House,Landmark,Siren,OctagonAlert};
+const iconSet={Navigation,Map,Truck,Route,Bell,FileText,Files,Settings,LogOut,Search,X,ChevronRight,ChevronLeft,MapPin,Clock,Gauge,KeyRound,Power,Plus,Trash2,Pencil,Users,RadioTower,Server,ShieldCheck,Copy,Share2,Play,Pause,Download,Calendar,ChartColumn,Ellipsis,LocateFixed,Scan,UserRound,ExternalLink,Smartphone,TriangleAlert,Activity,WifiOff,Check,CircleParking,Menu,Save,Timer,Milestone,Battery,Satellite,Eye,RefreshCw,Info,House,Landmark,Siren,OctagonAlert,Layers,History,Mail,MessageSquare,Volume2,BellRing,Languages,SlidersHorizontal};
 export const i=(name:string)=>`<i data-lucide="${name}"></i>`;
 export const icons=()=>createIcons({icons:iconSet});
 export const esc=(value:unknown)=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
@@ -57,11 +58,11 @@ export function showSecret(email:string,password:string,note='Share it privately
 export function wireCopy(root:ParentNode=document){on('[data-copy]',async el=>{await navigator.clipboard.writeText(el.dataset.copy!);toast('Copied.')},root)}
 
 // Formatting
-export const time=(at:number|null)=>at?new Date(at).toLocaleString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}):'Never';
-export const clock=(at:number|null)=>at?new Date(at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}):'—';
-export function ago(at:number|null){if(!at)return 'Never';const s=Math.max(0,Math.floor((Date.now()-at)/1000));return s<60?'Just now':s<3600?`${Math.floor(s/60)} min ago`:s<86400?`${Math.floor(s/3600)} h ago`:`${Math.floor(s/86400)} d ago`}
-export function since(from:number){const m=Math.max(0,Math.floor((Date.now()-from)/60000));return m<60?`${m} min`:m<1440?`${Math.floor(m/60)} h ${m%60} min`:`${Math.floor(m/1440)} d ${Math.floor(m%1440/60)} h`}
-export const hm=(minutes:number)=>minutes<60?`${minutes} min`:`${Math.floor(minutes/60)} h ${String(minutes%60).padStart(2,'0')} m`;
+export const time=(at:number|null)=>at?new Date(at).toLocaleString(locale(),{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}):t('Never');
+export const clock=(at:number|null)=>at?new Date(at).toLocaleTimeString(locale(),{hour:'2-digit',minute:'2-digit'}):'—';
+export function ago(at:number|null){if(!at)return t('Never');const s=Math.max(0,Math.floor((Date.now()-at)/1000));return s<60?t('Just now'):s<3600?t('{n} min ago',{n:Math.floor(s/60)}):s<86400?t('{n} h ago',{n:Math.floor(s/3600)}):t('{n} d ago',{n:Math.floor(s/86400)})}
+export function since(from:number){const m=Math.max(0,Math.floor((Date.now()-from)/60000));return m<60?t('{m} min',{m}):m<1440?t('{h} h {m} min',{h:Math.floor(m/60),m:m%60}):t('{d} d {h} h',{d:Math.floor(m/1440),h:Math.floor(m%1440/60)})}
+export const hm=(minutes:number)=>minutes<60?t('{m} min',{m:minutes}):t('{h} h {m} min',{h:Math.floor(minutes/60),m:String(minutes%60).padStart(2,'0')});
 export const coords=(p:{latitude:number;longitude:number})=>`${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)}`;
 export const mapsLink=(p:{latitude:number;longitude:number})=>`https://www.google.com/maps?q=${p.latitude},${p.longitude}`;
 export const localInput=(date:Date)=>new Date(date.getTime()-date.getTimezoneOffset()*60000).toISOString().slice(0,16);
@@ -76,13 +77,14 @@ export function statusOf(v:Vehicle):StatusKey{
   if(v.status==='Waiting')return 'waiting';
   return 'nofix';
 }
-export const chip=(v:Vehicle)=>{const s=statusOf(v);return `<span class="chip ${s}">${STATUS_LABEL[s]}</span>`};
+export const statusLabel=(s:StatusKey)=>t(STATUS_LABEL[s]);
+export const chip=(v:Vehicle)=>{const s=statusOf(v),p=v.position;return `<span class="chip ${s}">${statusLabel(s)}${s==='running'&&p?` · ${Math.round(p.speed)} km/h`:''}</span>`};
 export function statusLine(v:Vehicle){
   const s=statusOf(v),p=v.position;
-  if(s==='running'&&p)return `Running at ${Math.round(p.speed)} km/h`;
-  if((s==='stopped'||s==='idle')&&v.stoppedSince)return `${s==='idle'?'Engine on, standing':'Parked'} for ${since(v.stoppedSince)} · since ${clock(v.stoppedSince)}`;
-  if(s==='offline')return `No signal since ${time(v.lastSeen)}`;
-  if(s==='waiting')return 'Waiting for the first signal from this vehicle';
-  if(s==='nofix')return p?'GPS signal weak · showing last known place':'Waiting for GPS location';
+  if(s==='running'&&p)return t('Running at {n} km/h',{n:Math.round(p.speed)});
+  if((s==='stopped'||s==='idle')&&v.stoppedSince)return t(s==='idle'?'Engine on, standing for {d} · since {c}':'Parked for {d} · since {c}',{d:since(v.stoppedSince),c:clock(v.stoppedSince)});
+  if(s==='offline')return t('No signal since {t}',{t:time(v.lastSeen)});
+  if(s==='waiting')return t('Waiting for the first signal from this vehicle');
+  if(s==='nofix')return p?t('GPS signal weak · showing last known place'):t('Waiting for GPS location');
   return '';
 }

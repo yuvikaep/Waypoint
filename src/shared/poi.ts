@@ -1,5 +1,6 @@
 import L from 'leaflet';
 import {api} from './core';
+import {t} from './i18n';
 
 // Landmarks around the vehicles (petrol pumps, dhabas, temples, hospitals, tolls...). The server
 // fetches them per ~2.8 km tile from OpenStreetMap and caches them;
@@ -40,7 +41,7 @@ export async function nearest(lat:number,lon:number,within=1500){
   for(const poi of all){const m=metres({lat,lon},poi);if(m<=within&&(!best||m<best.m))best={poi,m}}
   return best&&{...best.poi,metres:Math.round(best.m),label:LABEL[best.poi.kind]};
 }
-export const nearText=(n:{name:string;label:string;metres:number})=>`${n.metres<60?'At':'Near'} ${n.name===n.label?n.label:`${n.name} (${n.label.toLowerCase()})`}${n.metres<60?'':` · ${n.metres<1000?`${n.metres} m`:`${(n.metres/1000).toFixed(1)} km`}`}`;
+export const nearText=(n:{name:string;label:string;metres:number})=>`${t(n.metres<60?'At':'Near')} ${n.name===n.label?t(n.label):`${n.name} (${t(n.label)})`}${n.metres<60?'':` · ${n.metres<1000?`${n.metres} m`:`${(n.metres/1000).toFixed(1)} km`}`}`;
 
 const esc=(s:string)=>s.replace(/[&<>"']/g,c=>`&#${c.charCodeAt(0)};`);
 // Shows landmarks with their names on the map once it is zoomed in far enough to read them.
@@ -75,5 +76,5 @@ export function nearSaved(lat:number,lon:number,saved:{name:string;latitude:numb
   let best:{name:string;kind?:string;m:number;inside:boolean}|null=null;
   for(const f of saved){const m=metres({lat,lon},{lat:f.latitude,lon:f.longitude}),inside=m<=f.radius;if((inside||m<=1500)&&(!best||(inside&&!best.inside)||(inside===best.inside&&m<best.m)))best={name:f.name,kind:f.kind,m,inside}}
   if(!best)return null;
-  return `${placeIcon(best.kind)} ${best.inside?'At':'Near'} ${best.name}${best.inside?'':` · ${best.m<1000?`${Math.round(best.m)} m`:`${(best.m/1000).toFixed(1)} km`}`}`;
+  return `${placeIcon(best.kind)} ${t(best.inside?'At':'Near')} ${best.name}${best.inside?'':` · ${best.m<1000?`${Math.round(best.m)} m`:`${(best.m/1000).toFixed(1)} km`}`}`;
 }

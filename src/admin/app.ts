@@ -2,6 +2,7 @@ import {$,$$,api,post,brand,chip,closeModal,coords,esc,hm,i,icons,mapsLink,modal
 import {createMap,point,truckIcon,L} from '../shared/map';
 import {placeSpan} from '../shared/places';
 import {googleLive} from '../shared/gview';
+import {setLang} from '../shared/i18n';
 import {showLogin} from '../auth';
 
 type View='overview'|'devices'|'device'|'customers'|'admins'|'settings'|'more';
@@ -22,6 +23,8 @@ let detailId=new URLSearchParams(location.search).get('id')||'',me:Identity,view
 let devices:AdminDevice[]=[],customers:Customer[]=[],gateway:Gateway={configured:false,connected:false,lastSync:null,error:null};
 
 export async function startAdmin(identity:Identity){
+  // The admin console stays in English; the customer's language choice is left untouched.
+  setLang('en',false);
   me=identity;
   whenUnauthorized(()=>{clearTimeout(poll);showLogin('Your session ended. Please sign in again.')});
   const requested=new URLSearchParams(location.search).get('view') as View|null;

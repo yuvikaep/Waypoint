@@ -1,6 +1,7 @@
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import {coords,statusOf,type Fix,type Vehicle} from './core';
+import {coords,esc,since,statusOf,type Fix,type Vehicle} from './core';
+import {t} from './i18n';
 import {placeText,shortPlace} from './places';
 import {landmarkLayer} from './poi';
 
@@ -24,6 +25,16 @@ export const TRUCK='<svg class="truck-icon" viewBox="0 0 24 40" aria-hidden="tru
 export function truckIcon(v:Vehicle,selected=false){
   return L.divIcon({className:'gps-marker',html:`<div class="gps-pin ${statusOf(v)} ${selected?'on':''}"><span style="transform:rotate(${v.position?.heading||0}deg)">${TRUCK}</span></div>`,iconSize:[40,40],iconAnchor:[20,20]});
 }
+// Fleet marker: a round status badge with a truck, an arrow for the direction it is heading, a
+// bubble with speed or how long it has stood, and the number plate underneath.
+const TRUCK_GLYPH='<svg class="mk-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18H9"/><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg>';
+export function markerHtml(v:Vehicle,selected:boolean,labels:boolean){
+  const s=statusOf(v),p=v.position,over=s==='running'&&!!p&&p.speed>v.speedLimit;
+  const bubble=!labels?'':s==='running'&&p?`<span class="mk-bubble ${over?'over':'running'}">${over?'⚠ ':'● '}${Math.round(p.speed)} km/h</span>`:(s==='stopped'||s==='idle')&&v.stoppedSince?`<span class="mk-bubble ${s}">${esc(t(s==='idle'?'Idle':'Engine off'))} · ${esc(since(v.stoppedSince))}</span>`:'';
+  const arrow=s==='running'&&p?.heading!=null?`<span class="mk-arrow" style="transform:rotate(${p.heading}deg)"></span>`:'';
+  return `<div class="mk ${s} ${selected?'on':''} ${over?'over':''}">${bubble}<span class="mk-dot">${arrow}${TRUCK_GLYPH}</span>${labels?`<span class="mk-plate">${esc(v.name)}</span>`:''}</div>`;
+}
+export const fleetIcon=(v:Vehicle,selected:boolean,labels:boolean)=>L.divIcon({className:'gps-marker',html:markerHtml(v,selected,labels),iconSize:[40,40],iconAnchor:[20,20]});
 // Route playback truck: green while moving, red when standing, pointing the way it travels.
 export function playbackIcon(heading:number,moving:boolean){
   return L.divIcon({className:'gps-marker playback',html:`<div class="gps-pin on ${moving?'running':'stopped'}"><span style="transform:rotate(${heading}deg)">${TRUCK}</span></div>`,iconSize:[40,40],iconAnchor:[20,20]});
