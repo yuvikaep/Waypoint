@@ -56,7 +56,12 @@ export async function startCustomer(identity:Identity){
   try{fleet=await api<Fleet>('/state')}catch(e){$('#app').innerHTML=`<div class="empty">${i('wifi-off')}<h3>${t('Could not load your fleet')}</h3><p>${esc((e as Error).message)}</p><button class="btn btn-primary" id="retry">${t('Retry')}</button></div>`;on('#retry',()=>location.reload());icons();return}
   selected=new URLSearchParams(location.search).get('vehicle')||'';
   primeSeen(fleet.alerts);document.addEventListener('click',unlockVoice,{once:true});
-  window.addEventListener('popstate',()=>{const v=new URLSearchParams(location.search).get('view') as View|null;go(v||prefs().defaultView,false)});
+  // Back (phone button or browser) closes an open vehicle first, then steps back through pages.
+  window.addEventListener('popstate',()=>{
+    const q=new URLSearchParams(location.search),v=(q.get('view') as View|null)||prefs().defaultView,id=q.get('vehicle')||'';
+    if(v==='map'&&view==='map'&&map){select(id,false);return}
+    selected=id;go(v,false);
+  });
   shell();schedule();
 }
 function stop(){clearTimeout(poll);teardown?.();teardown=undefined}
@@ -72,7 +77,7 @@ function go(next:View,push=true){
   view=next;shell();schedule();
 }
 function openOnMap(id:string){
-  selected=id;const url=new URL(location.href);url.searchParams.set('view','map');url.searchParams.set('vehicle',id);history.pushState(null,'',url);view='map';shell();schedule();
+  selected=id;const url=new URL(location.href);url.searchParams.set('view','map');url.searchParams.set('vehicle',id);history.pushState({vehicle:id},'',url);view='map';shell();schedule();
 }
 
 const brandBlock=()=>`<a class="brand" href="/?live=1"><span class="mark">${i('truck')}</span><span class="brand-text"><b>Waypoint</b><small>${t('Live fleet')}</small></span></a>`;
@@ -173,7 +178,7 @@ function renderLive(){
       <div class="others" id="others"></div></div></div>`;
   map=createMap($('#map'));markers=L.layerGroup().addTo(map);fences=L.layerGroup().addTo(map);fitted=false;
   teardown=()=>{map?.remove();map=undefined;glive?.destroy();glive=undefined};
-  glive=googleLive($('#gwrap'),{onSelect:id=>select(id),covered:()=>matchMedia('(max-width:900px)').matches?(document.querySelector<HTMLElement>('#vsheet:not([hidden])')?.offsetHeight||document.querySelector<HTMLElement>('#others')?.offsetHeight||0):0});
+  glive=googleLive($('#gwrap'),{onSelect:id=>select(id),covered:()=>{const sheet=document.querySelector<HTMLElement>('#vsheet:not([hidden])');if(sheet)return getComputedStyle(sheet).position==='absolute'?sheet.offsetHeight:0;return matchMedia('(max-width:900px)').matches?document.querySelector<HTMLElement>('#others')?.offsetHeight||0:0}});
   on('#gview',()=>setGoogleView(!googleView));
   $<HTMLInputElement>('#q').oninput=e=>{search=(e.target as HTMLInputElement).value;updateLive()};
   on('#fit',fit);on('#follow',el=>{following=!following;el.classList.toggle('on',following);const v=vehicle(selected);if(following&&v?.position)map?.panTo(point(v.position))});
@@ -187,18 +192,29 @@ function fit(){
   const strip=matchMedia('(max-width:900px)').matches?document.querySelector<HTMLElement>('#others')?.offsetHeight||0:0;
   map.fitBounds(pts,{paddingTopLeft:[60,90],paddingBottomRight:[60,70+strip],maxZoom:16});
 }
-function select(id:string){
+// Opening a vehicle is a step in the browser history, so the back button (or the phone's) returns
+// to the list; switching from one open vehicle to another replaces that step instead of stacking.
+function select(id:string,push=true){
+  if(push&&id!==selected){
+    const url=new URL(location.href);url.searchParams.set('view','map');
+    if(id)url.searchParams.set('vehicle',id);else url.searchParams.delete('vehicle');
+    if(id&&!selected)history.pushState({vehicle:id},'',url);else history.replaceState(id?{vehicle:id}:null,'',url);
+  }
   selected=id;const v=vehicle(id);
   $('#live')?.classList.toggle('sheet-open',!!id);
   updateLive();
-  // On phones the search bar hides while a vehicle is open, so the map grows; measure it again.
+  // The layout changes between the list and the vehicle page; measure the map again.
   map?.invalidateSize();
   if(v?.position&&map)centre(v.position,Math.max(16,map.getZoom()));
+  else if(!id)fit();
+  if(id)$('#live')?.scrollTo({top:0});
 }
-// Keep the vehicle in the open part of the map, above the detail card on phones.
+function closeVehicle(){if(history.state?.vehicle)history.back();else select('')}
+// Keep the vehicle in the open part of the map, above the detail card when it floats over the map.
 function centre(p:{latitude:number;longitude:number},zoom=map?.getZoom()){
   if(!map)return;
-  const card=matchMedia('(max-width:900px)').matches?document.querySelector<HTMLElement>('#vsheet')?.offsetHeight||0:0;
+  const sheet=document.querySelector<HTMLElement>('#vsheet:not([hidden])');
+  const card=sheet&&getComputedStyle(sheet).position==='absolute'?sheet.offsetHeight:0;
   map.setView(point(p),zoom,{animate:false});
   if(card)map.panBy([0,card/2],{animate:false});
 }
@@ -248,8 +264,7 @@ function miniCard(d:Vehicle){
 }
 function renderSheet(){
   const el=document.querySelector<HTMLElement>('#vsheet');if(!el)return;
-  const d=vehicle(selected);if(!d){el.hidden=true;$('#others')?.classList.remove('behind');return}
-  $('#others')?.classList.add('behind');
+  const d=vehicle(selected);if(!d){el.hidden=true;return}
   const p=d.position,km=todayKm.get(d.id),s=statusOf(d),over=overspeeding(d);
   if(!km||Date.now()-km.at>60000)void loadTodayKm(d.id);
   const mine=p?nearSaved(p.latitude,p.longitude,fleet.fences):null;
@@ -257,7 +272,7 @@ function renderSheet(){
   const near=mine||(p?nearCache.get(placeKey(p)):'');
   el.hidden=false;
   el.innerHTML=`<div class="grab"></div>
-    <div class="sh-head"><div><h2 class="plate">${esc(d.name)}</h2><div class="sh-sub">${over?`<span class="chip sos">⚠ ${t('Overspeed')}</span>`:chip(d)}${d.driver?`<span class="muted">${i('user-round')}${esc(d.driver)}</span>`:''}</div></div><button class="icon-btn round" id="sheet-share" aria-label="${t('Share')}">${i('share-2')}</button><button class="icon-btn round" id="close-sheet" aria-label="${t('Close')}">${i('x')}</button></div>
+    <div class="sh-head"><button class="icon-btn round" id="close-sheet" aria-label="${t('Back')}">${i('arrow-left')}</button><div><h2 class="plate">${esc(d.name)}</h2><div class="sh-sub">${over?`<span class="chip sos">⚠ ${t('Overspeed')}</span>`:chip(d)}${d.driver?`<span class="muted">${i('user-round')}${esc(d.driver)}</span>`:''}</div></div><button class="icon-btn round" id="sheet-share" aria-label="${t('Share')}">${i('share-2')}</button></div>
     <div class="vc-place">${i('map-pin')}<div><b>${placeSpan(p,d.id)}</b>${near?`<small class="near">${esc(near)}</small>`:''}<small>${esc(statusLine(d))} · ${t('Last GPS signal: {a}',{a:ago(p?.recordedAt??d.lastSeen)})}</small></div></div>
     <div class="sh-stats">
       <div><span>${t('Speed')}</span><b class="${over?'bad':''}">${p&&d.fresh?Math.round(p.speed):0} <small>km/h</small></b><small>${t('Limit {n}',{n:d.speedLimit})}</small></div>
@@ -266,7 +281,7 @@ function renderSheet(){
     </div>
     <div class="sh-acts"><button class="btn btn-primary" id="sheet-history">${i('history')}${t('Route history')}</button><button class="btn btn-soft ${googleView?'on':''}" id="sheet-google">${i('layers')}${t(googleView?'Our map':'Google view')}</button></div>
     <div class="qa">${p?`<button id="sheet-save">${i('map-pin')}<span>${t('Save place')}</span></button>`:''}<button id="sheet-speed">${i('gauge')}<span>${d.speedLimit} km/h${d.speedAlert===false?` ${t('off')}`:''}</span></button>${d.isMobile?`<button id="sheet-driver">${i('smartphone')}<span>${t('Driver link')}</span></button>`:''}${p?`<a href="${mapsLink(p)}" target="_blank" rel="noopener">${i('navigation')}<span>${t('Directions')}</span></a>`:''}</div>`;
-  on('#close-sheet',()=>{selected='';$('#live').classList.remove('sheet-open');updateLive();map?.invalidateSize()},el);
+  on('#close-sheet',closeVehicle,el);
   on('#sheet-history',()=>{historyVehicle=d.id;go('history')},el);
   on('#sheet-share',async()=>{if(!p)return;const text=`${d.name}: ${places.get(placeKey(p))?.label||coords(p)}\n${mapsLink(p)}`;if(navigator.share)await navigator.share({title:d.name,text}).catch(()=>{});else{await navigator.clipboard.writeText(text);toast(t('Location copied.'))}},el);
   on('#sheet-driver',()=>driverLink(d),el);

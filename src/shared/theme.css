@@ -606,7 +606,6 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:4px 0}
   .live-panel .panel-head{border-bottom:0;padding:10px 14px}
   .map-wrap{flex:1}
   .others{display:block;position:absolute;left:0;right:0;bottom:0;z-index:640;padding:10px 0 12px;background:linear-gradient(180deg,transparent,rgba(248,250,252,.95) 30%)}
-  .others.behind{display:none}
   .others-head{display:flex;justify-content:space-between;align-items:center;padding:0 16px 8px;font-size:13px}
   .others-row{display:flex;gap:10px;overflow-x:auto;padding:0 16px;scrollbar-width:none;scroll-snap-type:x mandatory}
   .others-row .mini{flex:0 0 72%;scroll-snap-align:start}
@@ -629,3 +628,17 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:4px 0}
 }
 .vc-top{flex-wrap:wrap}.vc-id{min-width:55%}.vc-id h3{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (min-width:901px){.page-head h1{display:none}.page-head p{font-size:14px}}
+
+/* Vehicle page: map on top, details below in the page (phones), with a back arrow. */
+.sh-head #close-sheet{flex:none}
+@media (max-width:900px){
+  .live.sheet-open{display:block;overflow-y:auto;overscroll-behavior:contain}
+  .live.sheet-open .live-panel{display:none}
+  .live.sheet-open .map-wrap{height:auto}
+  .live.sheet-open .map{position:relative;height:46vh;min-height:260px}
+  .live.sheet-open .gwrap{bottom:auto;height:46vh;min-height:260px}
+  .live.sheet-open .vsheet{position:relative;left:auto;right:auto;bottom:auto;margin:-22px 10px 0;max-height:none;overflow:visible;z-index:650}
+  .live.sheet-open .vsheet .grab{display:block}
+  .live.sheet-open .others{position:static;background:none;padding:16px 0 18px}
+  .live.sheet-open .others-head b{font-size:14px}
+}
