@@ -37,7 +37,7 @@ export class GatewayAgent {
         const history=await this.tracker(`/positions?${new URLSearchParams({deviceId:String(match.id),from:new Date(from).toISOString(),to:new Date(to).toISOString()})}`);
         let late=[];
         if(this.now()-(this.lookedBack.get(device.id)||0)>=60000){
-          const since=Math.max(device.createdAt-60000,this.now()-12*3600000);
+          const since=Math.max(device.createdAt-60000,this.now()-(this.lookedBack.has(device.id)?12:48)*3600000);
           const recent=await this.tracker(`/positions?${new URLSearchParams({deviceId:String(match.id),from:new Date(since).toISOString(),to:new Date(this.now()).toISOString()})}`);
           late=recent.filter(p=>p.id>(this.sentId.get(device.id)??0));
           this.lookedBack.set(device.id,this.now());

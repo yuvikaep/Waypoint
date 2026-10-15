@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
+import { cleanExtra, alarmText } from './extra.mjs';
 
 export const hash = value => createHash('sha256').update(value).digest('hex');
 export const token = () => randomBytes(32).toString('base64url');
@@ -49,6 +50,7 @@ export class TrackingStore {
     `);
     if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name==='tenantId'))this.db.exec("ALTER TABLE devices ADD COLUMN tenantId TEXT NOT NULL DEFAULT 'owner'");
     if(!this.db.prepare('PRAGMA table_info(positions)').all().some(c=>c.name==='valid'))this.db.exec('ALTER TABLE positions ADD COLUMN valid INTEGER NOT NULL DEFAULT 1');
+    if(!this.db.prepare('PRAGMA table_info(positions)').all().some(c=>c.name==='extra'))this.db.exec('ALTER TABLE positions ADD COLUMN extra TEXT');
     this.db.exec('CREATE INDEX IF NOT EXISTS position_moving ON positions(deviceId,recordedAt) WHERE valid=1 AND speed>=3; CREATE INDEX IF NOT EXISTS position_ignition ON positions(deviceId,receivedAt) WHERE ignition IS NOT NULL;');
     if(!this.db.prepare('PRAGMA table_info(fences)').all().some(c=>c.name==='tenantId'))this.db.exec("ALTER TABLE fences ADD COLUMN tenantId TEXT NOT NULL DEFAULT 'owner'");
     if(!this.db.prepare('PRAGMA table_info(driver_links)').all().some(c=>c.name==='code')){
@@ -261,11 +263,14 @@ export class TrackingStore {
     if (body.commandId != null && !this.db.prepare('SELECT id FROM commands WHERE id=? AND deviceId=?').get(text(body.commandId,'Command ID'), id)) fail(400, 'Command does not belong to this device.');
     // A tracker without a satellite fix reports its last known point; keep it for display but never alert on it.
     const valid = body.valid === false ? 0 : 1;
+    const extra = cleanExtra(body.extra), info = extra ? JSON.parse(extra) : {};
     const previous = this.device(id).position;
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      const inserted = this.db.prepare('INSERT OR IGNORE INTO positions(deviceId,eventId,recordedAt,receivedAt,latitude,longitude,speed,heading,accuracy,ignition,battery,satellites,valid) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
-        .run(id,eventId,recordedAt,receivedAt,latitude,longitude,speed,...values,valid).changes > 0;
+      const inserted = this.db.prepare('INSERT OR IGNORE INTO positions(deviceId,eventId,recordedAt,receivedAt,latitude,longitude,speed,heading,accuracy,ignition,battery,satellites,valid,extra) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        .run(id,eventId,recordedAt,receivedAt,latitude,longitude,speed,...values,valid,extra).changes > 0;
+      // Rows stored before health data was kept get it when the receiver sends them again.
+      if (!inserted && extra) this.db.prepare('UPDATE positions SET extra=? WHERE deviceId=? AND eventId=? AND extra IS NULL').run(extra,id,eventId);
       if (heartbeat) this.seen(id, receivedAt);
       if (inserted && valid && (!previous || recordedAt > previous.recordedAt)) {
         if (speed > device.speedLimit && (!previous || previous.speed <= device.speedLimit)) this.alert(id,'speed',`Speed ${Math.round(speed)} km/h exceeds ${device.speedLimit} km/h.`,recordedAt);
@@ -276,10 +281,16 @@ export class TrackingStore {
           this.db.prepare('INSERT OR REPLACE INTO fence_state VALUES (?,?,?)').run(id,fence.id,inside);
         }
         // A fresh fix proves a location arrived, not that a hardware command was acknowledged.
-        this.db.prepare("UPDATE commands SET status='location received',detail='A new GPS fix arrived after the request.',updatedAt=? WHERE deviceId=? AND status IN ('queued','dispatching','sent') AND createdAt<=? AND createdAt>=?")
+        this.db.prepare("UPDATE commands SET status='location received',detail='A new GPS fix arrived after the request.',updatedAt=? WHERE deviceId=? AND status IN ('queued','dispatching','sent') AND detail NOT LIKE 'CMD %' AND createdAt<=? AND createdAt>=?")
           .run(this.now(),id,recordedAt,this.now()-120000);
       }
       if (body.commandId && inserted && recordedAt >= this.now()-60000) this.db.prepare("UPDATE commands SET status='answered',detail='Mobile sender answered with a fresh GPS fix.',updatedAt=? WHERE id=? AND status IN ('queued','sent','location received')").run(this.now(),body.commandId);
+      if (inserted && info.alarm) this.alert(id,'alarm',alarmText(info.alarm),receivedAt);
+      // A tracker's text reply belongs to the newest command still waiting within half an hour.
+      if (inserted && typeof info.result === 'string') {
+        const waiting = this.db.prepare("SELECT id,detail FROM commands WHERE deviceId=? AND status IN ('sent','queued','dispatching') AND detail LIKE 'CMD %' AND createdAt>=? ORDER BY createdAt DESC LIMIT 1").get(id,receivedAt-1800000);
+        if (waiting) this.db.prepare("UPDATE commands SET status='answered',detail=?,updatedAt=? WHERE id=?").run(`${waiting.detail} → Reply: ${info.result}`.slice(0,1000),this.now(),waiting.id);
+      }
       this.db.exec('COMMIT');
       return { accepted: true, duplicate: !inserted };
     } catch (e) { this.db.exec('ROLLBACK'); throw e; }
@@ -296,6 +307,9 @@ export class TrackingStore {
   alert(id,type,message,at=this.now()) { this.db.prepare('INSERT INTO alerts(id,deviceId,type,message,createdAt) VALUES (?,?,?,?,?)').run(randomUUID(),id,type,message,at); }
   // Newest rows by arrival time: fixes and the heartbeats the receiver stores as copies of the last fix.
   recentPackets(id,limit=100){this.raw(id);return this.db.prepare('SELECT * FROM positions WHERE deviceId=? ORDER BY receivedAt DESC,id DESC LIMIT ?').all(id,limit);}
+  // Rows that carry the vehicle-power flag, oldest first, for the power timeline.
+  powerRows(id,since){return this.db.prepare("SELECT receivedAt,battery,extra FROM positions WHERE deviceId=? AND receivedAt>=? AND extra LIKE '%\"charge\"%' ORDER BY receivedAt,id").all(id,since);}
+  latestIccid(id){const row=this.db.prepare("SELECT extra FROM positions WHERE deviceId=? AND extra LIKE '%iccid%' ORDER BY receivedAt DESC,id DESC LIMIT 1").get(id);try{return row?JSON.parse(row.extra).iccid||null:null}catch{return null}}
   deviceAlerts(id,limit=20){return this.db.prepare('SELECT * FROM alerts WHERE deviceId=? ORDER BY createdAt DESC LIMIT ?').all(id,limit);}
   alerts(tenantId){return tenantId?this.db.prepare('SELECT alerts.*,devices.name AS deviceName FROM alerts JOIN devices ON devices.id=alerts.deviceId WHERE devices.tenantId=? ORDER BY alerts.createdAt DESC LIMIT 200').all(tenantId):this.db.prepare('SELECT alerts.*,devices.name AS deviceName FROM alerts JOIN devices ON devices.id=alerts.deviceId ORDER BY alerts.createdAt DESC LIMIT 200').all();}
   acknowledge(id,tenantId){const result=tenantId?this.db.prepare('UPDATE alerts SET acknowledged=1 WHERE id=? AND deviceId IN (SELECT id FROM devices WHERE tenantId=?)').run(id,tenantId):this.db.prepare('UPDATE alerts SET acknowledged=1 WHERE id=?').run(id);if(!result.changes)fail(404,'Alert not found.');}
@@ -319,6 +333,8 @@ export class TrackingStore {
     const command={id:randomUUID(),deviceId:id,status:'queued',detail:'Waiting for the sender.',createdAt:this.now(),updatedAt:this.now()};
     this.db.prepare('INSERT INTO commands VALUES (?,?,?,?,?,?)').run(...Object.values(command)); return command;
   }
+  recordCommand(deviceId,status,detail){this.raw(deviceId);const row={id:randomUUID(),deviceId,status,detail:String(detail).slice(0,1000),createdAt:this.now(),updatedAt:this.now()};this.db.prepare('INSERT INTO commands VALUES (?,?,?,?,?,?)').run(...Object.values(row));return row;}
+  deviceCommands(deviceId,limit=20){return this.db.prepare('SELECT * FROM commands WHERE deviceId=? ORDER BY createdAt DESC LIMIT ?').all(deviceId,limit);}
   updateCommand(id,status,detail) { this.db.prepare("UPDATE commands SET status=?,detail=?,updatedAt=? WHERE id=? AND status IN ('queued','dispatching','sent')").run(status,detail,this.now(),id); }
   commands(id) { this.tick(); return this.db.prepare("SELECT * FROM commands WHERE deviceId=? AND status='queued'").all(id); }
   tick() {

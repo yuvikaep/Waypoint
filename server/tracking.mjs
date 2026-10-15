@@ -7,8 +7,26 @@ import { TrackingStore, fail, hash, token } from './tracking-store.mjs';
 import { TraccarBridge } from './traccar.mjs';
 import { RelayService } from './relay.mjs';
 import { vehicleReport } from './reports.mjs';
+import { commandAllowed } from './command-channel.mjs';
+import { powerTimeline } from './extra.mjs';
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
+// Admin maintenance macros, translated to the tracker family's own command text.
+const GT06_MODELS=['GT06','GT06N','PT06'];
+export function commandText(model,action,input={}){
+  const gt06=GT06_MODELS.includes(model),seconds=(v,min)=>{const n=Number(v);if(!Number.isInteger(n)||n<min||n>18000)fail(400,`Interval must be ${min}-18000 seconds.`);return n};
+  const text=gt06?({
+    reboot:()=>'RESET#',status:()=>'STATUS#',settings:()=>'PARAM#',version:()=>'VERSION#',where:()=>'WHERE#',network:()=>'GPRSSET#',gprsOn:()=>'GPRSON,1#',
+    accReport:()=>`ACCREP,${input.on===false?'OFF':'ON'}#`,
+    interval:()=>`TIMER,${seconds(input.moving,5)},${seconds(input.parked,5)}#`,
+    apn:()=>`APN,${[input.apn,...(input.user||input.password?[input.user||'',input.password||'']:[])].join(',')}#`,
+    server:()=>`SERVER,${/^\d{1,3}(\.\d{1,3}){3}$/.test(String(input.host))?0:1},${input.host},${input.port},0#`,
+  }[action]):model==='Mobile'?undefined:({reboot:()=>'cpureset',status:()=>'getstatus',version:()=>'getver',where:()=>'getgps',settings:()=>'getinfo'}[action]);
+  if(!text)fail(400,model==='Mobile'?'Phone-based vehicles do not take tracker commands.':'This command is not available for this tracker model.');
+  const value=text();
+  if(!commandAllowed(value))fail(400,'Command values are not valid.');
+  return value;
+}
 // Customers see their vehicles, never tracker identifiers, receiver state or command plumbing.
 const customerPosition=p=>p&&{id:p.id,recordedAt:p.recordedAt,latitude:p.latitude,longitude:p.longitude,speed:p.speed,heading:p.heading,ignition:p.ignition,battery:p.battery,satellites:p.satellites,valid:p.valid};
 export const customerDevice=d=>({id:d.id,name:d.name,driver:d.driver,status:d.status,online:d.online,fresh:d.fresh,lastSeen:d.lastSeen,speedLimit:d.speedLimit,ignition:d.ignition,stoppedSince:d.stoppedSince,isMobile:d.model==='Mobile',position:customerPosition(d.position)});
@@ -217,7 +235,21 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
           // Today in the admin's own time zone.
           const start=new Date(Date.now()-tz*60000);start.setUTCHours(0,0,0,0);const from=start.getTime()+tz*60000;
           const today=(await vehicleReport(store,[device],from,Date.now(),Number.isInteger(tz)?tz:-330)).vehicles[0]?.days.at(-1)||null;
-          return json(res,200,{device:{...device,customerId:customer?.id||null,customerName:customer?.name||null},packets:await store.recentPackets(id,100),alerts:await store.deviceAlerts(id,20),today,gateway:bridge.state});
+          return json(res,200,{device:{...device,customerId:customer?.id||null,customerName:customer?.name||null},packets:await store.recentPackets(id,100),alerts:await store.deviceAlerts(id,20),commands:await store.deviceCommands(id,20),power:powerTimeline(await store.powerRows(id,Date.now()-3*86400000)),sim:{iccid:await store.latestIccid(id)},today,gateway:bridge.state});
+        }
+        const adminDeviceAction=path.match(/^\/api\/gps\/admin\/devices\/([\w-]+)\/(packets|command)$/);
+        if(adminDeviceAction){
+          const [,id,action]=adminDeviceAction,device=await store.raw(id);
+          if(action==='packets'&&method==='GET'){
+            try{return json(res,200,{packets:await bridge.packets(device,Number(url.searchParams.get('limit'))||200)})}
+            catch(e){fail(502,`Raw packets are unavailable: ${e.message}`)}
+          }
+          if(action==='command'&&method==='POST'){
+            await limited(`command:${id}`,10);
+            const input=await body(req),text=commandText(device.model,String(input.action||''),input);
+            try{const sent=await bridge.sendText(device,text);return json(res,200,await store.recordCommand(id,sent,`CMD ${text} sent over GPRS.`))}
+            catch(e){await store.recordCommand(id,'failed',`CMD ${text} not sent: ${e.message}`);fail(409,e.message)}
+          }
         }
         if(adminDevice&&method==='PATCH')return json(res,200,await store.updateDevice(adminDevice[1],await body(req)));
         if(adminDevice&&method==='DELETE'){await store.deleteDevice(adminDevice[1]);return json(res,200,{ok:true});}

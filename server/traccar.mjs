@@ -62,7 +62,7 @@ export class TraccarBridge {
     try {
       return await this.store.ingest(id,{eventId:`traccar:${p.id}`,recordedAt,latitude:p.latitude,longitude:p.longitude,
         speed:within(p.speed*1.852,0,400) ?? 0,heading:within(p.course,0,360),accuracy:p.accuracy>0?within(p.accuracy,0,100000):null,
-        ignition,battery:within(attrs.batteryLevel,0,100),satellites:within(attrs.sat,0,100),valid:!!p.valid},
+        ignition,battery:within(attrs.batteryLevel,0,100),satellites:within(attrs.sat,0,100),valid:!!p.valid,extra:attrs},
       {receivedAt,heartbeat:false});
     } catch (e) {
       // One malformed receiver point must not block every later fix for the fleet.
@@ -75,6 +75,13 @@ export class TraccarBridge {
     const result=await this.request(`/positions?${new URLSearchParams({deviceId:String(device.traccarId),from:new Date(from).toISOString(),to:new Date(to).toISOString()})}`);
     for(const position of result.data.sort((a,b)=>Date.parse(a.fixTime)-Date.parse(b.fixTime)))await this.ingest(device.id,position);
   }
+  // Admin maintenance: approved text command over GPRS, and the tracker's raw packets.
+  async sendText(device,data){
+    if(!device.traccarId)throw new Error('Device is not registered with the tracker gateway yet.');
+    const response=await this.request('/commands/send',{method:'POST',body:JSON.stringify({deviceId:device.traccarId,type:'custom',textChannel:false,attributes:{data,noQueue:true}})});
+    return response.status===202?'queued':'sent';
+  }
+  async packets(device,limit=200){return (await this.request(`/packets?${new URLSearchParams({uniqueId:device.uniqueId,limit:String(limit)})}`)).data.packets;}
   async ping(device) {
     if (!device.traccarId) throw new Error('Device is not registered with the tracker gateway yet.');
     const types=(await this.request(`/commands/types?deviceId=${device.traccarId}&textChannel=false`)).data;

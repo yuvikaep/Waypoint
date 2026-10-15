@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { PgAdapter } from './pg-adapter.mjs';
+import { cleanExtra, alarmText } from './extra.mjs';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 
 export const hash = value => createHash('sha256').update(value).digest('hex');
@@ -234,11 +235,14 @@ export class PostgresTrackingStore {
     if (body.commandId != null && !(await this.db.prepare('SELECT id FROM commands WHERE id=? AND deviceId=?').get(text(body.commandId,'Command ID'), id))) fail(400, 'Command does not belong to this device.');
     // A tracker without a satellite fix reports its last known point; keep it for display but never alert on it.
     const valid = body.valid === false ? 0 : 1;
+    const extra = cleanExtra(body.extra), info = extra ? JSON.parse(extra) : {};
     const previous = (await this.device(id)).position;
     
     try {
-      const inserted = (await this.db.prepare('INSERT INTO positions(deviceId,eventId,recordedAt,receivedAt,latitude,longitude,speed,heading,accuracy,ignition,battery,satellites,valid) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(deviceId,eventId) DO NOTHING')
-        .run(id,eventId,recordedAt,receivedAt,latitude,longitude,speed,...values,valid)).changes > 0;
+      const inserted = (await this.db.prepare('INSERT INTO positions(deviceId,eventId,recordedAt,receivedAt,latitude,longitude,speed,heading,accuracy,ignition,battery,satellites,valid,extra) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(deviceId,eventId) DO NOTHING')
+        .run(id,eventId,recordedAt,receivedAt,latitude,longitude,speed,...values,valid,extra)).changes > 0;
+      // Rows stored before health data was kept get it when the receiver sends them again.
+      if (!inserted && extra) (await this.db.prepare('UPDATE positions SET extra=? WHERE deviceId=? AND eventId=? AND extra IS NULL').run(extra,id,eventId));
       if (heartbeat) (await this.seen(id, receivedAt));
       if (inserted && valid && (!previous || recordedAt > previous.recordedAt)) {
         if (speed > device.speedLimit && (!previous || previous.speed <= device.speedLimit)) (await this.alert(id,'speed',`Speed ${Math.round(speed)} km/h exceeds ${device.speedLimit} km/h.`,recordedAt));
@@ -249,10 +253,16 @@ export class PostgresTrackingStore {
           (await this.db.prepare('INSERT INTO fence_state(deviceId,fenceId,inside) VALUES (?,?,?) ON CONFLICT(deviceId,fenceId) DO UPDATE SET inside=excluded.inside').run(id,fence.id,inside));
         }
         // A fresh fix proves a location arrived, not that a hardware command was acknowledged.
-        (await this.db.prepare("UPDATE commands SET status='location received',detail='A new GPS fix arrived after the request.',updatedAt=? WHERE deviceId=? AND status IN ('queued','dispatching','sent') AND createdAt<=? AND createdAt>=?")
+        (await this.db.prepare("UPDATE commands SET status='location received',detail='A new GPS fix arrived after the request.',updatedAt=? WHERE deviceId=? AND status IN ('queued','dispatching','sent') AND detail NOT LIKE 'CMD %' AND createdAt<=? AND createdAt>=?")
           .run(this.now(),id,recordedAt,this.now()-120000));
       }
       if (body.commandId && inserted && recordedAt >= this.now()-60000) (await this.db.prepare("UPDATE commands SET status='answered',detail='Mobile sender answered with a fresh GPS fix.',updatedAt=? WHERE id=? AND status IN ('queued','sent','location received')").run(this.now(),body.commandId));
+      if (inserted && info.alarm) (await this.alert(id,'alarm',alarmText(info.alarm),receivedAt));
+      // A tracker's text reply belongs to the newest command still waiting within half an hour.
+      if (inserted && typeof info.result === 'string') {
+        const waiting = (await this.db.prepare("SELECT id,detail FROM commands WHERE deviceId=? AND status IN ('sent','queued','dispatching') AND detail LIKE 'CMD %' AND createdAt>=? ORDER BY createdAt DESC LIMIT 1").get(id,receivedAt-1800000));
+        if (waiting) (await this.db.prepare("UPDATE commands SET status='answered',detail=?,updatedAt=? WHERE id=?").run(`${waiting.detail} → Reply: ${info.result}`.slice(0,1000),this.now(),waiting.id));
+      }
       
       return { accepted: true, duplicate: !inserted };
     } catch (e) {  throw e; }
@@ -269,6 +279,9 @@ export class PostgresTrackingStore {
   async alert(id,type,message,at=this.now()) { (await this.db.prepare('INSERT INTO alerts(id,deviceId,type,message,createdAt) VALUES (?,?,?,?,?)').run(randomUUID(),id,type,message,at)); }
   // Newest rows by arrival time: fixes and the heartbeats the receiver stores as copies of the last fix.
   async recentPackets(id,limit=100){(await this.raw(id));return (await this.db.prepare('SELECT * FROM positions WHERE deviceId=? ORDER BY receivedAt DESC,id DESC LIMIT ?').all(id,limit));}
+  // Rows that carry the vehicle-power flag, oldest first, for the power timeline.
+  async powerRows(id,since){return (await this.db.prepare("SELECT receivedAt,battery,extra FROM positions WHERE deviceId=? AND receivedAt>=? AND extra LIKE '%\"charge\"%' ORDER BY receivedAt,id").all(id,since));}
+  async latestIccid(id){const row=(await this.db.prepare("SELECT extra FROM positions WHERE deviceId=? AND extra LIKE '%iccid%' ORDER BY receivedAt DESC,id DESC LIMIT 1").get(id));try{return row?JSON.parse(row.extra).iccid||null:null}catch{return null}}
   async deviceAlerts(id,limit=20){return (await this.db.prepare('SELECT * FROM alerts WHERE deviceId=? ORDER BY createdAt DESC LIMIT ?').all(id,limit));}
   async alerts(tenantId){return tenantId?(await this.db.prepare('SELECT alerts.*,devices.name AS deviceName FROM alerts JOIN devices ON devices.id=alerts.deviceId WHERE devices.tenantId=? ORDER BY alerts.createdAt DESC LIMIT 200').all(tenantId)):(await this.db.prepare('SELECT alerts.*,devices.name AS deviceName FROM alerts JOIN devices ON devices.id=alerts.deviceId ORDER BY alerts.createdAt DESC LIMIT 200').all());}
   async acknowledge(id,tenantId){const result=tenantId?(await this.db.prepare('UPDATE alerts SET acknowledged=1 WHERE id=? AND deviceId IN (SELECT id FROM devices WHERE tenantId=?)').run(id,tenantId)):(await this.db.prepare('UPDATE alerts SET acknowledged=1 WHERE id=?').run(id));if(!result.changes)fail(404,'Alert not found.');}
@@ -292,6 +305,8 @@ export class PostgresTrackingStore {
     const command={id:randomUUID(),deviceId:id,status:'queued',detail:'Waiting for the sender.',createdAt:this.now(),updatedAt:this.now()};
     (await this.db.prepare('INSERT INTO commands(id,deviceId,status,detail,createdAt,updatedAt) VALUES (?,?,?,?,?,?)').run(...Object.values(command))); return command;
   }
+  async recordCommand(deviceId,status,detail){(await this.raw(deviceId));const row={id:randomUUID(),deviceId,status,detail:String(detail).slice(0,1000),createdAt:this.now(),updatedAt:this.now()};(await this.db.prepare('INSERT INTO commands(id,deviceId,status,detail,createdAt,updatedAt) VALUES (?,?,?,?,?,?)').run(...Object.values(row)));return row;}
+  async deviceCommands(deviceId,limit=20){return (await this.db.prepare('SELECT * FROM commands WHERE deviceId=? ORDER BY createdAt DESC LIMIT ?').all(deviceId,limit));}
   async updateCommand(id,status,detail) { (await this.db.prepare("UPDATE commands SET status=?,detail=?,updatedAt=? WHERE id=? AND status IN ('queued','dispatching','sent')").run(status,detail,this.now(),id)); }
   async commands(id) { (await this.tick()); return (await this.db.prepare("SELECT * FROM commands WHERE deviceId=? AND status='queued'").all(id)); }
   async tick() {

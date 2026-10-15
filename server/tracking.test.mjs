@@ -274,3 +274,25 @@ test('a parked hardware tracker that only sends heartbeats stays Stopped; a stal
   assert.equal(store.device(hw.id).stoppedSince,store.now()-20*60000);
   assert.equal(store.device(mobile.id).status,'No GPS fix');
 });
+
+test('vehicle power cuts, alarms and the SIM number come from tracker attributes, and old rows are back-filled',async t=>{
+  const {store}=fixture(t);
+  const {powerTimeline,alarmText}=await import('./extra.mjs');
+  const device=store.createDevice({name:'TEST G17 health',model:'GT06',uniqueId:'867111062240495',offlineSeconds:600}).device;
+  const bridge=new TraccarBridge(store,{url:'http://gateway',token:'x',fetcher:async()=>{throw Error('unused')}});
+  const send=async(id,ms,attrs,serverOffset=0)=>{const at=new Date(store.now()+ms).toISOString();await bridge.ingest(device.id,{id,deviceId:4,protocol:'gt06',valid:true,fixTime:at,serverTime:at,latitude:25.28,longitude:82.79,speed:0,course:0,attributes:attrs})};
+  await send(1,0,{type:19,charge:true,batteryLevel:100,rssi:4,iccid:'89911025034004265502'});
+  await send(2,60000,{type:19,charge:false,batteryLevel:83,rssi:3});
+  await send(3,61000,{type:22,charge:false,batteryLevel:83,alarm:'powerCut,powerCut'});
+  await send(4,3600000,{type:19,charge:true,batteryLevel:60,rssi:4});
+  assert.equal(store.deviceAlerts(device.id)[0].message,'Main power cut');
+  assert.equal(alarmText('powerCut,powerCut'),'Main power cut');
+  assert.equal(store.latestIccid(device.id),'89911025034004265502');
+  const power=powerTimeline(store.powerRows(device.id,0));
+  assert.equal(power.connected,true);
+  assert.deepEqual(power.events.map(e=>[e.connected,e.battery]),[[true,60],[false,83]]);
+  // A row stored before extra existed is filled in when the receiver sends it again.
+  store.db.prepare('UPDATE positions SET extra=NULL').run();
+  await send(1,0,{type:19,charge:true,batteryLevel:100,rssi:4});
+  assert.ok(store.db.prepare("SELECT extra FROM positions WHERE eventId='traccar:1'").get().extra.includes('"rssi":4'));
+});

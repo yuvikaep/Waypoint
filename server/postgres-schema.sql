@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS positions (
   UNIQUE(deviceId,eventId)
 );
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS valid INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS extra TEXT;
 CREATE INDEX IF NOT EXISTS position_moving ON positions(deviceId,recordedAt) WHERE valid=1 AND speed>=3;
 CREATE INDEX IF NOT EXISTS position_ignition ON positions(deviceId,receivedAt) WHERE ignition IS NOT NULL;
 CREATE INDEX IF NOT EXISTS position_time ON positions(deviceId,recordedAt,id);

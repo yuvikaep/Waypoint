@@ -194,3 +194,38 @@ test('admin console manages every customer vehicle; customers only see their own
   assert.deepEqual((await (await call('/admin/admins','GET',null,admin)).json()).admins.map(x=>x.email),['ops@example.test']);
   assert.equal((await call('/admin/admins','POST',{email:'x@example.test'},alpha)).status,403);
 });
+
+test('admin maintenance commands are translated per model, logged, and refused when offline',async t=>{
+  const {commandText}=await import('./tracking.mjs');
+  assert.equal(commandText('GT06','interval',{moving:10,parked:60}),'TIMER,10,60#');
+  assert.equal(commandText('PT06','server',{host:'92.4.84.227',port:5023}),'SERVER,0,92.4.84.227,5023,0#');
+  assert.equal(commandText('GT06','apn',{apn:'airteliot.com'}),'APN,airteliot.com#');
+  assert.equal(commandText('FMB920','reboot'),'cpureset');
+  assert.throws(()=>commandText('GT06','interval',{moving:2,parked:60}),/5-18000/);
+  assert.throws(()=>commandText('Mobile','reboot'),/Phone-based/);
+  assert.throws(()=>commandText('GT06','apn',{apn:'a;b'}),/not valid/);
+  const store=new TrackingStore(':memory:');t.after(()=>store.close());
+  const adminKey='customer-test-admin-secret-12345';let online=true;const texts=[];
+  const bridge={state:{},sync:async()=>{},sendText:async(d,text)=>{if(!online)throw Object.assign(new Error('Tracker is offline or has no recent connection. No command was queued.'));texts.push(text);return 'sent'},packets:async()=>[{at:'2026-10-15T10:54:31Z',direction:'in',tag:'Login',hex:'7878'}]};
+  const server=createTrackingServer({store,adminToken:adminKey,bridge});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>{server.close(resolve);server.closeAllConnections()}));
+  const base=`http://127.0.0.1:${server.address().port}/api/gps`;
+  const admin=(await fetch(base+'/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:adminKey})})).headers.get('set-cookie').split(';')[0];
+  const call=(path,method='GET',body)=>fetch(base+path,{method,headers:{'Content-Type':'application/json',cookie:admin},...(body?{body:JSON.stringify(body)}:{})});
+  const d=store.createDevice({name:'G17',model:'GT06',uniqueId:'867111062240426'}).device;
+  const ok=await call(`/admin/devices/${d.id}/command`,'POST',{action:'interval',moving:10,parked:60});
+  assert.equal(ok.status,200);assert.deepEqual(texts,['TIMER,10,60#']);
+  online=false;const off=await call(`/admin/devices/${d.id}/command`,'POST',{action:'reboot'});
+  assert.equal(off.status,409);assert.match((await off.json()).error,/offline/);
+  const log=store.deviceCommands(d.id).map(c=>c.status);assert.deepEqual(log.sort(),['failed','sent']);
+  // A text reply from the tracker is attached to the command that was waiting.
+  store.ingest(d.id,{eventId:'r1',recordedAt:new Date().toISOString(),latitude:25,longitude:82,extra:{result:'TIMER:10,60;OK'}},{heartbeat:false});
+  assert.match(store.deviceCommands(d.id).find(c=>c.status==='answered').detail,/CMD TIMER,10,60# sent over GPRS\. → Reply: TIMER:10,60;OK/);
+  // Tracker alarms become alerts in plain words.
+  store.ingest(d.id,{eventId:'a1',recordedAt:new Date().toISOString(),latitude:25,longitude:82,extra:{alarm:'powerCut'}},{heartbeat:false});
+  assert.equal(store.deviceAlerts(d.id)[0].message,'Main power cut');
+  assert.equal((await (await call(`/admin/devices/${d.id}/packets`)).json()).packets[0].tag,'Login');
+  const detail=await (await call(`/admin/devices/${d.id}`)).json();assert.equal(detail.commands.length,2);
+  assert.ok(JSON.parse(detail.packets.find(p=>p.extra).extra).alarm);
+});

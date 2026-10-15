@@ -1,4 +1,4 @@
-import {$,api,post,brand,chip,closeModal,coords,esc,hm,i,icons,mapsLink,modal,on,showSecret,statusLine,time,ago,toast,whenUnauthorized,wireCopy,type Identity,type Vehicle} from '../shared/core';
+import {$,$$,api,post,brand,chip,closeModal,coords,esc,hm,i,icons,mapsLink,modal,on,showSecret,statusLine,time,ago,toast,whenUnauthorized,wireCopy,type Identity,type Vehicle} from '../shared/core';
 import {createMap,point,truckIcon,L} from '../shared/map';
 import {placeSpan} from '../shared/places';
 import {showLogin} from '../auth';
@@ -27,7 +27,7 @@ export async function startAdmin(identity:Identity){
 }
 function go(next:View,id=''){const url=new URL(location.href);url.searchParams.set('view',next);if(id)url.searchParams.set('id',id);else url.searchParams.delete('id');history.pushState(null,'',url);view=next;detailId=id;shell()}
 function shell(){
-  clearTimeout(poll);detailMap?.map.remove();detailMap=undefined;
+  clearTimeout(poll);detailMap?.map.remove();detailMap=undefined;clearInterval(terminalTimer);terminalOpen=false;
   $('#app').innerHTML=`<div class="app admin">
     <aside class="sidebar">${brand()}<div class="who"><strong>Admin console</strong><small>${esc(me.email||'Maintenance key session')}</small></div>
       <nav class="nav">${NAV.map(([v,l,ic])=>`<button data-go="${v}" class="${view===v||(v==='devices'&&view==='device')?'on':''}">${i(ic)}${l}</button>`).join('')}</nav>
@@ -129,8 +129,11 @@ function locate(d:AdminDevice){
 }
 
 /* ---------- Device details ---------- */
-type Packet={id:number;recordedAt:number;receivedAt:number;latitude:number;longitude:number;speed:number;heading:number|null;ignition:number|null;battery:number|null;satellites:number|null;valid:number};
-type Detail={device:AdminDevice;packets:Packet[];alerts:{id:string;type:string;message:string;createdAt:number;acknowledged:number}[];today:{distanceKm:number;runningMinutes:number;idleMinutes:number;maxSpeed:number;gaps:{from:number;to:number;minutes:number;movedKm:number|null}[]}|null;gateway:Gateway};
+type Packet={id:number;recordedAt:number;receivedAt:number;latitude:number;longitude:number;speed:number;heading:number|null;ignition:number|null;battery:number|null;satellites:number|null;valid:number;extra?:string|null};
+type CommandRow={id:string;status:string;detail:string;createdAt:number;updatedAt:number};
+type RawPacket={at:string;session:string;direction:'in'|'out'|'event'|'decoded';remote:string;hex:string;tag:string};
+type PowerEvent={at:number;connected:boolean;battery:number|null};
+type Detail={device:AdminDevice;commands:CommandRow[];power:{connected:boolean|null;events:PowerEvent[]};sim:{iccid:string|null};packets:Packet[];alerts:{id:string;type:string;message:string;createdAt:number;acknowledged:number}[];today:{distanceKm:number;runningMinutes:number;idleMinutes:number;maxSpeed:number;gaps:{from:number;to:number;minutes:number;movedKm:number|null}[]}|null;gateway:Gateway};
 let detailMap:{map:ReturnType<typeof createMap>;marker:ReturnType<typeof L.marker>}|undefined;
 // Heartbeats are stored as copies of the last fix: a row repeating an earlier row's GPS time and place,
 // or arriving long after its GPS time, is a heartbeat rather than a new location.
@@ -154,7 +157,7 @@ async function renderDevice(){
     detailMap?.map.remove();detailMap=undefined;
     $('#view').innerHTML=`<div class="page" id="device-page"><div class="toolbar"><button class="btn btn-ghost btn-sm" data-go="devices">${i('chevron-left')}All devices</button></div><div id="dp-head"></div><div class="grid-kpi" id="dp-kpi"></div>
       <div style="display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:14px" class="dp-cols"><div class="card"><div style="height:300px;border-radius:16px 16px 0 0;overflow:hidden;position:relative"><div class="map" id="dp-map"></div></div><div class="card-pad" id="dp-place"></div></div><div class="card card-pad" id="dp-today"></div></div>
-      <div class="card card-pad" id="dp-tracker"></div><div class="card" id="dp-packets"></div><div class="card" id="dp-alerts"></div></div>`;
+      <div class="card card-pad" id="dp-health"></div><div class="card card-pad" id="dp-commands"></div><div class="card card-pad" id="dp-tracker"></div><div class="card" id="dp-terminal"></div><div class="card" id="dp-packets"></div><div class="card" id="dp-alerts"></div></div>`;
     on('#view [data-go]',el=>go(el.dataset.go as View));
   }
   const kinds=packetKinds(data.packets),kind=data.packets[0]?kinds.get(data.packets[0].id)!:['—',''];
@@ -169,7 +172,8 @@ async function renderDevice(){
   const t=data.today;
   $('#dp-today').innerHTML=`<h2>Today</h2>${t?`<div class="summary" style="margin-top:12px"><div><span>Distance</span><b>${t.distanceKm} km</b></div><div><span>Running</span><b>${hm(t.runningMinutes)}</b></div><div><span>Idle</span><b>${hm(t.idleMinutes)}</b></div><div><span>Max speed</span><b>${t.maxSpeed} km/h</b></div></div>${t.gaps.map(x=>`<p class="gap-note" style="margin-top:10px">${i('triangle-alert')}No data ${esc(clockOf(x.from))} – ${esc(clockOf(x.to))} (${x.minutes} min)${x.movedKm?` · moved ${x.movedKm} km`:''}</p>`).join('')}`:'<p class="muted" style="margin-top:8px">Nothing recorded today.</p>'}`;
   const gt06=['GT06','GT06N','PT06'].includes(d.model);
-  $('#dp-tracker').innerHTML=`<h2>Tracker</h2><dl class="facts" style="margin-top:12px"><dt>Model / protocol</dt><dd>${esc(d.model)} · ${protocolOf(d.model)}</dd><dt>IMEI</dt><dd class="mono">${esc(d.uniqueId)}</dd><dt>Receiver</dt><dd>${d.traccarId?`Linked (#${d.traccarId})`:'Not yet linked'} · ${esc(d.bridgeStatus||'—')}</dd>${d.model==='Mobile'?'':`<dt>Server</dt><dd class="mono">${esc(g.trackerHost||'—')} : ${gt06?(g.gt06Port??5023):(g.teltonikaPort??5027)}</dd>`}<dt>Speed limit</dt><dd>${d.speedLimit} km/h</dd><dt>Offline after</dt><dd>${Math.round(d.offlineSeconds/60)} min without a packet</dd><dt>Registered</dt><dd>${time(d.createdAt)}</dd></dl>`;
+  $('#dp-tracker').innerHTML=`<h2>Tracker</h2><dl class="facts" style="margin-top:12px"><dt>Model / protocol</dt><dd>${esc(d.model)} · ${protocolOf(d.model)}</dd><dt>IMEI</dt><dd class="mono">${esc(d.uniqueId)}</dd><dt>SIM (ICCID)</dt><dd class="mono">${data.sim?.iccid?esc(data.sim.iccid):'<span class="muted">Not reported yet</span>'}</dd><dt>Receiver</dt><dd>${d.traccarId?`Linked (#${d.traccarId})`:'Not yet linked'} · ${esc(d.bridgeStatus||'—')}</dd>${d.model==='Mobile'?'':`<dt>Server</dt><dd class="mono">${esc(g.trackerHost||'—')} : ${gt06?(g.gt06Port??5023):(g.teltonikaPort??5027)}</dd>`}<dt>Speed limit</dt><dd>${d.speedLimit} km/h</dd><dt>Offline after</dt><dd>${Math.round(d.offlineSeconds/60)} min without a packet</dd><dt>Registered</dt><dd>${time(d.createdAt)}</dd></dl>`;
+  renderHealth(data);renderCommands(data);renderTerminal(d);
   $('#dp-packets').innerHTML=`<div class="card-pad section-title" style="margin:0"><h2>Last ${data.packets.length} packets</h2><span class="small muted">Newest first · refreshes every 10 s</span></div>${data.packets.length?`<div class="table-wrap" style="max-height:460px"><table class="table"><thead><tr><th>Received</th><th>GPS time</th><th>Type</th><th>Speed</th><th>Ignition</th><th>Sats</th><th>Battery</th><th>Position</th></tr></thead><tbody>${data.packets.map(x=>{const [label,cls]=kinds.get(x.id)!;return `<tr><td class="nowrap">${hhmmss(x.receivedAt)}<small>${new Date(x.receivedAt).toLocaleDateString('en-IN',{day:'2-digit',month:'short'})}</small></td><td class="nowrap">${hhmmss(x.recordedAt)}</td><td><span class="chip ${cls} plain">${label}</span></td><td>${Math.round(x.speed)} km/h</td><td>${x.ignition==null?'—':x.ignition?'On':'Off'}</td><td>${x.satellites??'—'}</td><td>${x.battery!=null?Math.round(x.battery)+'%':'—'}</td><td class="mono">${x.latitude.toFixed(5)}, ${x.longitude.toFixed(5)}</td></tr>`}).join('')}</tbody></table></div>`:'<div class="empty"><p>No packets stored yet.</p></div>'}`;
   $('#dp-alerts').innerHTML=`<div class="card-pad section-title" style="margin:0"><h2>Recent alerts</h2></div>${data.alerts.length?data.alerts.map(a=>`<div class="alert-item ${a.acknowledged?'done':''}"><div class="body"><b>${esc(a.type)}</b><p>${esc(a.message)}</p><span class="small muted">${time(a.createdAt)}</span></div></div>`).join(''):'<div class="empty"><p>No alerts.</p></div>'}`;
   if(p){
@@ -181,6 +185,92 @@ async function renderDevice(){
   on('#dp-delete',async()=>{if(prompt(`Delete ${d.name}? This removes its whole location history and alerts.\nType the IMEI/identifier to confirm: ${d.uniqueId}`)!==d.uniqueId)return;await api(`/admin/devices/${d.id}`,{method:'DELETE'});toast('Device deleted.');go('devices')});
   icons();
   later(()=>{if(view==='device'&&!document.querySelector('dialog.modal[open]'))void renderDevice()},10000);
+}
+/* ---------- Device health, commands and live terminal ---------- */
+const extraOf=(p:Packet)=>{try{return p.extra?JSON.parse(p.extra) as Record<string,any>:{}}catch{return {}}};
+const ALARM_WORDS:Record<string,string>={powerCut:'Vehicle power cut',lowBattery:'Backup battery low',tampering:'Tamper alert',vibration:'Vibration',sos:'SOS',overspeed:'Overspeed',gpsAntennaCut:'GPS antenna cut',jamming:'Jamming'};
+const alarmWords=(code:string)=>[...new Set(code.split(',').map(c=>c.trim()))].map(c=>ALARM_WORDS[c]||c).join(', ');
+const SIGNAL=['No signal','Extremely weak','Very weak','Good','Strong'];
+function renderHealth(data:Detail){
+  const d=data.device,packets=data.packets;
+  const latest=(pick:(p:Packet,x:Record<string,any>)=>any)=>{for(const p of packets){const v=pick(p,extraOf(p));if(v!=null)return {v,at:p.receivedAt}}return null};
+  const rssi=latest((_,x)=>x.rssi),charge=latest((_,x)=>x.charge),battery=latest(p=>p.battery),sats=latest(p=>p.satellites);
+  const hbHour=packets.filter(p=>p.receivedAt>Date.now()-3600000&&(extraOf(p).type===19||p.receivedAt-p.recordedAt>90000)).length;
+  const gap=d.lastSeen?Math.round((Date.now()-d.lastSeen)/60000):null,limit=Math.round(d.offlineSeconds/60);
+  const alarms=packets.filter(p=>extraOf(p).alarm).slice(0,3);
+  const lastFix=packets.find(p=>p.valid!==0&&p.receivedAt-p.recordedAt<=90000);
+  const events=data.power.events,lastEvent=events[0];
+  const powerNow=data.power.connected==null?(charge?(charge.v?'Connected (charging)':'Cut — running on backup battery'):'<span class="muted">Not reported by this tracker</span>')
+    :data.power.connected?`Connected${lastEvent&&lastEvent.connected?` since ${time(lastEvent.at)}`:''}`:`<b style="color:var(--stopped)">CUT since ${lastEvent?time(lastEvent.at):'—'}</b> · running on backup battery${lastEvent?` (${hm(Math.round((Date.now()-lastEvent.at)/60000))})`:''}`;
+  const powerLog=events.map(e=>`<span class="chip ${e.connected?'ok':'bad'} plain">${e.connected?'Power restored':'Power cut'}</span> ${time(e.at)}${e.battery!=null?` · battery ${Math.round(e.battery)}%`:''}`).join('<br>');
+  const na='<span class="muted">Not reported by this tracker</span>';
+  $('#dp-health').innerHTML=`<div class="section-title"><h2>Device health</h2><span class="chip ${d.online?'ok':'bad'}">${d.online?'Online':'No signal from tracker'}</span></div>
+    <div class="health-grid">
+      <div><h3>Network</h3><dl class="facts">
+        <dt>GSM signal</dt><dd>${rssi?`${SIGNAL[Math.min(4,Math.max(0,Number(rssi.v)))]||rssi.v} (${rssi.v}/4)`:na}</dd>
+        <dt>Last packet</dt><dd>${ago(d.lastSeen)}<small>${time(d.lastSeen)}</small></dd>
+        <dt>Heartbeats (last hour)</dt><dd>${hbHour}</dd>
+        <dt>Timeout setting</dt><dd>${limit} min${gap!=null&&gap>limit?` <span class="chip bad plain">missed ${Math.max(1,Math.floor(gap/Math.max(1,limit)))}×</span>`:''}</dd></dl></div>
+      <div><h3>Power</h3><dl class="facts">
+        <dt>Vehicle power</dt><dd>${powerNow}</dd>
+        ${powerLog.length?`<dt>Power log</dt><dd>${powerLog}</dd>`:''}
+        <dt>Backup battery</dt><dd>${battery?`${Math.round(Number(battery.v))}%`:na}</dd>
+        <dt>Voltage (V)</dt><dd><span class="muted">Not reported by ${esc(d.model)} (only % is sent)</span></dd>
+        <dt>Tamper / alarms</dt><dd>${alarms.length?alarms.map(a=>`<span class="chip bad plain">${esc(alarmWords(String(extraOf(a).alarm)))}</span> ${time(a.receivedAt)}`).join('<br>'):'None reported'}</dd></dl></div>
+      <div><h3>GPS quality</h3><dl class="facts">
+        <dt>Fix status</dt><dd>${lastFix?`Fixed · ${ago(lastFix.recordedAt)}`:'No recent fix'}</dd>
+        <dt>Satellites</dt><dd>${sats?String(sats.v):na}</dd>
+        <dt>HDOP / PDOP</dt><dd><span class="muted">Not reported by ${esc(d.model)}</span></dd>
+        <dt>Last known place</dt><dd>${d.position?`${coords(d.position)}`:'—'}</dd></dl></div></div>`;
+}
+const SMS_TEXT:Record<string,(i:Record<string,string>)=>string>={
+  reboot:()=>'RESET#',status:()=>'STATUS#',settings:()=>'PARAM#',version:()=>'VERSION#',where:()=>'WHERE#',network:()=>'GPRSSET#',gprsOn:()=>'GPRSON,1#',
+  accReport:i=>`ACCREP,${i.on==='false'?'OFF':'ON'}#`,interval:i=>`TIMER,${i.moving},${i.parked}#`,
+  apn:i=>`APN,${i.apn}${i.user||i.password?`,${i.user||''},${i.password||''}`:''}#`,
+  server:i=>`SERVER,${/^\d+(\.\d+){3}$/.test(i.host)?0:1},${i.host},${i.port},0#`};
+function renderCommands(data:Detail){
+  const d=data.device,gt06=['GT06','GT06N','PT06'].includes(d.model);
+  const online=!!d.lastSeen&&Date.now()-d.lastSeen<=300000;
+  if(d.model==='Mobile'){$('#dp-commands').innerHTML='<h2>Commands</h2><p class="muted" style="margin-top:8px">Phone-based vehicles have no tracker settings.</p>';return}
+  const quick=[['status','Status','activity'],['settings','Read settings','info'],['version','Firmware version','server'],['where','Location now','map-pin'],['network','Network settings','radio-tower'],['gprsOn','GPRS on','power']] as const;
+  $('#dp-commands').innerHTML=`<div class="section-title"><h2>Commands</h2><span class="chip ${online?'ok':'bad'}">${online?'Tracker online · sent over GPRS':'Tracker offline'}</span></div>
+    ${online?'':`<p class="gap-note" style="margin-bottom:12px">${i('triangle-alert')}Commands are sent only while the tracker is connected; none are queued. While it is offline, copy the SMS text and send it from a phone to the tracker's SIM.</p>`}
+    <div class="presets" id="quick">${quick.map(([a,l,ic])=>`<button class="btn btn-ghost btn-sm" data-cmd="${a}">${i(ic)}${l}</button>`).join('')}<button class="btn btn-danger btn-sm" data-cmd="reboot">${i('refresh-cw')}Reboot</button></div>
+    ${gt06?`<div class="cmd-forms">
+      <form class="form" data-form="interval"><h3>Upload interval</h3><div class="form-row"><label class="field">Moving (sec)<input class="input" name="moving" type="number" min="5" max="18000" value="10" required></label><label class="field">Parked (sec)<input class="input" name="parked" type="number" min="5" max="18000" value="60" required></label></div><div class="toolbar"><button class="btn btn-primary btn-sm" type="submit">Send</button><button class="btn btn-ghost btn-sm" type="button" data-sms>Copy SMS</button></div></form>
+      <form class="form" data-form="apn"><h3>APN</h3><label class="field">APN name<input class="input" name="apn" placeholder="airtelgprs.com" required></label><div class="form-row"><label class="field">User (optional)<input class="input" name="user"></label><label class="field">Password (optional)<input class="input" name="password"></label></div><div class="toolbar"><button class="btn btn-primary btn-sm" type="submit">Send</button><button class="btn btn-ghost btn-sm" type="button" data-sms>Copy SMS</button></div></form>
+      <form class="form" data-form="server"><h3>Server IP / port</h3><div class="form-row"><label class="field">Host or IP<input class="input" name="host" value="${esc(gateway.trackerHost||'')}" required></label><label class="field">Port<input class="input" name="port" type="number" min="10" max="65535" value="${gateway.gt06Port??5023}" required></label></div><div class="toolbar"><button class="btn btn-primary btn-sm" type="submit">Send</button><button class="btn btn-ghost btn-sm" type="button" data-sms>Copy SMS</button></div></form>
+      <form class="form" data-form="accReport"><h3>Ignition change report</h3><label class="field">Report when ignition changes<select class="input" name="on"><option value="true">On</option><option value="false">Off</option></select></label><div class="toolbar"><button class="btn btn-primary btn-sm" type="submit">Send</button><button class="btn btn-ghost btn-sm" type="button" data-sms>Copy SMS</button></div></form></div>`:''}
+    <h3 style="margin-top:16px">Command log</h3>
+    <div id="cmd-log">${data.commands.length?data.commands.map(c=>`<div class="alert-item"><div class="body"><b class="mono">${esc(c.detail.replace(/^CMD /,'').split(' sent over')[0].split(' not sent')[0])}</b><p>${esc(c.detail.replace(/^CMD /,'').replace(/^.*?(sent over GPRS\.|not sent:)/,'$1'))}</p><span class="small muted">${time(c.createdAt)}</span></div><span class="chip ${c.status==='answered'?'ok':c.status==='failed'?'bad':'neutral'} plain">${esc(c.status==='sent'?'sent · waiting for reply':c.status)}</span></div>`).join(''):'<p class="muted small">No commands sent yet.</p>'}</div>`;
+  const run=async(action:string,input:Record<string,unknown>={},label='')=>{
+    if(action==='reboot'&&!confirm(`Reboot ${d.name}? It disconnects for about a minute.`))return;
+    try{await post(`/admin/devices/${d.id}/command`,{action,...input});toast(`${label||action} sent. The tracker's reply appears in the log.`)}catch(e){toast((e as Error).message,true)}
+    void renderDevice();
+  };
+  on('[data-cmd]',el=>run(el.dataset.cmd!),$('#dp-commands'));
+  $$<HTMLFormElement>('[data-form]',$('#dp-commands')).forEach(f=>{
+    const values=()=>Object.fromEntries(new FormData(f)) as Record<string,string>;
+    f.addEventListener('submit',e=>{e.preventDefault();const v=values();void run(f.dataset.form!,{...v,moving:Number(v.moving),parked:Number(v.parked),port:Number(v.port),on:v.on!=='false'})});
+    f.querySelector('[data-sms]')?.addEventListener('click',async()=>{if(!f.reportValidity())return;await navigator.clipboard.writeText(SMS_TEXT[f.dataset.form!](values()));toast('SMS text copied. Send it to the tracker SIM.')});
+  });
+}
+let terminalTimer:ReturnType<typeof setInterval>|undefined,terminalOpen=false;
+function renderTerminal(d:AdminDevice){
+  const host=$('#dp-terminal');
+  host.innerHTML=`<div class="card-pad section-title" style="margin:0"><h2>Live terminal</h2><div class="toolbar"><span class="small muted" id="term-status">${terminalOpen?'Streaming every 3 s':'Raw packets as the receiver saw them'}</span><button class="btn ${terminalOpen?'btn-danger':'btn-primary'} btn-sm" id="term-toggle">${terminalOpen?'Stop':'Open terminal'}</button></div></div><div id="term" class="terminal" ${terminalOpen?'':'hidden'}></div>`;
+  clearInterval(terminalTimer);
+  const load=async()=>{
+    if(!terminalOpen||view!=='device'||!document.querySelector('#term')){clearInterval(terminalTimer);return}
+    try{
+      const {packets}=await api<{packets:RawPacket[]}>(`/admin/devices/${d.id}/packets?limit=300`);
+      const box=$('#term'),atEnd=box.scrollTop+box.clientHeight>=box.scrollHeight-30;
+      box.innerHTML=packets.map(p=>`<div class="tline ${p.direction}"><span class="tt">${new Date(p.at).toLocaleTimeString('en-IN',{hour12:false})}</span><span class="td">${p.direction==='in'?'◀ IN':p.direction==='out'?'▶ OUT':p.direction==='decoded'?'✓':'•'}</span><span class="tg">${esc(p.tag)}</span>${p.hex?`<span class="th">${esc(p.hex.match(/.{1,2}/g)?.join(' '))}</span>`:''}${p.remote?`<span class="tr">${esc(p.remote)}</span>`:''}</div>`).join('')||'<div class="tline">No packets in the receiver log for this tracker yet.</div>';
+      if(atEnd)box.scrollTop=box.scrollHeight;$('#term-status').textContent=`${packets.length} lines · updated ${new Date().toLocaleTimeString('en-IN')}`;
+    }catch(e){$('#term').innerHTML=`<div class="tline">${esc((e as Error).message)}</div>`}
+  };
+  on('#term-toggle',()=>{terminalOpen=!terminalOpen;renderTerminal(d);if(terminalOpen){void load();terminalTimer=setInterval(()=>void load(),3000)}},host);
+  if(terminalOpen){void load();terminalTimer=setInterval(()=>void load(),3000)}
 }
 const clockOf=(at:number)=>new Date(at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
 

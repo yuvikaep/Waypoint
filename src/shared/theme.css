@@ -282,3 +282,13 @@ dialog.modal::backdrop{background:#0f1d3d66;backdrop-filter:blur(2px)}
   .dp-cols{grid-template-columns:1fr!important}
 }
 @media (min-width:901px){.grabber,.show-sm{display:none}}
+
+.health-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin-top:6px}
+.health-grid h3{margin-bottom:10px}
+.cmd-forms{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-top:14px}
+.cmd-forms form{background:var(--soft);border:1px solid var(--line);border-radius:14px;padding:14px}
+.terminal{background:#0b1220;color:#c9d6ee;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.5;padding:12px 14px;max-height:360px;overflow:auto;border-radius:0 0 16px 16px}
+.tline{display:flex;gap:10px;flex-wrap:wrap;padding:1px 0}
+.tline .tt{color:#6f7f9f}.tline .td{width:42px;color:#7ad0ff}.tline.out .td{color:#9be28f}.tline.decoded{color:#f6d66b}.tline.event{color:#a1abc4}
+.tline .tg{color:#fff;font-weight:600}.tline .th{color:#8fa3c8;word-break:break-all}.tline .tr{color:#5b6b8a}
+@media (max-width:900px){.health-grid{grid-template-columns:1fr}}
