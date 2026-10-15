@@ -123,6 +123,7 @@ export const HI:Record<string,string>={
   'Blocked. Allow them from the lock icon in the address bar.':'ब्लॉक है। एड्रेस बार के ताले वाले आइकन से अनुमति दें।','Allowed. Shown when this tab is in the background.':'अनुमति है। टैब पीछे होने पर दिखेगी।',
   'Shown when this tab is in the background.':'टैब पीछे होने पर दिखेगी।','Browser notifications were not allowed.':'ब्राउज़र सूचनाओं की अनुमति नहीं मिली।','Saved.':'सेव हो गया।',
   'Choose app language':'ऐप की भाषा चुनें (Select language)','Default':'डिफ़ॉल्ट',
+  'standing for {d}':'{d} से खड़ी',
   'Language changed.':'भाषा बदल गई।','Your name':'आपका नाम','Fleet name':'बेड़े का नाम','Signed in as {e}. Your other devices will be signed out.':'{e} से लॉग इन। आपके दूसरे डिवाइस से लॉग आउट हो जाएगा।',
   'Current password':'मौजूदा पासवर्ड','New password':'नया पासवर्ड','Confirm new password':'नया पासवर्ड दोबारा','At least 12 characters.':'कम से कम 12 अक्षर।',
   'New passwords do not match.':'नए पासवर्ड मेल नहीं खाते।','Password changed.':'पासवर्ड बदल गया।',

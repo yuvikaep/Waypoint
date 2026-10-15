@@ -44,7 +44,8 @@ function prefs():Prefs{
 const openAlerts=()=>fleet.alerts.filter(a=>!a.acknowledged).length;
 const vehicle=(id:string)=>fleet.devices.find(d=>d.id===id);
 const counts=()=>{const c:Record<string,number>={all:fleet.devices.length};for(const d of fleet.devices){const s=statusOf(d);c[s]=(c[s]||0)+1}return c};
-const visible=()=>fleet.devices.filter(d=>(filter==='all'||statusOf(d)===filter||(filter==='stopped'&&statusOf(d)==='idle'))&&`${d.name} ${d.driver}`.toLowerCase().includes(search.toLowerCase()));
+const inFilter=(d:Vehicle)=>{const s=statusOf(d);return filter==='all'||s===filter||(filter==='stopped'&&s==='idle')||(filter==='offline'&&(s==='nofix'||s==='waiting'))};
+const visible=()=>fleet.devices.filter(d=>inFilter(d)&&`${d.name} ${d.driver}`.toLowerCase().includes(search.toLowerCase()));
 const overspeeding=(d:Vehicle)=>statusOf(d)==='running'&&!!d.position&&d.position.speed>d.speedLimit;
 const initial=(s:string)=>esc((s||'W').trim().charAt(0).toUpperCase());
 
@@ -90,10 +91,10 @@ function shell(){
       <div class="foot who-foot"><span class="avatar">${initial(p.workspace)}</span><div class="who-text"><strong>${esc(p.workspace)}</strong><small>${esc(me.email||p.name)}</small></div><button class="icon-btn" data-logout title="${t('Sign out')}" aria-label="${t('Sign out')}">${i('log-out')}</button></div>
     </aside>
     <div class="main">
-      <header class="mobile-head">${ROOT.includes(view)?`${brandBlock()}<span class="live-pill"><i class="dot"></i>${t('{n} vehicles',{n:fleet.devices.length})}</span>`:`<button class="mh-back" data-go="more" aria-label="${t('Back')}">${i('chevron-left')}<span>${t(TITLES[view])}</span></button>`}
-        <span class="mh-actions"><button class="icon-btn ghost" data-go="alerts" aria-label="${t('Alerts')}">${i('bell')}<span class="badge" data-alert-badge ${badge?'':'hidden'}>${badge}</span></button><button class="avatar-btn" data-go="settings" aria-label="${t('Settings')}">${i('user-round')}</button></span></header>
+      <header class="mobile-head">${ROOT.includes(view)?brandBlock():`<button class="mh-back" data-go="more" aria-label="${t('Back')}">${i('chevron-left')}<span>${t(TITLES[view])}</span></button>`}
+</header>
       <header class="topbar"><div class="title"><h1>${t(TITLES[view])}</h1><small>${esc(p.workspace)} · ${t('{n} vehicles',{n:fleet.devices.length})} · ${t('{n} live',{n:live})}</small></div>
-        <div class="toolbar">${view!=='map'?`<button class="btn btn-ghost" data-go="map">${i('map')}${t('Live map')}</button>`:''}</div></header>
+</header>
       <div id="view"></div>
     </div>
     <nav class="tabbar">${TABS.map(([v,label,icon])=>`<button data-go="${v}" class="${view===v||(v==='more'&&!ROOT.includes(view))?'on':''}">${i(icon)}<span>${t(label)}</span>${v==='alerts'?`<span class="badge" data-alert-badge ${badge?'':'hidden'}>${badge}</span>`:''}</button>`).join('')}</nav>
@@ -106,49 +107,39 @@ function shell(){
 function updateBadges(){const n=openAlerts();$$('[data-alert-badge]').forEach(b=>{b.textContent=String(n);b.hidden=!n})}
 async function logout(){if(!DEMO_MODE)await api('/session',{method:'DELETE'}).catch(()=>{});location.href='/?live=1&auth=customer'}
 
-// Status filter pills shared by the vehicle list and the map.
-function filterPills(c:Record<string,number>){
-  const keys:(StatusKey|'all')[]=['all','running','stopped','offline','nofix'];
-  return keys.filter(k=>k==='all'||k==='running'||(c[k]||0)>0||(k==='stopped'&&(c.idle||0)>0)).map(k=>{
-    const n=k==='all'?c.all:k==='stopped'?(c.stopped||0)+(c.idle||0):c[k]||0;
-    return `<button data-filter="${k}" class="pill ${filter===k?'on':''}">${k==='all'?t('All vehicles'):`<i class="dot" style="background:var(--${k})"></i>${k==='stopped'?t('Standing'):statusLabel(k)}`} <b>${n}</b></button>`;
-  }).join('');
+// Status tiles: the counts and the filter in one place (tap again for all vehicles).
+function statusTiles(c:Record<string,number>){
+  const tiles:[StatusKey|'all',string,number,string,string][]=[
+    ['all','All vehicles',c.all,'truck',''],['running','Moving',c.running||0,'navigation','run'],
+    ['stopped','Standing',(c.stopped||0)+(c.idle||0),'pause','stand'],['offline','Offline',(c.offline||0)+(c.nofix||0)+(c.waiting||0),'wifi-off','off']];
+  return `<div class="stat-grid">${tiles.map(([k,l,n,ic,cls])=>`<button class="stat ${filter===k?'on':''}" data-filter="${k}" aria-pressed="${filter===k}"><span>${t(l)}</span><b>${n}</b><em class="si ${cls}">${i(ic)}</em></button>`).join('')}</div>`;
 }
-
 /* ---------- Vehicles (home) ---------- */
 function renderVehicles(){
   const c=counts(),list=visible(),host=$('#view');
   const focused=document.activeElement?.id==='vq';
-  const standing=(c.stopped||0)+(c.idle||0),alerts=openAlerts();
   host.innerHTML=`<div class="page home">
-    <div class="page-head"><div><h1>${t('My vehicles')}</h1><p class="muted">${t('Real-time GPS updates · auto refresh on')}</p></div><button class="icon-btn" id="vrefresh" aria-label="${t('Refresh')}">${i('refresh-cw')}</button></div>
-    <div class="stat-grid">
-      <div class="stat"><span>${t('Total vehicles')}</span><b>${c.all}</b><em class="si">${i('truck')}</em></div>
-      <div class="stat"><span>${t('Moving')}</span><b>${c.running||0}<i class="dot" style="background:var(--running)"></i></b><em class="si run">${i('navigation')}</em></div>
-      <div class="stat"><span>${t('Standing')}</span><b>${standing}<i class="dot" style="background:var(--stopped)"></i></b><em class="si">${i('pause')}</em></div>
-      <button class="stat" data-go="alerts"><span>${t('Alerts / attention')}</span><b>${alerts}<i class="dot" style="background:var(--sos)"></i></b><em class="si sos">${i('triangle-alert')}</em></button>
-    </div>
-    <div class="pills" id="vfilters">${filterPills(c)}</div>
+    <div class="page-head"><div><h1>${t('My vehicles')}</h1><p class="muted">${t('Real-time GPS updates · auto refresh on')}</p></div></div>
+    ${statusTiles(c)}
     <label class="search">${i('search')}<input class="input" id="vq" placeholder="${t('Search vehicle number or driver name…')}" value="${esc(search)}"></label>
     <div class="vgrid">${list.map(vehicleCard).join('')||`<div class="card empty">${i('truck')}<h3>${t(fleet.devices.length?'No vehicles match':'No vehicles yet')}</h3><p>${t(fleet.devices.length?'Try another filter.':'Your fleet administrator will add your GPS devices here.')}</p></div>`}</div></div>`;
   const input=$<HTMLInputElement>('#vq');input.oninput=()=>{search=input.value;renderVehicles()};
   if(focused){input.focus();input.setSelectionRange(input.value.length,input.value.length)}
-  on('[data-filter]',el=>{filter=el.dataset.filter as StatusKey|'all';renderVehicles()},host);
-  on('[data-live]',el=>openOnMap(el.dataset.live!),host);
+  on('[data-filter]',el=>{const f=el.dataset.filter as StatusKey|'all';filter=filter===f?'all':f;renderVehicles()},host);
+  on('[data-open]',el=>openOnMap(el.dataset.open!),host);
   on('[data-history]',el=>{historyVehicle=el.dataset.history!;go('history')},host);
-  on('#vrefresh',()=>refresh());
-  on('[data-go]',el=>go(el.dataset.go as View),host);
   icons();
 }
 function vehicleCard(d:Vehicle){
   const p=d.position,s=statusOf(d),over=overspeeding(d);
-  const parked=(s==='stopped'||s==='idle')&&d.stoppedSince?`${t(s==='idle'?'Idle':'Standing')} · ${since(d.stoppedSince)}`:'';
+  const parked=(s==='stopped'||s==='idle')&&d.stoppedSince?since(d.stoppedSince):'';
   return `<article class="vcard2 s-${s} ${over?'over':''}">
-    <div class="vc-top"><span class="vc-ico">${i(over?'gauge':'truck')}</span><div class="vc-id"><h3 class="plate">${esc(d.name)}</h3>${d.driver?`<span class="muted">${i('user-round')}${esc(d.driver)}</span>`:''}</div>${over?`<span class="chip sos">⚠ ${t('Overspeed')}</span>`:chip(d)}</div>
-    ${over&&p?`<div class="vc-speed">${i('gauge')}<b>${Math.round(p.speed)} km/h</b><span>${t('Allowed limit: {n} km/h',{n:d.speedLimit})}</span></div>`:''}
-    <div class="vc-place">${i('map-pin')}<div><b>${placeSpan(p,d.id)}</b><small>${t('Last update: {a}',{a:ago(p?.recordedAt??d.lastSeen)})}${parked?` · ${esc(parked)}`:''}</small></div></div>
-    <div class="vc-meta"><span class="tag ${d.ignition?'on':''}">${i('key-round')}${d.ignition==null?t('Ignition —'):d.ignition?t('Ignition on'):t('Ignition off')}</span>${s==='running'&&p&&!over?`<span class="tag on">${i('gauge')}${Math.round(p.speed)} km/h</span>`:''}${d.isMobile?`<span class="tag">${i('smartphone')}${t('Driver phone')}</span>`:''}</div>
-    <div class="vc-acts"><button class="btn ${over?'btn-sos':'btn-primary'}" data-live="${d.id}">${i('map')}${t('Live map')}</button><button class="btn btn-soft" data-history="${d.id}">${i('route')}${t('Route history')}</button></div>
+    <button class="vc-open" data-open="${d.id}" aria-label="${esc(d.name)}">
+      <div class="vc-top"><span class="vc-ico">${i(over?'gauge':'truck')}</span><div class="vc-id"><h3 class="plate">${esc(d.name)}</h3>${d.driver?`<span class="muted">${i('user-round')}${esc(d.driver)}</span>`:''}</div>${over?`<span class="chip sos">⚠ ${t('Overspeed')}</span>`:chip(d)}</div>
+      ${over&&p?`<div class="vc-speed">${i('gauge')}<b>${Math.round(p.speed)} km/h</b><span>${t('Allowed limit: {n} km/h',{n:d.speedLimit})}</span></div>`:''}
+      <div class="vc-place">${i('map-pin')}<div><b>${placeSpan(p,d.id)}</b><small>${t('Last update: {a}',{a:ago(p?.recordedAt??d.lastSeen)})}${parked?` · ${t('standing for {d}',{d:parked})}`:''}</small></div></div>
+    </button>
+    <div class="vc-foot"><span class="tag ${d.ignition?'on':''}">${i('key-round')}${d.ignition==null?t('Ignition —'):d.ignition?t('Ignition on'):t('Ignition off')}</span><button class="btn btn-soft btn-sm" data-history="${d.id}">${i('route')}${t('Route history')}</button></div>
   </article>`;
 }
 
@@ -168,29 +159,25 @@ function remember(devices:Vehicle[]){
 try{googleView=localStorage.getItem('waypoint.googleView')==='1'}catch{/* private mode */}
 function renderLive(){
   $('#view').innerHTML=`<div class="live" id="live">
-    <section class="live-panel" id="panel">
-      <div class="panel-head"><label class="search">${i('search')}<input class="input" id="q" placeholder="${t('Search vehicle number or driver…')}" value="${esc(search)}"><span class="live-count" id="livecount"></span></label><div class="pills" id="filters"></div></div>
-      <div class="vlist" id="vlist"></div></section>
-    <div class="map-wrap"><div class="map" id="map"></div>
+    <div class="map-wrap"><span class="live-count" id="livecount"></span><div class="map" id="map"></div>
       <div class="map-tools"><button class="fab ${googleView?'on':''}" id="gview" title="${t('Google view with nearby places')}" aria-label="${t('Google view with nearby places')}">${i('layers')}</button><button class="fab ${following?'on':''}" id="follow" title="${t('Follow selected vehicle')}" aria-label="${t('Follow selected vehicle')}">${i('locate-fixed')}</button><button class="fab" id="fit" title="${t('Show all vehicles')}" aria-label="${t('Show all vehicles')}">${i('scan')}</button></div>
       <div class="gwrap" id="gwrap" hidden></div>
       <div class="vsheet" id="vsheet" hidden></div>
       <div class="others" id="others"></div></div></div>`;
   map=createMap($('#map'));markers=L.layerGroup().addTo(map);fences=L.layerGroup().addTo(map);fitted=false;
-  teardown=()=>{map?.remove();map=undefined;glive?.destroy();glive=undefined};
+  // Whenever the map's box changes size (layout settling, vehicle page opening), Leaflet must re-measure.
+  const resize=new ResizeObserver(()=>map?.invalidateSize());resize.observe($('#map'));
+  teardown=()=>{resize.disconnect();map?.remove();map=undefined;glive?.destroy();glive=undefined};
   glive=googleLive($('#gwrap'),{onSelect:id=>select(id),covered:()=>{const sheet=document.querySelector<HTMLElement>('#vsheet:not([hidden])');if(sheet)return getComputedStyle(sheet).position==='absolute'?sheet.offsetHeight:0;return matchMedia('(max-width:900px)').matches?document.querySelector<HTMLElement>('#others')?.offsetHeight||0:0}});
   on('#gview',()=>setGoogleView(!googleView));
-  $<HTMLInputElement>('#q').oninput=e=>{search=(e.target as HTMLInputElement).value;updateLive()};
   on('#fit',fit);on('#follow',el=>{following=!following;el.classList.toggle('on',following);const v=vehicle(selected);if(following&&v?.position)map?.panTo(point(v.position))});
   updateLive();
   // The flexible phone layout settles after the first paint; measure the map again then.
   requestAnimationFrame(()=>{map?.invalidateSize();if(selected&&vehicle(selected)?.position)select(selected);else fit()});
 }
 function fit(){
-  const pts=visible().flatMap(d=>d.position?[point(d.position)]:[]);if(!pts.length||!map)return;
-  // On phones the vehicle strip covers the lower part of the map; keep trucks above it.
-  const strip=matchMedia('(max-width:900px)').matches?document.querySelector<HTMLElement>('#others')?.offsetHeight||0:0;
-  map.fitBounds(pts,{paddingTopLeft:[60,90],paddingBottomRight:[60,70+strip],maxZoom:16});
+  const pts=fleet.devices.flatMap(d=>d.position?[point(d.position)]:[]);if(!pts.length||!map)return;
+  map.fitBounds(pts,{paddingTopLeft:[60,70],paddingBottomRight:[70,60],maxZoom:16});
 }
 // Opening a vehicle is a step in the browser history, so the back button (or the phone's) returns
 // to the list; switching from one open vehicle to another replaces that step instead of stacking.
@@ -225,15 +212,12 @@ function setGoogleView(on:boolean){
 }
 function updateLive(){
   if(!map||!markers)return;
-  const c=counts(),list=visible();
-  $('#filters').innerHTML=filterPills(c);
-  $('#livecount').innerHTML=`<i class="dot"></i>${t('{n} live',{n:fleet.devices.filter(d=>d.online).length})}`;
-  on('[data-filter]',el=>{filter=el.dataset.filter as StatusKey|'all';updateLive()},$('#filters'));
-  $('#vlist').innerHTML=list.length?list.map(miniCard).join(''):`<div class="empty">${i('truck')}<h3>${t(fleet.devices.length?'No vehicles match':'No vehicles yet')}</h3><p>${t(fleet.devices.length?'Try another filter.':'Your fleet administrator will add your GPS devices here.')}</p></div>`;
-  on('[data-vehicle]',el=>select(el.dataset.vehicle!),$('#vlist'));
-  // Phones: the other vehicles as a swipeable strip under the map while nothing is selected.
-  const others=list.filter(d=>d.id!==selected);
-  $('#others').innerHTML=others.length?`<div class="others-head"><b>${t(selected?'Other vehicles':'Vehicles')}</b><button class="linkish" data-go-list>${t('Open list')}</button></div><div class="others-row">${others.map(miniCard).join('')}</div>`:'';
+  // The map always shows the whole fleet; the list and its filters live on the Vehicles page.
+  const list=fleet.devices;
+  $('#livecount').innerHTML=`<i class="dot"></i>${t('{n} live',{n:list.filter(d=>d.online).length})} · ${t('{n} vehicles',{n:list.length})}`;
+  // On a vehicle's page, the other vehicles one tap away.
+  const others=selected?list.filter(d=>d.id!==selected):[];
+  $('#others').innerHTML=others.length?`<div class="others-head"><b>${t('Other vehicles')}</b><button class="linkish" data-go-list>${t('Open list')}</button></div><div class="others-row">${others.map(miniCard).join('')}</div>`:'';
   on('[data-vehicle]',el=>select(el.dataset.vehicle!),$('#others'));
   on('[data-go-list]',()=>go('vehicles'),$('#others'));
   markers.clearLayers();
@@ -272,8 +256,8 @@ function renderSheet(){
   const near=mine||(p?nearCache.get(placeKey(p)):'');
   el.hidden=false;
   el.innerHTML=`<div class="grab"></div>
-    <div class="sh-head"><button class="icon-btn round" id="close-sheet" aria-label="${t('Back')}">${i('arrow-left')}</button><div><h2 class="plate">${esc(d.name)}</h2><div class="sh-sub">${over?`<span class="chip sos">⚠ ${t('Overspeed')}</span>`:chip(d)}${d.driver?`<span class="muted">${i('user-round')}${esc(d.driver)}</span>`:''}</div></div><button class="icon-btn round" id="sheet-share" aria-label="${t('Share')}">${i('share-2')}</button></div>
-    <div class="vc-place">${i('map-pin')}<div><b>${placeSpan(p,d.id)}</b>${near?`<small class="near">${esc(near)}</small>`:''}<small>${esc(statusLine(d))} · ${t('Last GPS signal: {a}',{a:ago(p?.recordedAt??d.lastSeen)})}</small></div></div>
+    <div class="sh-head"><button class="icon-btn round" id="close-sheet" aria-label="${t('Back')}">${i('arrow-left')}</button><div><h2 class="plate">${esc(d.name)}</h2><div class="sh-sub">${over?`<span class="chip sos">⚠ ${t('Overspeed')}</span>`:`<span class="chip ${s}">${statusLabel(s)}</span>`}${d.driver?`<span class="muted">${i('user-round')}${esc(d.driver)}</span>`:''}</div></div><button class="icon-btn round" id="sheet-share" aria-label="${t('Share')}">${i('share-2')}</button></div>
+    <div class="vc-place">${i('map-pin')}<div><b>${placeSpan(p,d.id)}</b>${near?`<small class="near">${esc(near)}</small>`:''}<small>${t('Last GPS signal: {a}',{a:ago(p?.recordedAt??d.lastSeen)})}</small></div></div>
     <div class="sh-stats">
       <div><span>${t('Speed')}</span><b class="${over?'bad':''}">${p&&d.fresh?Math.round(p.speed):0} <small>km/h</small></b><small>${t('Limit {n}',{n:d.speedLimit})}</small></div>
       <div><span>${t('Today')}</span><b>${km?.km==null?'…':km.km} <small>km</small></b><small>${t('Distance')}</small></div>
@@ -410,12 +394,11 @@ function renderAlerts(){
   const list=fleet.alerts.filter(a=>(alertsAll||!a.acknowledged)&&(alertsCat==='all'||categoryOf(a.type)===alertsCat));
   const style=(type:string)=>{const c=CATEGORIES.find(x=>x.key===categoryOf(type))!;const ic=type==='ignition_on'||type==='ignition_off'?'power':type==='online'?'activity':c.icon;const good=type==='ignition_on'||type==='online'||type==='share_resumed';return {ic,color:good?'var(--running)':type==='ignition_off'?'var(--stopped)':c.color}};
   $('#view').innerHTML=`<div class="page"><div class="pills" id="cats"><button data-cat="all" class="pill ${alertsCat==='all'?'on':''}">${t('All')} <b>${open('all')}</b></button>${CATEGORIES.map(c=>`<button data-cat="${c.key}" class="pill ${alertsCat===c.key?'on':''}">${esc(t(c.label))} <b>${open(c.key)}</b></button>`).join('')}</div>
-    <div class="toolbar"><div class="seg"><button data-all="0" class="${alertsAll?'':'on'}">${t('Open')}</button><button data-all="1" class="${alertsAll?'on':''}">${t('All')}</button></div><span style="flex:1"></span>${open(alertsCat)?`<button class="btn btn-ghost btn-sm" id="ack-all">${i('check')}${t('Mark all seen')}</button>`:''}<button class="btn btn-ghost btn-sm" data-go="settings">${i('settings')}${t('Notification settings')}</button></div>
+    <div class="toolbar"><div class="seg"><button data-all="0" class="${alertsAll?'':'on'}">${t('Open')}</button><button data-all="1" class="${alertsAll?'on':''}">${t('All')}</button></div><span style="flex:1"></span>${open(alertsCat)?`<button class="btn btn-ghost btn-sm" id="ack-all">${i('check')}${t('Mark all seen')}</button>`:''}</div>
     <div class="card">${list.map(a=>{const st=style(a.type),sos=a.type==='sos';return `<div class="alert-item ${a.acknowledged?'done':''} ${sos?'sos':''}"><span class="ico" style="background:var(--soft);color:${st.color}">${i(st.ic)}</span><div class="body"><b class="plate">${esc(a.deviceName)}</b><p>${esc(alertText(a))}</p><span class="small muted">${esc(t(CATEGORIES.find(c=>c.key===categoryOf(a.type))!.label))} · ${time(a.createdAt)}</span>${a.type==='share_stopped'||a.type==='share_expired'?`<div class="toolbar" style="margin-top:6px"><button class="btn btn-primary btn-sm" data-driver="${a.deviceId}">${i('share-2')}${t('Ask driver to share / new link')}</button></div>`:''}</div>${a.acknowledged?`<span class="chip plain ok">${i('check')}${t('Seen')}</span>`:`<button class="btn btn-ghost btn-sm" data-ack="${a.id}">${t('Mark seen')}</button>`}</div>`}).join('')||`<div class="empty">${i('bell')}<h3>${t('All clear')}</h3><p>${t(alertsCat==='all'?'SOS, engine, geofence, overspeed, hard braking and signal alerts appear here.':'Nothing in this category.')}</p></div>`}</div></div>`;
   on('[data-cat]',el=>{alertsCat=el.dataset.cat as Category|'all';renderAlerts()});
   on('[data-driver]',el=>{const v=vehicle(el.dataset.driver!);if(v)driverLink(v)});
   on('[data-all]',el=>{alertsAll=el.dataset.all==='1';renderAlerts()});
-  on('#view [data-go]',el=>go(el.dataset.go as View));
   on('[data-ack]',async el=>{await post(`/alerts/${el.dataset.ack}/ack`);fleet.alerts=fleet.alerts.map(a=>a.id===el.dataset.ack?{...a,acknowledged:1}:a);updateBadges();renderAlerts()});
   on('#ack-all',async()=>{const ids=fleet.alerts.filter(a=>!a.acknowledged&&(alertsCat==='all'||categoryOf(a.type)===alertsCat)).map(a=>a.id);for(const id of ids)await post(`/alerts/${id}/ack`);const set=new Set(ids);fleet.alerts=fleet.alerts.map(a=>set.has(a.id)?{...a,acknowledged:1}:a);updateBadges();renderAlerts();toast(t('All marked seen.'))});
   icons();
@@ -545,7 +528,6 @@ function renderSettings(){
     <section class="card set-card"><div class="set-head"><span class="set-badge">${i('languages')}</span><div><h2>${t('App language & voice guide')}</h2><small>${t('Language and voice assistance')}</small></div></div>
       <p class="set-sub">${t('Choose app language')}</p>
       <div class="lang-seg">${LANGS.map(([k,l,s])=>`<button data-lang="${k}" class="${lang===k?'on':''}"><b>${l}</b><small>${k==='hi'?`${s} · ${t('Default')}`:s}</small></button>`).join('')}</div>
-      ${row('volume-2',t('Speak alerts aloud'),t('Spoken emergency alerts'),toggle('data-n="voice"'))}
       <div class="toolbar"><button class="btn btn-ghost btn-sm" type="button" id="test-voice">${i('play')}${t('Test voice')}</button></div></section>
 
     <section class="card set-card"><div class="set-head"><span class="set-badge">${i('sliders-horizontal')}</span><div><h2>${t('App preferences')}</h2><small>${t('How the app opens and follows vehicles')}</small></div></div>
@@ -587,10 +569,7 @@ function changePassword(){
 
 /* ---------- Menu ---------- */
 function renderMore(){
-  const p=prefs(),n=openAlerts();
-  $('#view').innerHTML=`<div class="page menu-page">
-    <button class="card profile-card" data-go="settings"><span class="avatar lg">${initial(p.workspace)}</span><div><strong>${esc(p.workspace)}</strong><small>${esc(me.email||p.name)}</small></div><span class="chip ok">${t('{n} vehicles',{n:fleet.devices.length})}</span></button>
-    ${GROUPS.filter(([g])=>g!=='Tracking').map(([group,items])=>`<section><h3 class="menu-title">${t(group)}</h3><div class="tiles">${items.map(([v,label,icon])=>`<button class="tile" data-go="${v}"><span class="tile-ico">${i(icon)}</span><b>${t(label)}${v==='alerts'&&n?` <span class="chip sos plain">${n}</span>`:''}</b><small>${t(HINTS[v]||'')}</small></button>`).join('')}</div></section>`).join('')}
-    <button class="btn btn-sos-soft btn-block" data-logout>${i('log-out')}${t('Sign out securely')}</button></div>`;
-  on('#view [data-go]',el=>go(el.dataset.go as View));on('#view [data-logout]',logout);icons();
+  const items=NAV.filter(([v])=>!ROOT.includes(v));
+  $('#view').innerHTML=`<div class="page menu-page"><div class="tiles">${items.map(([v,label,icon])=>`<button class="tile" data-go="${v}"><span class="tile-ico">${i(icon)}</span><b>${t(label)}</b><small>${t(HINTS[v]||'')}</small></button>`).join('')}</div></div>`;
+  on('#view [data-go]',el=>go(el.dataset.go as View));icons();
 }

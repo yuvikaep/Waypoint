@@ -123,6 +123,7 @@ export const HG:Record<string,string>={
   'Blocked. Allow them from the lock icon in the address bar.':'Block hai. Address bar ke taale wale icon se allow karein.','Allowed. Shown when this tab is in the background.':'Allow hai. Tab peeche hone par dikhega.',
   'Shown when this tab is in the background.':'Tab peeche hone par dikhega.','Browser notifications were not allowed.':'Browser notification ki anumati nahi mili.','Saved.':'Save ho gaya.',
   'Choose app language':'App ki bhasha chunein (Select language)','Default':'Default',
+  'standing for {d}':'{d} se khadi',
   'Language changed.':'Bhasha badal gayi.','Your name':'Aapka naam','Fleet name':'Bede ka naam','Signed in as {e}. Your other devices will be signed out.':'{e} se login. Aapke doosre device se log out ho jayega.',
   'Current password':'Abhi ka password','New password':'Naya password','Confirm new password':'Naya password dobara','At least 12 characters.':'Kam se kam 12 akshar.',
   'New passwords do not match.':'Naye password match nahi karte.','Password changed.':'Password badal gaya.',
