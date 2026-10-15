@@ -11,4 +11,9 @@
   <entry key='server.nettyThreads'>2</entry>
   <!-- Longer than the tracker's three-minute heartbeat, but not an indefinitely stale session. -->
   <entry key='gt06.timeout'>300</entry>
+  <!-- Push every position and event to the local gateway worker so it syncs within about a second. -->
+  <entry key='forward.type'>json</entry>
+  <entry key='forward.url'>http://127.0.0.1:8183/position</entry>
+  <entry key='event.forward.type'>json</entry>
+  <entry key='event.forward.url'>http://127.0.0.1:8183/event</entry>
 </properties>

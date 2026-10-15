@@ -42,6 +42,7 @@ export function buildPlan(device, options = {}) {
         ? { command: 'TIMER#', label: 'Read upload interval (PT06 units differ, so it is not changed automatically)' }
         : { command: `TIMER,${moving},${parked}#`, label: `Upload every ${moving} s moving, ${parked} s parked` },
       { command: 'ACCREP,ON#', label: 'Report ignition changes immediately' },
+      { command: 'BATCH,OFF#', label: 'Send every fix at once (no batching)' },
       { command: 'GPRSON,1#', label: 'Keep mobile data on' },
       { command: 'STATUS#', label: 'Read status (signal, power, GPS)' },
       { command: 'PARAM#', label: 'Read back the settings' },

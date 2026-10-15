@@ -44,7 +44,8 @@ export async function startCustomer(identity:Identity){
   shell();schedule();
 }
 function stop(){clearTimeout(poll);teardown?.();teardown=undefined}
-function schedule(){clearTimeout(poll);poll=setTimeout(refresh,view==='map'?3000:5000)}
+// Short polls keep the map, alerts and voice close to real time (the gateway pushes within ~1 s).
+function schedule(){clearTimeout(poll);poll=setTimeout(refresh,document.hidden?5000:2000)}
 async function refresh(){
   try{fleet=await api<Fleet>('/state');announceNew(fleet.alerts,notifyPrefs());updateBadges();if(view==='map')updateLive();else if(view==='vehicles')renderVehicles();else if(view==='alerts')renderAlerts()}
   catch{/* keep showing the last data; the next poll retries */}

@@ -1,4 +1,6 @@
 import { pathToFileURL } from 'node:url';
+import { createServer } from 'node:http';
+import { open, stat as fsStat } from 'node:fs/promises';
 
 // Oracle owns TCP reception and its retry buffer only. Vercel owns registrations,
 // accounts, durable GPS history, and the checkpoint acknowledged by this worker.
@@ -23,12 +25,17 @@ export class GatewayAgent {
   }
   cloud(path,options){return this.request(this.cloudUrl,`/api/gps/gateway${path}`,this.cloudSecret,options);}
   tracker(path,options){return this.request(this.traccarUrl,`/api${path}`,this.traccarToken,options);}
+  // Registered devices change rarely; asking once a minute saves a cloud request on every sync.
+  async registeredDevices(){
+    if(!this.registered||this.now()-this.registeredAt>60000){this.registered=(await this.cloud('/devices')).devices;this.registeredAt=this.now();}
+    return this.registered;
+  }
   async sync(){
-    const registered=(await this.cloud('/devices')).devices;
+    const registered=await this.registeredDevices();
     try{
       const remote=await this.tracker('/devices');
       const latest=await this.tracker('/positions');
-      const failures=[];
+      const failures=[],batch=[],sentAfter=[];
       for(const device of registered)try{
         let match=remote.find(item=>item.uniqueId===device.uniqueId);
         // PT06 and similar announce +5:30 at login and Traccar then subtracts it from times that are
@@ -51,33 +58,87 @@ export class GatewayAgent {
           this.lookedBack.set(device.id,this.now());
         }
         const positions=[...new Map([...history,...late,...latest.filter(p=>p.deviceId===match.id)].map(p=>[p.id,p])).values()];
-        // Chunked reports keep requests bounded. Advance only after every chunk
-        // is acknowledged, so an interrupted upload is retried idempotently.
-        for(let offset=0;offset<Math.max(positions.length,1);offset+=100){
+        const report=chunk=>({id:device.id,uniqueId:device.uniqueId,traccarId:match.id,status:match.status,lastUpdate:match.lastUpdate,positions:chunk});
+        if(positions.length<=100){batch.push({...report(positions),cursor:to});sentAfter.push([device,positions]);continue}
+        // A large backlog goes on its own in chunks. Advance only after every chunk is acknowledged,
+        // so an interrupted upload is retried idempotently.
+        for(let offset=0;offset<positions.length;offset+=100){
           const chunk=positions.slice(offset,offset+100);
-          await this.cloud('/sync',{method:'POST',body:JSON.stringify({connected:true,devices:[{id:device.id,uniqueId:device.uniqueId,traccarId:match.id,status:match.status,lastUpdate:match.lastUpdate,positions:chunk,...(offset+100>=positions.length?{cursor:to}:{})}]})});
+          await this.cloud('/sync',{method:'POST',body:JSON.stringify({connected:true,devices:[{...report(chunk),...(offset+100>=positions.length?{cursor:to}:{})}]})});
         }
-        for(const p of positions)if(p.id>(this.sentId.get(device.id)??0))this.sentId.set(device.id,p.id);
+        this.markSent(device,positions);
       }catch(error){
         // Keep the rest of the fleet flowing; this device retries from its own checkpoint.
         failures.push(`${device.name}: ${error.message}`);
         console.error('GPS device sync failed:',device.uniqueId,error.message);
       }
-      if(failures.length)await this.cloud('/sync',{method:'POST',body:JSON.stringify({connected:true,devices:[],error:`Some trackers failed to sync: ${failures.join('; ')}`.slice(0,300)})});
-      if(!registered.length)await this.cloud('/sync',{method:'POST',body:JSON.stringify({connected:true,devices:[]})});
+      const error=failures.length?`Some trackers failed to sync: ${failures.join('; ')}`.slice(0,300):undefined;
+      // Everything else in one request; if one tracker makes it fail, send them one by one instead.
+      try{await this.cloud('/sync',{method:'POST',body:JSON.stringify({connected:true,devices:batch,...(error?{error}:{})})});for(const [d,p] of sentAfter)this.markSent(d,p);}
+      catch(batchError){
+        if(batch.length<2)throw batchError;
+        this.registered=null;
+        for(const [n,item] of batch.entries())try{await this.cloud('/sync',{method:'POST',body:JSON.stringify({connected:true,devices:[item]})});this.markSent(...sentAfter[n]);}
+        catch(e){failures.push(`${sentAfter[n][0].name}: ${e.message}`);console.error('GPS device sync failed:',item.uniqueId,e.message);}
+        // Tell the cloud which trackers are stuck so the admin console shows it.
+        await this.cloud('/sync',{method:'POST',body:JSON.stringify({connected:true,devices:[],error:`Some trackers failed to sync: ${failures.join('; ')}`.slice(0,300)})}).catch(()=>{});
+      }
     }catch(error){
       await this.cloud('/sync',{method:'POST',body:JSON.stringify({connected:false,devices:[],error:`GPS receiver sync failed: ${String(error.message||error.name).slice(0,200)}`})}).catch(()=>{});
       throw error;
     }
   }
+  markSent(device,positions){for(const p of positions)if(p.id>(this.sentId.get(device.id)??0))this.sentId.set(device.id,p.id);}
+}
+
+// Wakes the sync loop as soon as the receiver log shows a new fix (or anything POSTs to the loopback
+// wake port), so fixes reach the cloud within about a second instead of waiting for the next round.
+export function createWakeup(){
+  let pending=null,resolve=null,timer=null;
+  const wait=ms=>{pending??=new Promise(r=>{resolve=r});const t=new Promise(r=>{timer=setTimeout(r,ms)});return Promise.race([pending,t]).finally(()=>{clearTimeout(timer);pending=null;resolve=null})};
+  // A tracker often sends several packets together; gather them for a moment before syncing.
+  let debounce=null;
+  const kick=(gather=400)=>{if(debounce)return;debounce=setTimeout(()=>{debounce=null;resolve?.()},gather)};
+  return {wait,kick};
+}
+// Traccar logs every decoded position ("] id: ..."); reading the new lines is the fastest local signal
+// that a fix arrived, and it needs no Traccar settings.
+export function watchReceiverLog(file,kick,{interval=400,read=readTail,stat=fsStat}={}){
+  let size=null,busy=false;
+  const timer=setInterval(async()=>{
+    if(busy)return;busy=true;
+    try{
+      const now=(await stat(file)).size;
+      if(size!==null&&now>size&&/\] id: |type: (?:ignition|device|alarm)/.test(await read(file,size,now)))kick();
+      size=now;   // also resets after the log is rotated and starts small again
+    }catch{/* log missing for a moment */}finally{busy=false}
+  },interval);
+  return ()=>clearInterval(timer);
+}
+async function readTail(file,from,to){
+  const handle=await open(file,'r');
+  try{const length=Math.min(to-from,262144),buffer=Buffer.alloc(length);await handle.read(buffer,0,length,to-length);return buffer.toString('utf8')}
+  finally{await handle.close()}
+}
+export function createWakeServer(kick){
+  return createServer((req,res)=>{
+    if(req.method!=='POST'){res.writeHead(404);res.end();return}
+    req.resume();req.on('end',()=>{kick();res.writeHead(204);res.end()});
+  });
 }
 
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
   const agent=new GatewayAgent({cloudUrl:process.env.WAYPOINT_CLOUD_URL,cloudSecret:process.env.GPS_GATEWAY_SECRET,traccarUrl:process.env.TRACCAR_URL,traccarToken:process.env.TRACCAR_TOKEN});
-  let stopping=false;process.on('SIGTERM',()=>{stopping=true});process.on('SIGINT',()=>{stopping=true});
+  let stopping=false;process.on('SIGTERM',()=>{stopping=true;wake.kick(0)});process.on('SIGINT',()=>{stopping=true;wake.kick(0)});
+  const wake=createWakeup();
+  // Loopback only: Traccar runs on the same VM.
+  createWakeServer(()=>wake.kick()).listen(Number(process.env.WAYPOINT_WAKE_PORT||8183),'127.0.0.1',()=>console.info('Waiting for receiver push on loopback.'));
+  watchReceiverLog(process.env.TRACCAR_LOG||'/opt/traccar/logs/tracker-server.log',()=>wake.kick());
   while(!stopping){
-    try{await agent.sync();console.info('GPS cloud sync completed.');}
+    try{await agent.sync();}
     catch(error){console.error('GPS cloud sync failed:',error.name,error.message);}
-    if(!stopping)await new Promise(resolve=>setTimeout(resolve,10000));
+    // New fixes wake this at once; otherwise check every 30 s to keep the cloud link marked alive.
+    if(!stopping)await wake.wait(30000);
   }
+  process.exit(0);
 }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { GatewayAgent } from './gateway-agent.mjs';
+import { GatewayAgent, watchReceiverLog } from './gateway-agent.mjs';
 
 test('gateway worker sends real timestamps and retries from cloud checkpoint',async()=>{
   const now=Date.now(),reports=[],device={id:'cloud-device',uniqueId:'123456789012345',model:'GT06',name:'Truck',createdAt:now-100000};
@@ -81,4 +81,26 @@ test('GT06-family trackers are registered and kept with UTC decoding',async()=>{
   const put=calls.find(c=>c.method==='PUT');assert.match(put.url,/\/api\/devices\/3$/);assert.equal(put.body.attributes['decoder.timezone'],'UTC');
   assert.equal(calls.filter(c=>c.method==='PUT').length,1,'Teltonika is left alone');
   assert.equal(calls.find(c=>c.method==='POST'&&c.url.endsWith('/api/devices')).body.attributes['decoder.timezone'],'UTC');
+});
+
+test('a push from the receiver wakes the sync loop at once; without one it waits for the poll',async()=>{
+  const {createWakeup}=await import('./gateway-agent.mjs');
+  const wake=createWakeup();let t0=Date.now();
+  setTimeout(()=>wake.kick(20),10);await wake.wait(5000);
+  assert.ok(Date.now()-t0<1000,'woken by push');
+  t0=Date.now();await wake.wait(150);assert.ok(Date.now()-t0>=140,'falls back to the poll interval');
+});
+
+test('a new fix in the receiver log wakes the sync at once',async()=>{
+  let size=100,text='',kicks=0;
+  const stop=watchReceiverLog('log',()=>kicks++,{interval:5,stat:async()=>({size}),read:async()=>text});
+  const tick=()=>new Promise(r=>setTimeout(r,20));
+  await tick();                                   // first look only records where the log ends
+  size=180;text='INFO: [T1: gt06 < 1.2.3.4] 78780d01';await tick();
+  assert.equal(kicks,0);                          // raw packet, not yet decoded
+  size=260;text='INFO: [T1] id: 356218606437323, time: 2026-10-15 12:32:55, lat: 25.5';await tick();
+  assert.equal(kicks,1);
+  size=40;text='INFO: [T1] id: 1';await tick();  // rotated log starts small: no false wake
+  assert.equal(kicks,1);
+  stop();
 });
