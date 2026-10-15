@@ -237,6 +237,8 @@ export class PostgresTrackingStore {
     const valid = body.valid === false ? 0 : 1;
     const extra = cleanExtra(body.extra), info = extra ? JSON.parse(extra) : {};
     const previous = (await this.device(id)).position;
+    // The newest earlier row that reported ignition, to detect a change (heartbeats carry it on GT06).
+    const lastIgnition = values[2] == null ? null : (await this.db.prepare('SELECT ignition,receivedAt FROM positions WHERE deviceId=? AND ignition IS NOT NULL ORDER BY receivedAt DESC,id DESC LIMIT 1').get(id));
     
     try {
       const inserted = (await this.db.prepare('INSERT INTO positions(deviceId,eventId,recordedAt,receivedAt,latitude,longitude,speed,heading,accuracy,ignition,battery,satellites,valid,extra) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(deviceId,eventId) DO NOTHING')
@@ -257,7 +259,13 @@ export class PostgresTrackingStore {
           .run(this.now(),id,recordedAt,this.now()-120000));
       }
       if (body.commandId && inserted && recordedAt >= this.now()-60000) (await this.db.prepare("UPDATE commands SET status='answered',detail='Mobile sender answered with a fresh GPS fix.',updatedAt=? WHERE id=? AND status IN ('queued','sent','location received')").run(this.now(),body.commandId));
-      if (inserted && info.alarm) (await this.alert(id,'alarm',alarmText(info.alarm),receivedAt));
+      if (inserted && lastIgnition && receivedAt >= Number(lastIgnition.receivedAt) && Number(lastIgnition.ignition) !== values[2])
+        (await this.alert(id, values[2] ? 'ignition_on' : 'ignition_off', values[2] ? 'Engine started.' : 'Engine stopped.', Math.min(receivedAt, this.now())));
+      // The same tracker alarm repeats in consecutive packets; one alert per half hour is enough.
+      if (inserted && info.alarm) {
+        const message = alarmText(info.alarm);
+        if (!(await this.db.prepare("SELECT id FROM alerts WHERE deviceId=? AND type='alarm' AND message=? AND createdAt>=?").get(id, message, receivedAt - 1800000))) (await this.alert(id,'alarm',message,receivedAt));
+      }
       // A tracker's text reply belongs to the newest command still waiting within half an hour.
       if (inserted && typeof info.result === 'string') {
         const waiting = (await this.db.prepare("SELECT id,detail FROM commands WHERE deviceId=? AND status IN ('sent','queued','dispatching') AND detail LIKE 'CMD %' AND createdAt>=? ORDER BY createdAt DESC LIMIT 1").get(id,receivedAt-1800000));

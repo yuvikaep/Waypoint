@@ -265,6 +265,8 @@ export class TrackingStore {
     const valid = body.valid === false ? 0 : 1;
     const extra = cleanExtra(body.extra), info = extra ? JSON.parse(extra) : {};
     const previous = this.device(id).position;
+    // The newest earlier row that reported ignition, to detect a change (heartbeats carry it on GT06).
+    const lastIgnition = values[2] == null ? null : this.db.prepare('SELECT ignition,receivedAt FROM positions WHERE deviceId=? AND ignition IS NOT NULL ORDER BY receivedAt DESC,id DESC LIMIT 1').get(id);
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const inserted = this.db.prepare('INSERT OR IGNORE INTO positions(deviceId,eventId,recordedAt,receivedAt,latitude,longitude,speed,heading,accuracy,ignition,battery,satellites,valid,extra) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
@@ -285,7 +287,13 @@ export class TrackingStore {
           .run(this.now(),id,recordedAt,this.now()-120000);
       }
       if (body.commandId && inserted && recordedAt >= this.now()-60000) this.db.prepare("UPDATE commands SET status='answered',detail='Mobile sender answered with a fresh GPS fix.',updatedAt=? WHERE id=? AND status IN ('queued','sent','location received')").run(this.now(),body.commandId);
-      if (inserted && info.alarm) this.alert(id,'alarm',alarmText(info.alarm),receivedAt);
+      if (inserted && lastIgnition && receivedAt >= lastIgnition.receivedAt && lastIgnition.ignition !== values[2])
+        this.alert(id, values[2] ? 'ignition_on' : 'ignition_off', values[2] ? 'Engine started.' : 'Engine stopped.', Math.min(receivedAt, this.now()));
+      // The same tracker alarm repeats in consecutive packets; one alert per half hour is enough.
+      if (inserted && info.alarm) {
+        const message = alarmText(info.alarm);
+        if (!this.db.prepare("SELECT id FROM alerts WHERE deviceId=? AND type='alarm' AND message=? AND createdAt>=?").get(id, message, receivedAt - 1800000)) this.alert(id,'alarm',message,receivedAt);
+      }
       // A tracker's text reply belongs to the newest command still waiting within half an hour.
       if (inserted && typeof info.result === 'string') {
         const waiting = this.db.prepare("SELECT id,detail FROM commands WHERE deviceId=? AND status IN ('sent','queued','dispatching') AND detail LIKE 'CMD %' AND createdAt>=? ORDER BY createdAt DESC LIMIT 1").get(id,receivedAt-1800000);

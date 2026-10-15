@@ -296,3 +296,28 @@ test('vehicle power cuts, alarms and the SIM number come from tracker attributes
   await send(1,0,{type:19,charge:true,batteryLevel:100,rssi:4});
   assert.ok(store.db.prepare("SELECT extra FROM positions WHERE eventId='traccar:1'").get().extra.includes('"rssi":4'));
 });
+
+test('ignition changes and geofence crossings create alerts; repeated tracker alarms do not',async t=>{
+  const {store,advance}=fixture(t);
+  const device=store.createDevice({name:'TEST ign',model:'GT06',uniqueId:'867111062240497',offlineSeconds:600}).device;
+  const fence=store.addFence({name:'Depot',latitude:25.28,longitude:82.79,radius:200});
+  const bridge=new TraccarBridge(store,{url:'http://gateway',token:'x',fetcher:async()=>{throw Error('unused')}});
+  let n=0;
+  const send=async(attrs,lat=25.28)=>{n++;advance(60000);const at=new Date(store.now()).toISOString();await bridge.ingest(device.id,{id:n,deviceId:4,protocol:'gt06',valid:true,fixTime:at,serverTime:at,latitude:lat,longitude:82.79,speed:0,course:0,attributes:attrs})};
+  await send({type:19,ignition:false});            // first report: nothing to compare with
+  await send({type:19,ignition:false});            // unchanged
+  await send({type:19,ignition:true});             // started
+  await send({type:19,ignition:true});
+  await send({type:19,ignition:false});            // stopped
+  const ign=store.deviceAlerts(device.id).filter(a=>a.type.startsWith('ignition')).map(a=>a.type+':'+a.message).sort();
+  assert.deepEqual(ign,['ignition_off:Engine stopped.','ignition_on:Engine started.']);
+  // Location packets (ignition unknown) never invent a change.
+  await send({type:18});await send({type:18},25.29);
+  assert.equal(store.deviceAlerts(device.id).filter(a=>a.type.startsWith('ignition')).length,2);
+  const crossing=store.deviceAlerts(device.id).map(a=>a.type);
+  assert.ok(crossing.includes('exit'),'left the geofence: '+crossing);
+  // The same alarm twice within 30 minutes alerts once.
+  await send({type:19,ignition:false,alarm:'powerCut'});await send({type:19,ignition:false,alarm:'powerCut'});
+  assert.equal(store.deviceAlerts(device.id).filter(a=>a.type==='alarm').length,1);
+  void fence;
+});

@@ -3,6 +3,7 @@ import {bearing,createMap,drawRoute,playbackIcon,point,truckIcon,truckTag,L} fro
 import {placeSpan,places,placeKey} from '../shared/places';
 import {DEMO_MODE,workspaceStorage} from '../demo';
 import {showLogin} from '../auth';
+import {CATEGORIES,alertWords,announceNew,askBrowserPermission,browserState,browserSupported,categoryOf,mergeNotify,primeSeen,speak,unlockVoice,voiceSupported,type Category,type NotifyPrefs} from './notify';
 
 type View='map'|'vehicles'|'history'|'reports'|'alerts'|'geofences'|'documents'|'ebills'|'settings'|'more';
 type Fleet={devices:Vehicle[];fences:Fence[];alerts:Alert[]};
@@ -11,7 +12,9 @@ type DayReport={date:string;distanceKm:number;runningMinutes:number;idleMinutes:
 type VehicleReport={id:string;name:string;total:{distanceKm:number;runningMinutes:number;idleMinutes:number;maxSpeed:number;avgSpeed:number;gapMinutes:number};days:DayReport[]};
 // Distance is only what the tracker reported. When it went silent, say so instead of guessing.
 const gapNote=(g:Gap)=>`Tracker sent no data ${clock(g.from)} – ${clock(g.to)} (${hm(g.minutes)})${g.movedKm?` · moved ${g.movedKm} km in this time`:''} · km in this period is not recorded`;
-type Prefs={name:string;workspace:string;follow:boolean;defaultView:View};
+type Prefs={name:string;workspace:string;follow:boolean;defaultView:View;notify?:Partial<NotifyPrefs>};
+const notifyPrefs=():NotifyPrefs=>mergeNotify(prefs().notify);
+async function saveNotify(next:NotifyPrefs){await workspaceStorage.setItem('workspace-preferences',JSON.stringify({...prefs(),notify:next}))}
 
 const NAV:[View,string,string][]=[['map','Live map','map'],['vehicles','Vehicles','truck'],['history','History','route'],['reports','Reports','chart-column'],['alerts','Alerts','bell'],['geofences','Geofences','map-pin'],['documents','Documents','files'],['ebills','E-way bills','file-text'],['settings','Settings','settings']];
 const TABS:[View,string,string][]=[['map','Map','map'],['vehicles','Vehicles','truck'],['history','History','route'],['reports','Reports','chart-column'],['more','More','ellipsis']];
@@ -36,13 +39,14 @@ export async function startCustomer(identity:Identity){
   view=requested&&(NAV.some(([v])=>v===requested)||requested==='more')?requested:prefs().defaultView;
   try{fleet=await api<Fleet>('/state')}catch(e){$('#app').innerHTML=`<div class="empty">${i('wifi-off')}<h3>Could not load your fleet</h3><p>${esc((e as Error).message)}</p><button class="btn btn-primary" id="retry">Retry</button></div>`;on('#retry',()=>location.reload());icons();return}
   selected=new URLSearchParams(location.search).get('vehicle')||'';
+  primeSeen(fleet.alerts);document.addEventListener('click',unlockVoice,{once:true});
   window.addEventListener('popstate',()=>{const v=new URLSearchParams(location.search).get('view') as View|null;go(v||'map',false)});
   shell();schedule();
 }
 function stop(){clearTimeout(poll);teardown?.();teardown=undefined}
-function schedule(){clearTimeout(poll);poll=setTimeout(refresh,view==='map'?3000:10000)}
+function schedule(){clearTimeout(poll);poll=setTimeout(refresh,view==='map'?3000:5000)}
 async function refresh(){
-  try{fleet=await api<Fleet>('/state');updateBadges();if(view==='map')updateLive();else if(view==='vehicles')renderVehicles();else if(view==='alerts')renderAlerts()}
+  try{fleet=await api<Fleet>('/state');announceNew(fleet.alerts,notifyPrefs());updateBadges();if(view==='map')updateLive();else if(view==='vehicles')renderVehicles();else if(view==='alerts')renderAlerts()}
   catch{/* keep showing the last data; the next poll retries */}
   finally{schedule()}
 }
@@ -285,20 +289,27 @@ function renderReports(){
 }
 
 /* ---------- Alerts and geofences ---------- */
-let alertsAll=false;
+let alertsAll=false,alertsCat:Category|'all'='all';
 // Server alert texts are written for operators; say the same thing in plain words.
 function alertText(a:Alert){
   if(a.type==='offline'){const s=Number(a.message.match(/(\d+) seconds/)?.[1]);return `Signal lost${s?` · no update for ${s>=120?`${Math.round(s/60)} min`:`${s} sec`}`:''}`}
+  if(a.type==='ignition_on')return 'Vehicle started · engine on';
+  if(a.type==='ignition_off')return 'Engine off';
   if(a.type==='online')return 'Signal restored';
   return a.message;
 }
 function renderAlerts(){
-  const list=fleet.alerts.filter(a=>alertsAll||!a.acknowledged);
-  const icon=(t:string)=>t==='speed'?['gauge','var(--stopped-50)','var(--stopped)']:t==='offline'?['wifi-off','var(--offline-50)','var(--offline)']:t==='online'?['activity','var(--running-50)','var(--running)']:['map-pin','var(--blue-50)','var(--blue-600)'];
-  $('#view').innerHTML=`<div class="page"><div class="toolbar"><div class="seg"><button data-all="0" class="${alertsAll?'':'on'}">Open (${openAlerts()})</button><button data-all="1" class="${alertsAll?'on':''}">All</button></div></div>
-    <div class="card">${list.map(a=>{const [ic,bg,fg]=icon(a.type);return `<div class="alert-item ${a.acknowledged?'done':''}"><span class="ico" style="background:${bg};color:${fg}">${i(ic)}</span><div class="body"><b>${esc(a.deviceName)}</b><p>${esc(alertText(a))}</p><span class="small muted">${time(a.createdAt)}</span></div>${a.acknowledged?`<span class="chip plain ok">${i('check')}Seen</span>`:`<button class="btn btn-ghost btn-sm" data-ack="${a.id}">Mark seen</button>`}</div>`}).join('')||`<div class="empty">${i('bell')}<h3>All clear</h3><p>Overspeed, geofence and signal alerts appear here.</p></div>`}</div></div>`;
+  const open=(c:Category|'all')=>fleet.alerts.filter(a=>!a.acknowledged&&(c==='all'||categoryOf(a.type)===c)).length;
+  const list=fleet.alerts.filter(a=>(alertsAll||!a.acknowledged)&&(alertsCat==='all'||categoryOf(a.type)===alertsCat));
+  const style=(t:string)=>{const c=CATEGORIES.find(x=>x.key===categoryOf(t))!;const ic=t==='ignition_on'?'power':t==='ignition_off'?'power':t==='online'?'activity':c.icon;const on=t==='ignition_on'||t==='online';return {ic,color:on?'var(--running)':t==='ignition_off'?'var(--stopped)':c.color}};
+  $('#view').innerHTML=`<div class="page"><div class="filters" id="cats"><button data-cat="all" class="${alertsCat==='all'?'on':''}">All <b>${open('all')}</b></button>${CATEGORIES.map(c=>`<button data-cat="${c.key}" class="${alertsCat===c.key?'on':''}">${esc(c.label)} <b>${open(c.key)}</b></button>`).join('')}</div>
+    <div class="toolbar"><div class="seg"><button data-all="0" class="${alertsAll?'':'on'}">Open</button><button data-all="1" class="${alertsAll?'on':''}">All</button></div><span style="flex:1"></span>${open(alertsCat)?`<button class="btn btn-ghost btn-sm" id="ack-all">${i('check')}Mark all seen</button>`:''}<button class="btn btn-ghost btn-sm" data-go="settings">${i('settings')}Notification settings</button></div>
+    <div class="card">${list.map(a=>{const st=style(a.type);return `<div class="alert-item ${a.acknowledged?'done':''}"><span class="ico" style="background:var(--soft);color:${st.color}">${i(st.ic)}</span><div class="body"><b>${esc(a.deviceName)}</b><p>${esc(alertText(a))}</p><span class="small muted">${esc(CATEGORIES.find(c=>c.key===categoryOf(a.type))!.label)} · ${time(a.createdAt)}</span></div>${a.acknowledged?`<span class="chip plain ok">${i('check')}Seen</span>`:`<button class="btn btn-ghost btn-sm" data-ack="${a.id}">Mark seen</button>`}</div>`}).join('')||`<div class="empty">${i('bell')}<h3>All clear</h3><p>${alertsCat==='all'?'Engine, geofence, overspeed and signal alerts appear here.':'Nothing in this category.'}</p></div>`}</div></div>`;
+  on('[data-cat]',el=>{alertsCat=el.dataset.cat as Category|'all';renderAlerts()});
   on('[data-all]',el=>{alertsAll=el.dataset.all==='1';renderAlerts()});
+  on('#view [data-go]',el=>go(el.dataset.go as View));
   on('[data-ack]',async el=>{await post(`/alerts/${el.dataset.ack}/ack`);fleet.alerts=fleet.alerts.map(a=>a.id===el.dataset.ack?{...a,acknowledged:1}:a);updateBadges();renderAlerts()});
+  on('#ack-all',async()=>{const ids=fleet.alerts.filter(a=>!a.acknowledged&&(alertsCat==='all'||categoryOf(a.type)===alertsCat)).map(a=>a.id);for(const id of ids)await post(`/alerts/${id}/ack`);const set=new Set(ids);fleet.alerts=fleet.alerts.map(a=>set.has(a.id)?{...a,acknowledged:1}:a);updateBadges();renderAlerts();toast('All marked seen.')});
   icons();
 }
 function renderGeofences(){
@@ -357,12 +368,28 @@ function renderSettings(){
       <label class="field">Open the app on<select class="input" name="defaultView">${NAV.map(([v,l])=>`<option value="${v}" ${p.defaultView===v?'selected':''}>${l}</option>`).join('')}</select></label>
       <label class="check"><input type="checkbox" name="follow" ${p.follow?'checked':''}>Keep the map centred on the selected vehicle</label>
       <p class="error" id="prefs-error"></p><button class="btn btn-primary" type="submit" style="align-self:flex-start">${i('save')}Save</button></form>
+    <div class="card card-pad form" id="notify"><h2>Alert notifications</h2><p class="hint">Alerts are always saved in the Alerts page. These switches decide what pops up and speaks while the app is open.</p>
+      <label class="check"><input type="checkbox" data-n="popup">Show a pop-up message</label>
+      <label class="check"><input type="checkbox" data-n="voice">Speak alerts aloud${voiceSupported()?'':' (not supported in this browser)'}</label>
+      <div class="toolbar"><button class="btn btn-ghost btn-sm" type="button" id="test-voice">${i('play')}Test voice</button></div>
+      <label class="check"><input type="checkbox" data-n="browser">Browser notifications when this tab is in the background</label>
+      <p class="hint" id="browser-note"></p>
+      <h3 style="margin-top:6px">Which alerts?</h3>
+      ${CATEGORIES.map(c=>`<label class="check" style="align-items:flex-start"><input type="checkbox" data-cat-n="${c.key}" style="margin-top:3px"><span><b>${esc(c.label)}</b><br><span class="hint">${esc(c.hint)}</span></span></label>`).join('')}
+      <p class="hint">Voice and notifications work while Waypoint is open in a browser tab, including a background tab. They stop when the tab or browser is closed or the phone suspends it.</p></div>
     ${DEMO_MODE?'':`<form class="card card-pad form" id="password"><h2>Change password</h2><p class="hint">Signed in as ${esc(me.email)}. Your other devices will be signed out.</p>
       <label class="field">Current password<input class="input" type="password" name="currentPassword" required autocomplete="current-password"></label>
       <div class="form-row"><label class="field">New password<input class="input" type="password" name="newPassword" required minlength="12" maxlength="128" autocomplete="new-password"></label><label class="field">Confirm new password<input class="input" type="password" name="confirmPassword" required minlength="12" maxlength="128" autocomplete="new-password"></label></div>
       <p class="hint">At least 12 characters.</p><p class="error" id="password-error"></p><button class="btn btn-primary" type="submit" style="align-self:flex-start">${i('key-round')}Change password</button></form>`}
     <button class="btn btn-ghost" data-logout style="align-self:flex-start">${i('log-out')}Sign out</button></div>`;
-  $('#prefs').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target as HTMLFormElement);try{const next={...p,name:String(f.get('name')).trim(),workspace:String(f.get('workspace')).trim()||'My fleet',defaultView:f.get('defaultView') as View,follow:f.has('follow')};await workspaceStorage.setItem('workspace-preferences',JSON.stringify(next));following=next.follow;toast('Saved.');shell()}catch(err){$('#prefs-error').textContent=(err as Error).message}});
+  $('#prefs').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target as HTMLFormElement);try{const next={...prefs(),name:String(f.get('name')).trim(),workspace:String(f.get('workspace')).trim()||'My fleet',defaultView:f.get('defaultView') as View,follow:f.has('follow')};await workspaceStorage.setItem('workspace-preferences',JSON.stringify(next));following=next.follow;toast('Saved.');shell()}catch(err){$('#prefs-error').textContent=(err as Error).message}});
+  const np=notifyPrefs(),note=()=>{const st=browserState();$('#browser-note').textContent=!browserSupported()?'This browser cannot show notifications.':st==='denied'?'Notifications are blocked. Allow them from the lock icon in the address bar, then switch this on again.':st==='granted'?'Allowed.':'You will be asked to allow notifications.'};
+  $$<HTMLInputElement>('[data-n]').forEach(box=>{const k=box.dataset.n as 'popup'|'voice'|'browser';box.checked=np[k];box.addEventListener('change',async()=>{
+    if(k==='browser'&&box.checked){const r=await askBrowserPermission();if(r!=='granted'){box.checked=false;note();toast('Browser notifications were not allowed.',true);return}}
+    if(k==='voice')unlockVoice();
+    np[k]=box.checked;await saveNotify(np);note();toast('Saved.')})});
+  $$<HTMLInputElement>('[data-cat-n]').forEach(box=>{const k=box.dataset.catN as Category;box.checked=np.categories[k];box.addEventListener('change',async()=>{np.categories[k]=box.checked;await saveNotify(np);toast('Saved.')})});
+  on('#test-voice',()=>{unlockVoice();speak('Vehicle started')});note();
   document.querySelector('#password')?.addEventListener('submit',async e=>{e.preventDefault();const form=e.target as HTMLFormElement,f=new FormData(form);$('#password-error').textContent='';try{if(f.get('newPassword')!==f.get('confirmPassword'))throw Error('New passwords do not match.');await post('/account/password',{currentPassword:f.get('currentPassword'),newPassword:f.get('newPassword')});form.reset();toast('Password changed.')}catch(err){$('#password-error').textContent=(err as Error).message}});
   on('[data-logout]',logout);icons();
 }
