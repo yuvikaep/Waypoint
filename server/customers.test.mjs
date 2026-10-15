@@ -201,6 +201,9 @@ test('admin maintenance commands are translated per model, logged, and refused w
   assert.equal(commandText('PT06','server',{host:'92.4.84.227',port:5023}),'SERVER,0,92.4.84.227,5023,0#');
   assert.equal(commandText('GT06','apn',{apn:'airteliot.com'}),'APN,airteliot.com#');
   assert.equal(commandText('FMB920','reboot'),'cpureset');
+  assert.equal(commandText('PT06','timezone',{hours:0,minutes:0}),'GMT,E,0,0#');
+  assert.equal(commandText('PT06','timezone',{hours:5,minutes:30}),'GMT,E,5,30#');
+  assert.throws(()=>commandText('PT06','timezone',{hours:99,minutes:0}),/not valid/);
   assert.throws(()=>commandText('GT06','interval',{moving:2,parked:60}),/5-18000/);
   assert.throws(()=>commandText('Mobile','reboot'),/Phone-based/);
   assert.throws(()=>commandText('GT06','apn',{apn:'a;b'}),/not valid/);

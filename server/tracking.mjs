@@ -18,6 +18,7 @@ export function commandText(model,action,input={}){
   const text=gt06?({
     reboot:()=>'RESET#',status:()=>'STATUS#',settings:()=>'PARAM#',version:()=>'VERSION#',where:()=>'WHERE#',network:()=>'GPRSSET#',gprsOn:()=>'GPRSON,1#',
     accReport:()=>`ACCREP,${input.on===false?'OFF':'ON'}#`,
+    timezone:()=>`GMT,${input.west?'W':'E'},${Number(input.hours)},${Number(input.minutes)||0}#`,
     interval:()=>`TIMER,${seconds(input.moving,5)},${seconds(input.parked,5)}#`,
     apn:()=>`APN,${[input.apn,...(input.user||input.password?[input.user||'',input.password||'']:[])].join(',')}#`,
     server:()=>`SERVER,${/^\d{1,3}(\.\d{1,3}){3}$/.test(String(input.host))?0:1},${input.host},${input.port},0#`,
