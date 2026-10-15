@@ -36,7 +36,11 @@ export function buildPlan(device, options = {}) {
     const steps = [
       { command: 'VERSION#', label: 'Read firmware version' },
       { command: 'GMT,E,0,0#', label: 'Set time zone to UTC (fixes GPS times that come out hours off)' },
-      { command: `TIMER,${moving},${parked}#`, label: `Upload every ${moving} s moving, ${parked} s parked` },
+      // PT06 reads the parked value of TIMER in minutes (its TIMER:20,10 reports every 10 minutes when
+      // parked), so a value meant as seconds would silence it for an hour. Only read it there.
+      device.model === 'PT06'
+        ? { command: 'TIMER#', label: 'Read upload interval (PT06 units differ, so it is not changed automatically)' }
+        : { command: `TIMER,${moving},${parked}#`, label: `Upload every ${moving} s moving, ${parked} s parked` },
       { command: 'ACCREP,ON#', label: 'Report ignition changes immediately' },
       { command: 'GPRSON,1#', label: 'Keep mobile data on' },
       { command: 'STATUS#', label: 'Read status (signal, power, GPS)' },

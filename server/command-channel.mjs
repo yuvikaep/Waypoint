@@ -10,7 +10,8 @@ const fail=(status,message)=>{throw Object.assign(Error(message),{status});};
 const GT06_SECONDS='(?:[5-9]|[1-9]\\d{1,3}|1[0-7]\\d{3}|18000)';
 export const ALLOWED_COMMANDS=[
   /^(?:RESET|STATUS|PARAM|GPRSSET|VERSION|WHERE|TIMER|APN|SERVER|GPRSON|ACCREP)#$/,
-  new RegExp(`^TIMER,(?:0|${GT06_SECONDS}),${GT06_SECONDS}#$`),
+  // Parked value may be minutes on PT06, so 1-4 is allowed there.
+  new RegExp(`^TIMER,(?:0|${GT06_SECONDS}),(?:[1-4]|${GT06_SECONDS})#$`),
   /^ACCREP,(?:ON|OFF)#$/,/^GPRSON,[01]#$/,/^GMT,[EW],(?:\d|1[0-2]),(?:0|15|30|45)#$/,
   /^APN,[A-Za-z0-9._-]{1,40}(?:,[A-Za-z0-9._@-]{0,40},[A-Za-z0-9._@-]{0,40})?#$/,
   /^SERVER,[01],[A-Za-z0-9.-]{3,100},\d{2,5},[01]#$/,

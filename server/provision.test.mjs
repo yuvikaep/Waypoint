@@ -15,7 +15,8 @@ test('SIM operator and type pick the APN; bootstrap texts and plan match the tra
     ['APN,seller.apn.example,u,p#', 'SERVER,0,92.4.84.227,5023,0#', 'STATUS#']);
   assert.deepEqual(bootstrapSms({ model: 'FMB920' }, {}), []);
   const plan = buildPlan({ model: 'PT06' }, { moving: 10, parked: 60 });
-  assert.deepEqual(plan.map(s => s.command), ['VERSION#', 'GMT,E,0,0#', 'TIMER,10,60#', 'ACCREP,ON#', 'GPRSON,1#', 'STATUS#', 'PARAM#', 'RESET#']);
+  assert.deepEqual(plan.map(s => s.command), ['VERSION#', 'GMT,E,0,0#', 'TIMER#', 'ACCREP,ON#', 'GPRSON,1#', 'STATUS#', 'PARAM#', 'RESET#']);
+  assert.equal(buildPlan({ model: 'GT06' }, { moving: 10, parked: 60 })[2].command, 'TIMER,10,60#');
   for (const step of plan) assert.ok(commandAllowed(step.command), `${step.command} must be on the command channel allowlist`);
   assert.deepEqual(buildPlan({ model: 'Mobile' }), []);
   assert.throws(() => cleanSetup({ apn: 'bad apn;' }), /APN may contain/);
@@ -27,8 +28,8 @@ test('SIM operator and type pick the APN; bootstrap texts and plan match the tra
 test('automatic set-up sends one command at a time, waits for each reply, retries silence and restarts last', async t => {
   let now = Date.parse('2026-10-15T10:00:00Z');
   const store = new TrackingStore(':memory:', { now: () => now }); t.after(() => store.close());
-  const device = store.createDevice({ name: 'NEW PT06', model: 'PT06', uniqueId: '356218606437999', offlineSeconds: 600 }).device;
-  store.provisionReplace(device.id, buildPlan({ model: 'PT06' }, { moving: 10, parked: 60 }));
+  const device = store.createDevice({ name: 'NEW GT06', model: 'GT06', uniqueId: '356218606437999', offlineSeconds: 600 }).device;
+  store.provisionReplace(device.id, buildPlan({ model: 'GT06' }, { moving: 10, parked: 60 }));
   const sent = []; let silent = 'PARAM#';
   const bridge = { async sendText(d, text) { sent.push(text); return 'queued'; } };
   const reply = text => { // the tracker answers the newest waiting command
