@@ -199,6 +199,11 @@ function renderHealth(data:Detail){
   const gap=d.lastSeen?Math.round((Date.now()-d.lastSeen)/60000):null,limit=Math.round(d.offlineSeconds/60);
   const alarms=packets.filter(p=>extraOf(p).alarm).slice(0,3);
   const lastFix=packets.find(p=>p.valid!==0&&p.receivedAt-p.recordedAt<=90000);
+  // Clock check: how far behind the server a fresh location's GPS time is. A multiple of 30 minutes
+  // means the tracker's time zone is being applied twice; anything else means old stored data.
+  const locKinds=packetKinds(packets),lag=packets.filter(x=>locKinds.get(x.id)?.[0]==='Location').slice(0,15).map(x=>(x.receivedAt-x.recordedAt)/60000).sort((a,b)=>a-b);
+  const skew=lag.length?lag[lag.length>>1]:0,tzMismatch=skew>=25&&Math.abs(Math.round(skew/30)*30-skew)<=4;
+  const clockNote=!lag.length?'':skew<20?`<span class="chip ok plain">Clock OK</span>`:tzMismatch?`<span class="chip bad plain">GPS time is ${hm(Math.round(skew/30)*30)} behind</span><small>The tracker's time-zone setting is being applied twice. Set the tracker's time zone to UTC (usually <b class="mono">GMT,E,0,0#</b>; check the manual), then send <b class="mono">RESET#</b>.</small>`:`<span class="chip bad plain">${hm(Math.round(skew))} behind</span><small>The tracker is sending old stored positions, or its clock is wrong.</small>`;
   const events=data.power.events,lastEvent=events[0];
   const powerNow=data.power.connected==null?(charge?(charge.v?'Connected (charging)':'Cut — running on backup battery'):'<span class="muted">Not reported by this tracker</span>')
     :data.power.connected?`Connected${lastEvent&&lastEvent.connected?` since ${time(lastEvent.at)}`:''}`:`<b style="color:var(--stopped)">CUT since ${lastEvent?time(lastEvent.at):'—'}</b> · running on backup battery${lastEvent?` (${hm(Math.round((Date.now()-lastEvent.at)/60000))})`:''}`;
@@ -210,6 +215,7 @@ function renderHealth(data:Detail){
         <dt>GSM signal</dt><dd>${rssi?`${SIGNAL[Math.min(4,Math.max(0,Number(rssi.v)))]||rssi.v} (${rssi.v}/4)`:na}</dd>
         <dt>Last packet</dt><dd>${ago(d.lastSeen)}<small>${time(d.lastSeen)}</small></dd>
         <dt>Heartbeats (last hour)</dt><dd>${hbHour}</dd>
+        ${clockNote?`<dt>GPS clock</dt><dd>${clockNote}</dd>`:''}
         <dt>Timeout setting</dt><dd>${limit} min${gap!=null&&gap>limit?` <span class="chip bad plain">missed ${Math.max(1,Math.floor(gap/Math.max(1,limit)))}×</span>`:''}</dd></dl></div>
       <div><h3>Power</h3><dl class="facts">
         <dt>Vehicle power</dt><dd>${powerNow}</dd>
