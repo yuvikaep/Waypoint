@@ -37,7 +37,8 @@ export class PostgresTrackingStore {
     email=text(email,'Admin email',254).toLowerCase();
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail(400,'Enter a valid admin email.');
     const password=token(),salt=randomBytes(16).toString('hex');
-    (await this.db.prepare('INSERT INTO admins(email,salt,passwordHash,createdAt) VALUES (?,?,?,?)').run(email,salt,scryptSync(password,salt,64).toString('hex'),this.now()));
+    try{(await this.db.prepare('INSERT INTO admins(email,salt,passwordHash,createdAt) VALUES (?,?,?,?)').run(email,salt,scryptSync(password,salt,64).toString('hex'),this.now()));}
+    catch(e){if(e.code==='23505')fail(409,'An admin with this email already exists.');throw e;}
     return {email,password};
   }
   async adminLogin(email,password){

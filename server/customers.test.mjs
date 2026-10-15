@@ -117,6 +117,13 @@ test('users change their own password; a maintenance-key reset gives the admin a
   // A session opened with the maintenance key has no email, so it cannot use the password form.
   const keyCookie=cookieOf(await post('/session',{token:adminKey}));
   assert.equal((await post('/account/password',{currentPassword:'x',newPassword:'another-long-password-1'},keyCookie)).status,400);
+  // Create another admin with the maintenance key; the random password works and a duplicate is refused.
+  assert.equal((await post('/admin/create',{token:'not-the-maintenance-key-at-all-1',email:'new@example.test'})).status,401);
+  const created=await post('/admin/create',{token:adminKey,email:'New@Example.test'});assert.equal(created.status,201);
+  const made=await created.json();assert.equal(made.email,'new@example.test');
+  assert.equal((await post('/admin/session',{email:'new@example.test',password:made.password})).status,200);
+  assert.equal((await post('/admin/create',{token:adminKey,email:'new@example.test'})).status,409);
+  assert.equal((await post('/admin/create',{token:adminKey,email:'not-an-email'})).status,400);
   // Several admins: the email is required.
   store.createAdmin('second@example.test');
   assert.equal((await post('/admin/reset-password',{token:adminKey})).status,409);

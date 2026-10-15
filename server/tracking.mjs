@@ -67,6 +67,13 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
         res.setHeader('Set-Cookie',`waypoint_session=${session}; HttpOnly; SameSite=Strict; Path=/api/gps; Max-Age=43200${publicOrigin?.startsWith('https:')?'; Secure':''}`);
         return json(res,200,{ok:true});
       }
+      if(path==='/api/gps/admin/create'&&method==='POST'){
+        // Recovery/bootstrap only: needs the server maintenance key. The password is random and shown once.
+        await limited(`login:${clientAddress}`,10);
+        const input=await body(req);
+        if(typeof input.token!=='string'||hash(input.token)!==hash(adminToken))fail(401,'Incorrect workspace access key.');
+        return json(res,201,await store.createAdmin(input.email));
+      }
       if(path==='/api/gps/admin/reset-password'&&method==='POST'){
         // Recovery only: the server maintenance key already grants full admin access.
         await limited(`login:${clientAddress}`,10);
