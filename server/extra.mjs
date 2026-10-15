@@ -36,3 +36,27 @@ export function powerTimeline(rows, limit = 10) {
 // around the limit would otherwise alert on every fix, so a repeat waits a few minutes.
 export const SPEED_REPEAT = 3 * 60000;
 export const overspeed = (device, speed, previous) => Number(device.speedAlert ?? 1) !== 0 && speed > device.speedLimit && (!previous || previous.speed <= device.speedLimit);
+
+// Tracker alarms split into the alerts customers act on differently. SOS and harsh driving get their
+// own types (and voice); a held SOS button or a repeating alarm is reported once per window.
+const OWN_TYPE = { sos: ['sos', 'SOS button pressed'], hardBraking: ['harsh_brake', 'Hard braking (reported by tracker)'],
+  hardAcceleration: ['harsh', 'Hard acceleration'], hardCornering: ['harsh', 'Sharp turn at speed'] };
+export const REPEAT = { sos: 2 * 60000, harsh_brake: 60000, harsh: 60000, alarm: 30 * 60000 };
+ALARMS.hardBraking = 'Hard braking'; ALARMS.hardAcceleration = 'Hard acceleration'; ALARMS.hardCornering = 'Sharp turn at speed';
+export function alarmAlerts(code) {
+  const codes = [...new Set(String(code).split(',').map(c => c.trim()).filter(Boolean))];
+  const out = codes.filter(c => OWN_TYPE[c]).map(c => ({ type: OWN_TYPE[c][0], message: OWN_TYPE[c][1] }));
+  const rest = codes.filter(c => !OWN_TYPE[c]);
+  if (rest.length) out.push({ type: 'alarm', message: alarmText(rest.join(',')) });
+  return out;
+}
+// Hard braking worked out from GPS speed, for trackers without a motion sensor. Only fixes a few
+// seconds apart can show it; the average slowdown must reach 7 km/h every second (about 0.2 g)
+// from at least 20 km/h, which ordinary stopping does not.
+export function hardBrake(previous, speed, recordedAt) {
+  if (!previous || previous.valid === 0) return null;
+  const seconds = (recordedAt - previous.recordedAt) / 1000;
+  if (seconds < 1 || seconds > 15 || previous.speed < 20) return null;
+  if ((previous.speed - speed) / seconds < 7) return null;
+  return `Hard braking: ${Math.round(previous.speed)} → ${Math.round(speed)} km/h in ${Math.round(seconds)} s.`;
+}

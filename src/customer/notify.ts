@@ -1,18 +1,20 @@
 import {toast,type Alert} from '../shared/core';
 
 // Alert categories shown separately in the Alerts page and switchable in Settings.
-export type Category='ignition'|'geofence'|'speed'|'connection'|'tracker';
+export type Category='sos'|'ignition'|'geofence'|'speed'|'driving'|'connection'|'tracker';
 export const CATEGORIES:{key:Category;label:string;hint:string;icon:string;color:string}[]=[
+  {key:'sos',label:'SOS',hint:'Emergency button pressed in the vehicle',icon:'siren',color:'var(--stopped)'},
   {key:'ignition',label:'Ignition',hint:'Engine started / engine off',icon:'power',color:'var(--running)'},
   {key:'geofence',label:'Geofence',hint:'Vehicle entered or left a place',icon:'map-pin',color:'var(--blue-600)'},
   {key:'speed',label:'Overspeed',hint:'Vehicle crossed its speed limit',icon:'gauge',color:'var(--stopped)'},
+  {key:'driving',label:'Hard braking',hint:'Sudden braking, hard acceleration, sharp turns',icon:'octagon-alert',color:'var(--idle)'},
   {key:'connection',label:'Signal',hint:'Tracker signal lost or restored',icon:'wifi-off',color:'var(--offline)'},
-  {key:'tracker',label:'Vehicle alarms',hint:'Power cut, tampering, SOS',icon:'triangle-alert',color:'var(--idle)'},
+  {key:'tracker',label:'Vehicle alarms',hint:'Power cut, tampering, vibration',icon:'triangle-alert',color:'var(--idle)'},
 ];
-export const categoryOf=(type:string):Category=>type==='ignition_on'||type==='ignition_off'?'ignition':type==='enter'||type==='exit'?'geofence':type==='speed'?'speed':type==='offline'||type==='online'?'connection':'tracker';
+export const categoryOf=(type:string):Category=>type==='sos'?'sos':type==='harsh_brake'||type==='harsh'?'driving':type==='ignition_on'||type==='ignition_off'?'ignition':type==='enter'||type==='exit'?'geofence':type==='speed'?'speed':type==='offline'||type==='online'?'connection':'tracker';
 
 export type NotifyPrefs={popup:boolean;voice:boolean;browser:boolean;categories:Record<Category,boolean>};
-export const defaultNotify=():NotifyPrefs=>({popup:true,voice:true,browser:false,categories:{ignition:true,geofence:true,speed:true,connection:true,tracker:true}});
+export const defaultNotify=():NotifyPrefs=>({popup:true,voice:true,browser:false,categories:{sos:true,ignition:true,geofence:true,speed:true,driving:true,connection:true,tracker:true}});
 export function mergeNotify(saved:Partial<NotifyPrefs>|undefined):NotifyPrefs{
   const d=defaultNotify();
   return {popup:saved?.popup??d.popup,voice:saved?.voice??d.voice,browser:saved?.browser??d.browser,categories:{...d.categories,...(saved?.categories||{})}};
@@ -27,6 +29,9 @@ export function alertWords(a:Alert){
     case 'enter':return {title:'Entered geofence',text:`${name} ${a.message.replace(/\.$/,'').replace(/^Entered/,'entered')}`};
     case 'exit':return {title:'Left geofence',text:`${name} ${a.message.replace(/\.$/,'').replace(/^Left/,'left')}`};
     case 'speed':{const [now,limit]=[...a.message.matchAll(/(\d+) km\/h/g)].map(m=>m[1]);return {title:'Overspeed',text:now?`Vehicle ${name} overspeeding, ${now} kilometre per hour. Limit ${limit}`:`Vehicle ${name} is overspeeding`}}
+    case 'sos':return {title:'SOS emergency',text:`Emergency! SOS from vehicle ${name}`};
+    case 'harsh_brake':return {title:'Hard braking',text:`Vehicle ${name} hard braking`};
+    case 'harsh':return {title:'Harsh driving',text:`Vehicle ${name}. ${a.message.replace(/\.$/,'')}`};
     case 'offline':return {title:'Signal lost',text:`${name} signal lost`};
     case 'online':return {title:'Signal restored',text:`${name} signal restored`};
     default:return {title:'Vehicle alarm',text:`${name}. ${a.message.replace(/\.$/,'')}`};
@@ -67,11 +72,13 @@ export function announceNew(alerts:Alert[],prefs:NotifyPrefs){
   for(const a of alerts)seen.add(a.id);
   for(const a of fresh){
     if(!prefs.categories[categoryOf(a.type)])continue;
-    const {title,text}=alertWords(a);
-    if(prefs.popup)toast(`${title}: ${text}`);
-    if(prefs.voice)speak(text);
-    if(prefs.browser&&browserState()==='granted'&&document.hidden){
-      try{new Notification(title,{body:text,tag:a.id,icon:'/favicon.ico'})}catch{/* some mobile browsers need a service worker */}
+    const {title,text}=alertWords(a),sos=a.type==='sos';
+    if(prefs.popup)toast(`${title}: ${text}`,sos);
+    // An SOS is said twice so it is not missed.
+    if(prefs.voice)speak(sos?`${text}. ${text}`:text);
+    // SOS also notifies while the app is in front, and stays until it is dismissed.
+    if(prefs.browser&&browserState()==='granted'&&(document.hidden||sos)){
+      try{new Notification(title,{body:text,tag:a.id,icon:'/favicon.ico',requireInteraction:sos})}catch{/* some mobile browsers need a service worker */}
     }
   }
 }

@@ -1,6 +1,7 @@
 import {$,$$,api,post,brand,chip,clock,closeModal,coords,esc,hm,i,icons,localInput,mapsLink,modal,on,since,STATUS_LABEL,statusLine,statusOf,time,ago,toast,whenUnauthorized,type Alert,type Fence,type Fix,type Identity,type StatusKey,type Vehicle} from '../shared/core';
 import {bearing,createMap,drawRoute,playbackIcon,point,truckIcon,truckTag,L} from '../shared/map';
 import {placeSpan,places,placeKey} from '../shared/places';
+import {nearest,nearText} from '../shared/poi';
 import {DEMO_MODE,workspaceStorage} from '../demo';
 import {showLogin} from '../auth';
 import {CATEGORIES,alertWords,announceNew,askBrowserPermission,browserState,browserSupported,categoryOf,mergeNotify,primeSeen,speak,unlockVoice,voiceSupported,type Category,type NotifyPrefs} from './notify';
@@ -84,6 +85,8 @@ async function logout(){if(!DEMO_MODE)await api('/session',{method:'DELETE'}).ca
 /* ---------- Live map ---------- */
 let map:L.Map|undefined,markers:L.LayerGroup|undefined,fences:L.LayerGroup|undefined;
 const todayKm=new globalThis.Map<string,{at:number;km:number|null}>();
+// "Near Indian Oil petrol pump · 120 m" for each position shown in the vehicle sheet.
+const nearCache=new globalThis.Map<string,string>();
 function renderLive(){
   $('#view').innerHTML=`<div class="live" id="live">
     <section class="live-panel" id="panel"><div class="grabber" id="grabber"></div>
@@ -134,7 +137,8 @@ function updateLive(){
       .on('click',()=>select(d.id));
   }
   fences!.clearLayers();
-  for(const f of fleet.fences)L.circle(point(f),{radius:f.radius,color:'#7c5cc4',weight:2,fillOpacity:.07}).bindTooltip(f.name).addTo(fences!);
+  // The customer's own places stay labelled, so depots and regular stops are always recognisable.
+  for(const f of fleet.fences)L.circle(point(f),{radius:f.radius,color:'#7c5cc4',weight:2,fillOpacity:.07}).bindTooltip(f.name,{permanent:true,direction:'center',className:'fence-label'}).addTo(fences!);
   if(!fitted&&list.some(d=>d.position)&&!selected){fit();fitted=true}
   const v=vehicle(selected);
   renderSheet();icons();
@@ -153,9 +157,10 @@ function renderSheet(){
   const d=vehicle(selected);if(!d){el.hidden=true;return}
   const p=d.position,km=todayKm.get(d.id);
   if(!km||Date.now()-km.at>60000)void loadTodayKm(d.id);
+  if(p&&!nearCache.has(placeKey(p))){const key=placeKey(p);nearCache.set(key,'');void nearest(p.latitude,p.longitude).then(n=>{if(n){nearCache.set(key,nearText(n));if(selected===d.id)renderSheet()}})}
   el.hidden=false;
   el.innerHTML=`<div class="head"><div><h2>${esc(d.name)}</h2>${d.driver?`<span class="small muted">${i('user-round')} ${esc(d.driver)}</span>`:''}</div><div style="display:flex;gap:8px;align-items:center">${chip(d)}<button class="icon-btn" id="close-sheet" aria-label="Close">${i('x')}</button></div></div>
-    <div><div class="place">${i('map-pin')}${placeSpan(p,d.id)}</div><div class="since">${esc(statusLine(d))}</div></div>
+    <div><div class="place">${i('map-pin')}${placeSpan(p,d.id)}</div>${p&&nearCache.get(placeKey(p))?`<div class="since near">${i('landmark')}${esc(nearCache.get(placeKey(p))!)}</div>`:''}<div class="since">${esc(statusLine(d))}</div></div>
     <div class="stats"><div><span>Speed</span><b${p&&d.fresh&&p.speed>d.speedLimit?' style="color:var(--stopped)"':''}>${p&&d.fresh?Math.round(p.speed):0} km/h</b></div><div><span>Ignition</span><b>${d.ignition==null?'—':d.ignition?'On':'Off'}</b></div><div><span>Today</span><b>${km?.km==null?'…':`${km.km} km`}</b></div><div><span>Updated</span><b>${ago(p?.recordedAt??d.lastSeen)}</b></div></div>
     <div class="acts"><button class="btn btn-primary btn-sm" id="sheet-history">${i('route')}History</button>${p?`<a class="btn btn-ghost btn-sm" href="${mapsLink(p)}" target="_blank" rel="noopener">${i('external-link')}Google Maps</a><button class="btn btn-ghost btn-sm" id="sheet-share">${i('share-2')}Share</button>`:''}<button class="btn btn-ghost btn-sm" id="sheet-speed">${i('gauge')}Limit ${d.speedLimit} km/h${d.speedAlert===false?' · off':''}</button>${d.isMobile?`<button class="btn btn-ghost btn-sm" id="sheet-driver">${i('smartphone')}Driver link</button>`:''}</div>`;
   on('#close-sheet',()=>{selected='';$('#live').classList.remove('sheet-open');updateLive()},el);
@@ -306,7 +311,7 @@ function renderAlerts(){
   const style=(t:string)=>{const c=CATEGORIES.find(x=>x.key===categoryOf(t))!;const ic=t==='ignition_on'?'power':t==='ignition_off'?'power':t==='online'?'activity':c.icon;const on=t==='ignition_on'||t==='online';return {ic,color:on?'var(--running)':t==='ignition_off'?'var(--stopped)':c.color}};
   $('#view').innerHTML=`<div class="page"><div class="filters" id="cats"><button data-cat="all" class="${alertsCat==='all'?'on':''}">All <b>${open('all')}</b></button>${CATEGORIES.map(c=>`<button data-cat="${c.key}" class="${alertsCat===c.key?'on':''}">${esc(c.label)} <b>${open(c.key)}</b></button>`).join('')}</div>
     <div class="toolbar"><div class="seg"><button data-all="0" class="${alertsAll?'':'on'}">Open</button><button data-all="1" class="${alertsAll?'on':''}">All</button></div><span style="flex:1"></span>${open(alertsCat)?`<button class="btn btn-ghost btn-sm" id="ack-all">${i('check')}Mark all seen</button>`:''}<button class="btn btn-ghost btn-sm" data-go="settings">${i('settings')}Notification settings</button></div>
-    <div class="card">${list.map(a=>{const st=style(a.type);return `<div class="alert-item ${a.acknowledged?'done':''}"><span class="ico" style="background:var(--soft);color:${st.color}">${i(st.ic)}</span><div class="body"><b>${esc(a.deviceName)}</b><p>${esc(alertText(a))}</p><span class="small muted">${esc(CATEGORIES.find(c=>c.key===categoryOf(a.type))!.label)} · ${time(a.createdAt)}</span></div>${a.acknowledged?`<span class="chip plain ok">${i('check')}Seen</span>`:`<button class="btn btn-ghost btn-sm" data-ack="${a.id}">Mark seen</button>`}</div>`}).join('')||`<div class="empty">${i('bell')}<h3>All clear</h3><p>${alertsCat==='all'?'Engine, geofence, overspeed and signal alerts appear here.':'Nothing in this category.'}</p></div>`}</div></div>`;
+    <div class="card">${list.map(a=>{const st=style(a.type);return `<div class="alert-item ${a.acknowledged?'done':''}"><span class="ico" style="background:var(--soft);color:${st.color}">${i(st.ic)}</span><div class="body"><b>${esc(a.deviceName)}</b><p>${esc(alertText(a))}</p><span class="small muted">${esc(CATEGORIES.find(c=>c.key===categoryOf(a.type))!.label)} · ${time(a.createdAt)}</span></div>${a.acknowledged?`<span class="chip plain ok">${i('check')}Seen</span>`:`<button class="btn btn-ghost btn-sm" data-ack="${a.id}">Mark seen</button>`}</div>`}).join('')||`<div class="empty">${i('bell')}<h3>All clear</h3><p>${alertsCat==='all'?'SOS, engine, geofence, overspeed, hard braking and signal alerts appear here.':'Nothing in this category.'}</p></div>`}</div></div>`;
   on('[data-cat]',el=>{alertsCat=el.dataset.cat as Category|'all';renderAlerts()});
   on('[data-all]',el=>{alertsAll=el.dataset.all==='1';renderAlerts()});
   on('#view [data-go]',el=>go(el.dataset.go as View));

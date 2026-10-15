@@ -41,7 +41,7 @@ test('geofences emit transitions and speeding alerts do not repeat for every fix
   store.addFence({name:'Depot',latitude:18.52,longitude:73.85,radius:200});
   store.ingest(device.id,position());advance(1000);
   store.ingest(device.id,position({eventId:'outside',latitude:18.55,speed:90}));advance(1000);
-  store.ingest(device.id,position({eventId:'outside-again',latitude:18.56,speed:95}));advance(1000);
+  store.ingest(device.id,position({eventId:'outside-again',latitude:18.56,speed:95}));advance(30000);
   store.ingest(device.id,position({eventId:'inside',speed:0}));
   assert.deepEqual(store.alerts().map(a=>a.type).sort(),['enter','exit','speed']);
   store.acknowledge(store.alerts()[0].id);assert.equal(store.alerts()[0].acknowledged,1);
@@ -345,4 +345,18 @@ test('overspeed alerts follow the owner limit, repeat only after a pause and can
   advance(4*60000);drive(30);drive(50);assert.equal(count(),2);
   store.updateDevice(device.id,{speedAlert:false});
   advance(4*60000);drive(30);drive(60);assert.equal(count(),2,'switched off by the owner');
+});
+
+test('hard braking from GPS speed and tracker SOS / harsh alarms get their own alerts',t=>{
+  const {store,device,position,advance}=fixture(t);
+  let n=0;const fix=(speed,gap,extra)=>{advance(gap);store.ingest(device.id,position({eventId:`b${n++}`,recordedAt:new Date(store.now()).toISOString(),speed,...(extra?{extra}:{})}))};
+  const of=type=>store.alerts().filter(a=>a.type===type);
+  fix(50,10000);fix(30,10000);assert.equal(of('harsh_brake').length,0,'20 km/h less over 10 s is normal braking');
+  fix(60,10000);fix(20,3000);assert.equal(of('harsh_brake').length,1);
+  assert.match(of('harsh_brake')[0].message,/60 → 20 km\/h in 3 s/);
+  fix(15,40000);fix(0,60000);assert.equal(of('harsh_brake').length,1,'slow speeds or long gaps never count');
+  fix(0,5000,{alarm:'sos'});fix(0,5000,{alarm:'sos'});
+  assert.equal(of('sos').length,1,'a held SOS button is reported once');
+  fix(0,5000,{alarm:'hardBraking,powerCut'});
+  assert.equal(of('harsh_brake').length,2);assert.equal(of('alarm')[0].message,'Main power cut');
 });

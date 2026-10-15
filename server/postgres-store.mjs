@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { PgAdapter } from './pg-adapter.mjs';
-import { cleanExtra, alarmText, overspeed, SPEED_REPEAT } from './extra.mjs';
+import { cleanExtra, alarmAlerts, hardBrake, overspeed, REPEAT, SPEED_REPEAT } from './extra.mjs';
 import { cleanSetup } from './provision.mjs';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 
@@ -271,6 +271,8 @@ export class PostgresTrackingStore {
       if (heartbeat) (await this.seen(id, receivedAt));
       if (inserted && valid && (!previous || recordedAt > previous.recordedAt)) {
         if (overspeed(device,speed,previous) && !(await this.db.prepare("SELECT id FROM alerts WHERE deviceId=? AND type='speed' AND createdAt>?").get(id,recordedAt-SPEED_REPEAT))) (await this.alert(id,'speed',`Speed ${Math.round(speed)} km/h exceeds ${device.speedLimit} km/h.`,recordedAt));
+        const braking = hardBrake(previous, speed, recordedAt);
+        if (braking && !(await this.db.prepare("SELECT id FROM alerts WHERE deviceId=? AND type='harsh_brake' AND createdAt>?").get(id, recordedAt - REPEAT.harsh_brake))) (await this.alert(id,'harsh_brake',braking,recordedAt));
         for (const fence of (await this.fences(device.tenantId))) {
           const inside = Number(distance({latitude,longitude},fence) <= fence.radius);
           const old = (await this.db.prepare('SELECT inside FROM fence_state WHERE deviceId=? AND fenceId=?').get(id,fence.id));
@@ -285,10 +287,8 @@ export class PostgresTrackingStore {
       if (inserted && lastIgnition && receivedAt >= Number(lastIgnition.receivedAt) && Number(lastIgnition.ignition) !== values[2])
         (await this.alert(id, values[2] ? 'ignition_on' : 'ignition_off', values[2] ? 'Engine started.' : 'Engine stopped.', Math.min(receivedAt, this.now())));
       // The same tracker alarm repeats in consecutive packets; one alert per half hour is enough.
-      if (inserted && info.alarm) {
-        const message = alarmText(info.alarm);
-        if (!(await this.db.prepare("SELECT id FROM alerts WHERE deviceId=? AND type='alarm' AND message=? AND createdAt>=?").get(id, message, receivedAt - 1800000))) (await this.alert(id,'alarm',message,receivedAt));
-      }
+      if (inserted && info.alarm) for (const { type, message } of alarmAlerts(info.alarm))
+        if (!(await this.db.prepare('SELECT id FROM alerts WHERE deviceId=? AND type=? AND message=? AND createdAt>=?').get(id, type, message, receivedAt - REPEAT[type]))) (await this.alert(id,type,message,receivedAt));
       // A tracker's text reply belongs to the newest command still waiting within half an hour.
       if (inserted && typeof info.result === 'string') {
         const waiting = (await this.db.prepare("SELECT id,detail FROM commands WHERE deviceId=? AND status IN ('sent','queued','dispatching') AND detail LIKE 'CMD %' AND createdAt>=? ORDER BY createdAt DESC LIMIT 1").get(id,receivedAt-1800000));

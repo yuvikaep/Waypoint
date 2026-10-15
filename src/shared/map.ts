@@ -2,6 +2,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {coords,statusOf,type Fix,type Vehicle} from './core';
 import {placeText,shortPlace} from './places';
+import {landmarkLayer} from './poi';
 
 export type Point={latitude:number;longitude:number};
 export const point=(p:Point):L.LatLngTuple=>[p.latitude,p.longitude];
@@ -10,6 +11,8 @@ export function createMap(el:HTMLElement,center:L.LatLngTuple=[22.5,79],zoom=5){
   const map=L.map(el,{zoomControl:false,attributionControl:true}).setView(center,zoom);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',maxZoom:19}).addTo(map);
   L.control.zoom({position:'bottomright'}).addTo(map);
+  // Petrol pumps, dhabas, temples and other landmarks with their names, once zoomed in.
+  landmarkLayer(map);
   return map;
 }
 

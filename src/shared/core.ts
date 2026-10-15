@@ -1,4 +1,4 @@
-import {createIcons,Navigation,Map,Truck,Route,Bell,FileText,Files,Settings,LogOut,Search,X,ChevronRight,ChevronLeft,MapPin,Clock,Gauge,KeyRound,Power,Plus,Trash2,Pencil,Users,RadioTower,Server,ShieldCheck,Copy,Share2,Play,Pause,Download,Calendar,ChartColumn,Ellipsis,LocateFixed,Scan,UserRound,ExternalLink,Smartphone,TriangleAlert,Activity,WifiOff,Check,CircleParking,Menu,Save,Timer,Milestone,Battery,Satellite,Eye,RefreshCw,Info,House} from 'lucide';
+import {createIcons,Navigation,Map,Truck,Route,Bell,FileText,Files,Settings,LogOut,Search,X,ChevronRight,ChevronLeft,MapPin,Clock,Gauge,KeyRound,Power,Plus,Trash2,Pencil,Users,RadioTower,Server,ShieldCheck,Copy,Share2,Play,Pause,Download,Calendar,ChartColumn,Ellipsis,LocateFixed,Scan,UserRound,ExternalLink,Smartphone,TriangleAlert,Activity,WifiOff,Check,CircleParking,Menu,Save,Timer,Milestone,Battery,Satellite,Eye,RefreshCw,Info,House,Landmark,Siren,OctagonAlert} from 'lucide';
 import {DEMO_MODE,demoRequest} from '../demo';
 import './theme.css';
 
@@ -8,7 +8,7 @@ export type Fence={id:string;name:string;latitude:number;longitude:number;radius
 export type Alert={id:string;deviceId:string;deviceName:string;type:string;message:string;createdAt:number;acknowledged:number};
 export type Identity={role:'admin'|'customer';tenantId:string;name:string;email:string|null};
 
-const iconSet={Navigation,Map,Truck,Route,Bell,FileText,Files,Settings,LogOut,Search,X,ChevronRight,ChevronLeft,MapPin,Clock,Gauge,KeyRound,Power,Plus,Trash2,Pencil,Users,RadioTower,Server,ShieldCheck,Copy,Share2,Play,Pause,Download,Calendar,ChartColumn,Ellipsis,LocateFixed,Scan,UserRound,ExternalLink,Smartphone,TriangleAlert,Activity,WifiOff,Check,CircleParking,Menu,Save,Timer,Milestone,Battery,Satellite,Eye,RefreshCw,Info,House};
+const iconSet={Navigation,Map,Truck,Route,Bell,FileText,Files,Settings,LogOut,Search,X,ChevronRight,ChevronLeft,MapPin,Clock,Gauge,KeyRound,Power,Plus,Trash2,Pencil,Users,RadioTower,Server,ShieldCheck,Copy,Share2,Play,Pause,Download,Calendar,ChartColumn,Ellipsis,LocateFixed,Scan,UserRound,ExternalLink,Smartphone,TriangleAlert,Activity,WifiOff,Check,CircleParking,Menu,Save,Timer,Milestone,Battery,Satellite,Eye,RefreshCw,Info,House,Landmark,Siren,OctagonAlert};
 export const i=(name:string)=>`<i data-lucide="${name}"></i>`;
 export const icons=()=>createIcons({icons:iconSet});
 export const esc=(value:unknown)=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
