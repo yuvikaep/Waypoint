@@ -1,286 +1,340 @@
-import {$,$$,api,post,chip,clock,closeModal,coords,esc,hm,i,icons,localInput,mapsLink,modal,on,since,statusLabel,statusLine,statusOf,time,ago,toast,whenUnauthorized,type Alert,type Fence,type Fix,type Identity,type StatusKey,type Vehicle} from '../shared/core';
+import {$,$$,api,post,clock,closeModal,coords,esc,hm,i,icons,localInput,mapsLink,modal,on,since,statusLabel,statusOf,time,ago,toast,whenUnauthorized,type Alert,type Fence,type Fix,type Identity,type StatusKey,type Vehicle} from '../shared/core';
 import {bearing,createMap,drawRoute,fleetIcon,playbackIcon,point,L} from '../shared/map';
 import {placeSpan,places,placeKey} from '../shared/places';
 import {nearest,nearText,nearSaved,placeIcon,PLACE_KIND} from '../shared/poi';
 import {googleModal} from '../shared/google';
-import {googleLive,type GoogleLive} from '../shared/gview';
+import {googleLive} from '../shared/gview';
 import {t,getLang,setLang,locale,LANGS,type Lang} from '../shared/i18n';
 import {DEMO_MODE,workspaceStorage} from '../demo';
 import {showLogin} from '../auth';
 import {CATEGORIES,alertText,announceNew,askBrowserPermission,browserState,browserSupported,categoryOf,mergeNotify,primeSeen,speakAlert,unlockVoice,voiceSupported,type Category,type NotifyPrefs} from './notify';
+import './customer.css';
 
-type View='map'|'vehicles'|'history'|'reports'|'alerts'|'geofences'|'documents'|'ebills'|'settings'|'more';
+// One clean structure: Home (fleet), Map, Alerts and More on phones; a grouped sidebar on desktop.
+// A vehicle is its own page (map on top, details below) reached from anywhere and left with Back.
+type View='home'|'map'|'vehicle'|'history'|'reports'|'alerts'|'geofences'|'documents'|'ebills'|'settings'|'more';
 type Fleet={devices:Vehicle[];fences:Fence[];alerts:Alert[]};
 type Gap={from:number;to:number;minutes:number;movedKm:number|null};
 type DayReport={date:string;distanceKm:number;runningMinutes:number;idleMinutes:number;ignitionMinutes:number;maxSpeed:number;avgSpeed:number;firstMove:number|null;lastMove:number|null;gaps:Gap[]};
 type VehicleReport={id:string;name:string;total:{distanceKm:number;runningMinutes:number;idleMinutes:number;maxSpeed:number;avgSpeed:number;gapMinutes:number};days:DayReport[]};
+type Prefs={name:string;workspace:string;follow:boolean;defaultView:View;notify?:Partial<NotifyPrefs>};
+const APP_VERSION='3.0';
+
 // Distance is only what the tracker reported. When it went silent, say so instead of guessing.
 const gapNote=(g:Gap)=>`${t('Tracker sent no data {a} – {b} ({d})',{a:clock(g.from),b:clock(g.to),d:hm(g.minutes)})}${g.movedKm?` · ${t('moved {n} km in this time',{n:g.movedKm})}`:''} · ${t('km in this period is not recorded')}`;
-type Prefs={name:string;workspace:string;follow:boolean;defaultView:View;notify?:Partial<NotifyPrefs>};
-const notifyPrefs=():NotifyPrefs=>mergeNotify(prefs().notify);
-async function saveNotify(next:NotifyPrefs){await workspaceStorage.setItem('workspace-preferences',JSON.stringify({...prefs(),notify:next}))}
-const APP_VERSION='2.0';
-
-// Menu in plain groups: what you watch, what tells you something, what you look after, your account.
-const GROUPS:[string,[View,string,string][]][]=[
-  ['Tracking',[['vehicles','My vehicles','truck'],['map','Live map','map'],['history','Route history','route']]],
+const TITLES:Record<View,string>={home:'My vehicles',map:'Live map',vehicle:'Vehicle',history:'Route history',reports:'Reports',alerts:'Alerts',geofences:'Places',documents:'Documents',ebills:'E-way bills',settings:'Settings',more:'More'};
+const TABS:[View,string,string][]=[['home','Home','house'],['map','Map','map'],['alerts','Alerts','bell'],['more','More','layout-grid']];
+const SIDE:[string,[View,string,string][]][]=[
+  ['Fleet',[['home','My vehicles','truck'],['history','Route history','route']]],
   ['Alerts & reports',[['alerts','Alerts','bell'],['reports','Reports','chart-column']]],
   ['Manage',[['geofences','Places','map-pin'],['documents','Documents','files'],['ebills','E-way bills','file-text']]],
   ['Account',[['settings','Settings','settings']]],
 ];
-const NAV=GROUPS.flatMap(([,items])=>items);
-const HINTS:Partial<Record<View,string>>={alerts:'Engine, SOS, overspeed, signal',reports:'Distance, running and idle time',geofences:'Petrol pumps, dhabas, depots',documents:'RC, insurance, permits',ebills:'E-way bills for your trips',settings:'Notifications, overspeed, language, password'};
-const TABS:[View,string,string][]=[['vehicles','Vehicles','truck'],['map','Map','map'],['history','History','route'],['alerts','Alerts','bell'],['more','Menu','menu']];
-const ROOT:View[]=['map','vehicles','history','alerts','more'];
-const TITLES:Record<View,string>={map:'Live map',vehicles:'My vehicles',history:'Route history',reports:'Reports',alerts:'Alerts',geofences:'Places',documents:'Documents',ebills:'E-way bills',settings:'Settings',more:'Menu'};
+const MORE:[string,[View,string,string,string][]][]=[
+  ['Trips & reports',[['history','Route history','route','Replay any day on the map'],['reports','Reports','chart-column','Distance, running and idle time']]],
+  ['Places & papers',[['geofences','Places','map-pin','Petrol pumps, dhabas, depots'],['documents','Documents','files','RC, insurance, permits'],['ebills','E-way bills','file-text','E-way bills for your trips']]],
+  ['Account',[['settings','Settings','settings','Notifications, overspeed, language, password']]],
+];
+const ROOT:View[]=['home','map','alerts','more'];
+const PAGES:View[]=['home','map','vehicle','history','reports','alerts','geofences','documents','ebills','settings','more'];
 
-let me:Identity,fleet:Fleet={devices:[],fences:[],alerts:[]},view:View='vehicles',selected='',filter:StatusKey|'all'='all',search='',following=false,fitted=false;
-let poll:ReturnType<typeof setTimeout>|undefined,teardown:(()=>void)|undefined;
+let me:Identity,fleet:Fleet={devices:[],fences:[],alerts:[]},view:View='home',vehicleId='',filter:'all'|'running'|'stopped'|'offline'='all',search='',following=true;
+let poll:ReturnType<typeof setTimeout>|undefined,teardown:(()=>void)|undefined,onRefresh:(()=>void)|undefined;
 
 function prefs():Prefs{
-  const defaults:Prefs={name:me?.name||'',workspace:t('My fleet'),follow:false,defaultView:'vehicles'};
-  try{const saved=JSON.parse(workspaceStorage.getItem('workspace-preferences')||'{}');return {...defaults,...saved,defaultView:NAV.some(([v])=>v===saved.defaultView)?saved.defaultView:'vehicles'}}catch{return defaults}
+  const defaults:Prefs={name:me?.name||'',workspace:t('My fleet'),follow:true,defaultView:'home'};
+  try{const saved=JSON.parse(workspaceStorage.getItem('workspace-preferences')||'{}');const dv=saved.defaultView==='vehicles'?'home':saved.defaultView;return {...defaults,...saved,defaultView:['home','map','alerts'].includes(dv)?dv:'home'}}catch{return defaults}
 }
+async function savePrefs(change:Partial<Prefs>){await workspaceStorage.setItem('workspace-preferences',JSON.stringify({...prefs(),...change}))}
+const notifyPrefs=():NotifyPrefs=>mergeNotify(prefs().notify);
+async function saveNotify(next:NotifyPrefs){await savePrefs({notify:next})}
 const openAlerts=()=>fleet.alerts.filter(a=>!a.acknowledged).length;
 const vehicle=(id:string)=>fleet.devices.find(d=>d.id===id);
-const counts=()=>{const c:Record<string,number>={all:fleet.devices.length};for(const d of fleet.devices){const s=statusOf(d);c[s]=(c[s]||0)+1}return c};
-const inFilter=(d:Vehicle)=>{const s=statusOf(d);return filter==='all'||s===filter||(filter==='stopped'&&s==='idle')||(filter==='offline'&&(s==='nofix'||s==='waiting'))};
-const visible=()=>fleet.devices.filter(d=>inFilter(d)&&`${d.name} ${d.driver}`.toLowerCase().includes(search.toLowerCase()));
+const group=(s:StatusKey)=>s==='running'?'running':s==='stopped'||s==='idle'?'stopped':'offline';
 const overspeeding=(d:Vehicle)=>statusOf(d)==='running'&&!!d.position&&d.position.speed>d.speedLimit;
 const initial=(s:string)=>esc((s||'W').trim().charAt(0).toUpperCase());
 
+/* ---------- Start, routing, refresh ---------- */
 export async function startCustomer(identity:Identity){
   me=identity;following=prefs().follow;
   whenUnauthorized(()=>{stop();showLogin(t('Your session ended. Please sign in again.'))});
-  const requested=new URLSearchParams(location.search).get('view') as View|null;
-  view=requested&&(NAV.some(([v])=>v===requested)||requested==='more')?requested:prefs().defaultView;
-  try{fleet=await api<Fleet>('/state')}catch(e){$('#app').innerHTML=`<div class="empty">${i('wifi-off')}<h3>${t('Could not load your fleet')}</h3><p>${esc((e as Error).message)}</p><button class="btn btn-primary" id="retry">${t('Retry')}</button></div>`;on('#retry',()=>location.reload());icons();return}
-  selected=new URLSearchParams(location.search).get('vehicle')||'';
-  primeSeen(fleet.alerts);document.addEventListener('click',unlockVoice,{once:true});
-  // Back (phone button or browser) closes an open vehicle first, then steps back through pages.
-  window.addEventListener('popstate',()=>{
-    const q=new URLSearchParams(location.search),v=(q.get('view') as View|null)||prefs().defaultView,id=q.get('vehicle')||'';
-    if(v==='map'&&view==='map'&&map){select(id,false);return}
-    selected=id;go(v,false);
-  });
-  shell();schedule();
+  try{fleet=await api<Fleet>('/state')}catch(e){$('#app').innerHTML=`<div class="cx-empty">${i('wifi-off')}<h3>${t('Could not load your fleet')}</h3><p>${esc((e as Error).message)}</p><button class="cx-btn primary" id="retry">${t('Retry')}</button></div>`;on('#retry',()=>location.reload());icons();return}
+  readUrl();
+  primeSeen(fleet.alerts);remember(fleet.devices);document.addEventListener('click',unlockVoice,{once:true});
+  // Back (phone button or browser) simply steps back through the pages that were opened.
+  window.addEventListener('popstate',()=>{readUrl();render()});
+  render();schedule();
 }
-function stop(){clearTimeout(poll);teardown?.();teardown=undefined}
+function readUrl(){
+  const q=new URLSearchParams(location.search),v=q.get('view');
+  view=v==='vehicles'?'home':PAGES.includes(v as View)?v as View:prefs().defaultView;
+  vehicleId=q.get('id')||q.get('vehicle')||'';
+  if(view==='map'&&vehicleId)view='vehicle';
+  if(view==='vehicle'&&!vehicle(vehicleId))view='home';
+}
+function go(next:View,id=''){
+  const url=new URL(location.href);url.search='';
+  if(DEMO_MODE)url.searchParams.set('demo','');
+  url.searchParams.set('view',next);if(id)url.searchParams.set('id',id);
+  history.pushState({cx:true},'',url);view=next;vehicleId=id;render();window.scrollTo({top:0});
+}
+const openVehicle=(id:string)=>go('vehicle',id);
+function back(){if(history.state?.cx)history.back();else go(view==='vehicle'?'home':'more')}
+function stop(){clearTimeout(poll);teardown?.();teardown=undefined;onRefresh=undefined}
 // Short polls keep the map, alerts and voice close to real time (the gateway pushes within ~1 s).
 function schedule(){clearTimeout(poll);poll=setTimeout(refresh,document.hidden?5000:2000)}
 async function refresh(){
-  try{fleet=await api<Fleet>('/state');remember(fleet.devices);announceNew(fleet.alerts,notifyPrefs());updateBadges();if(view==='map')updateLive();else if(view==='vehicles')renderVehicles();else if(view==='alerts')renderAlerts()}
+  try{fleet=await api<Fleet>('/state');remember(fleet.devices);announceNew(fleet.alerts,notifyPrefs());updateBadges();onRefresh?.()}
   catch{/* keep showing the last data; the next poll retries */}
   finally{schedule()}
 }
-function go(next:View,push=true){
-  if(push){const url=new URL(location.href);url.searchParams.set('view',next);url.searchParams.delete('vehicle');history.pushState(null,'',url)}
-  view=next;shell();schedule();
-}
-function openOnMap(id:string){
-  selected=id;const url=new URL(location.href);url.searchParams.set('view','map');url.searchParams.set('vehicle',id);history.pushState({vehicle:id},'',url);view='map';shell();schedule();
-}
-
-const brandBlock=()=>`<a class="brand" href="/?live=1"><span class="mark">${i('truck')}</span><span class="brand-text"><b>Waypoint</b><small>${t('Live fleet')}</small></span></a>`;
-function shell(){
-  stop();
-  const p=prefs(),badge=openAlerts(),live=fleet.devices.filter(d=>d.online).length;
-  $('#app').innerHTML=`<div class="app customer">
-    <aside class="sidebar">${brandBlock()}
-      <nav class="nav">${GROUPS.map(([group,items])=>`<div class="nav-group"><span class="nav-title">${t(group)}</span>${items.map(([v,label,icon])=>`<button data-go="${v}" class="${view===v?'on':''}">${i(icon)}${t(label)}${v==='alerts'?`<span class="badge" data-alert-badge ${badge?'':'hidden'}>${badge}</span>`:''}</button>`).join('')}</div>`).join('')}</nav>
-      <div class="foot who-foot"><span class="avatar">${initial(p.workspace)}</span><div class="who-text"><strong>${esc(p.workspace)}</strong><small>${esc(me.email||p.name)}</small></div><button class="icon-btn" data-logout title="${t('Sign out')}" aria-label="${t('Sign out')}">${i('log-out')}</button></div>
-    </aside>
-    <div class="main">
-      <header class="mobile-head">${ROOT.includes(view)?brandBlock():`<button class="mh-back" data-go="more" aria-label="${t('Back')}">${i('chevron-left')}<span>${t(TITLES[view])}</span></button>`}
-</header>
-      <header class="topbar"><div class="title"><h1>${t(TITLES[view])}</h1><small>${esc(p.workspace)} · ${t('{n} vehicles',{n:fleet.devices.length})} · ${t('{n} live',{n:live})}</small></div>
-</header>
-      <div id="view"></div>
-    </div>
-    <nav class="tabbar">${TABS.map(([v,label,icon])=>`<button data-go="${v}" class="${view===v||(v==='more'&&!ROOT.includes(view))?'on':''}">${i(icon)}<span>${t(label)}</span>${v==='alerts'?`<span class="badge" data-alert-badge ${badge?'':'hidden'}>${badge}</span>`:''}</button>`).join('')}</nav>
-  </div>`;
-  on('[data-go]',el=>go(el.dataset.go as View));
-  on('[data-logout]',logout);
-  ({map:renderLive,vehicles:renderVehicles,history:renderHistory,reports:renderReports,alerts:renderAlerts,geofences:renderGeofences,documents:()=>renderDocuments('Documents'),ebills:()=>renderDocuments('E-way bills'),settings:renderSettings,more:renderMore} as Record<View,()=>void>)[view]();
-  icons();
-}
-function updateBadges(){const n=openAlerts();$$('[data-alert-badge]').forEach(b=>{b.textContent=String(n);b.hidden=!n})}
+function updateBadges(){const n=openAlerts();$$('[data-alert-badge]').forEach(b=>{b.textContent=n>99?'99+':String(n);b.hidden=!n})}
 async function logout(){if(!DEMO_MODE)await api('/session',{method:'DELETE'}).catch(()=>{});location.href='/?live=1&auth=customer'}
 
-// Status tiles: the counts and the filter in one place (tap again for all vehicles).
-function statusTiles(c:Record<string,number>){
-  const tiles:[StatusKey|'all',string,number,string,string][]=[
-    ['all','All vehicles',c.all,'truck',''],['running','Moving',c.running||0,'navigation','run'],
-    ['stopped','Standing',(c.stopped||0)+(c.idle||0),'pause','stand'],['offline','Offline',(c.offline||0)+(c.nofix||0)+(c.waiting||0),'wifi-off','off']];
-  return `<div class="stat-grid">${tiles.map(([k,l,n,ic,cls])=>`<button class="stat ${filter===k?'on':''}" data-filter="${k}" aria-pressed="${filter===k}"><span>${t(l)}</span><b>${n}</b><em class="si ${cls}">${i(ic)}</em></button>`).join('')}</div>`;
-}
-/* ---------- Vehicles (home) ---------- */
-function renderVehicles(){
-  const c=counts(),list=visible(),host=$('#view');
-  const focused=document.activeElement?.id==='vq';
-  host.innerHTML=`<div class="page home">
-    <div class="page-head"><div><h1>${t('My vehicles')}</h1><p class="muted">${t('Real-time GPS updates · auto refresh on')}</p></div></div>
-    ${statusTiles(c)}
-    <label class="search">${i('search')}<input class="input" id="vq" placeholder="${t('Search vehicle number or driver name…')}" value="${esc(search)}"></label>
-    <div class="vgrid">${list.map(vehicleCard).join('')||`<div class="card empty">${i('truck')}<h3>${t(fleet.devices.length?'No vehicles match':'No vehicles yet')}</h3><p>${t(fleet.devices.length?'Try another filter.':'Your fleet administrator will add your GPS devices here.')}</p></div>`}</div></div>`;
-  const input=$<HTMLInputElement>('#vq');input.oninput=()=>{search=input.value;renderVehicles()};
-  if(focused){input.focus();input.setSelectionRange(input.value.length,input.value.length)}
-  on('[data-filter]',el=>{const f=el.dataset.filter as StatusKey|'all';filter=filter===f?'all':f;renderVehicles()},host);
-  on('[data-open]',el=>openOnMap(el.dataset.open!),host);
-  on('[data-history]',el=>{historyVehicle=el.dataset.history!;go('history')},host);
+function render(){
+  stop();
+  const p=prefs(),badge=openAlerts(),active=view==='vehicle'?'home':ROOT.includes(view)?view:'more';
+  const badgeHtml=`<span class="cx-badge" data-alert-badge ${badge?'':'hidden'}>${badge}</span>`;
+  $('#app').innerHTML=`<div class="cx" data-view="${view}">
+    <aside class="cx-side">
+      <a class="cx-brand" href="/?live=1"><span class="cx-mark">${i('navigation')}</span><span><b>Waypoint</b><small>${t('Live fleet')}</small></span></a>
+      <nav>${SIDE.map(([g,items])=>`<div class="cx-side-group"><span>${t(g)}</span>${items.map(([v,l,ic])=>`<button data-go="${v}" class="${(view===v||(v==='home'&&view==='vehicle'))?'on':''}">${i(ic)}<em>${t(l)}</em>${v==='alerts'?badgeHtml:''}</button>`).join('')}</div>`).join('')}</nav>
+      <button class="cx-me" data-go="settings"><span class="cx-avatar">${initial(p.workspace)}</span><span><b>${esc(p.workspace)}</b><small>${esc(me.email||p.name)}</small></span>${i('chevron-right')}</button>
+    </aside>
+    <main class="cx-main">${ROOT.includes(view)||view==='vehicle'?'':`<header class="cx-top"><button class="cx-back" data-back aria-label="${t('Back')}">${i('chevron-left')}</button><h1>${t(TITLES[view])}</h1></header>`}<div id="view"></div></main>
+    <nav class="cx-tabs">${TABS.map(([v,l,ic])=>`<button data-go="${v}" class="${active===v?'on':''}"><span class="cx-tab-ico">${i(ic)}${v==='alerts'?badgeHtml:''}</span>${t(l)}</button>`).join('')}</nav>
+  </div>`;
+  on('[data-go]',el=>go(el.dataset.go as View));
+  on('[data-back]',back);
+  ({home:renderHome,map:renderMap,vehicle:renderVehicle,history:renderHistory,reports:renderReports,alerts:renderAlerts,geofences:renderGeofences,documents:()=>renderDocuments('Documents'),ebills:()=>renderDocuments('E-way bills'),settings:renderSettings,more:renderMore} as Record<View,()=>void>)[view]();
   icons();
 }
-function vehicleCard(d:Vehicle){
-  const p=d.position,s=statusOf(d),over=overspeeding(d);
-  const parked=(s==='stopped'||s==='idle')&&d.stoppedSince?since(d.stoppedSince):'';
-  return `<article class="vcard2 s-${s} ${over?'over':''}">
-    <button class="vc-open" data-open="${d.id}" aria-label="${esc(d.name)}">
-      <div class="vc-top"><span class="vc-ico">${i(over?'gauge':'truck')}</span><div class="vc-id"><h3 class="plate">${esc(d.name)}</h3>${d.driver?`<span class="muted">${i('user-round')}${esc(d.driver)}</span>`:''}</div>${over?`<span class="chip sos">⚠ ${t('Overspeed')}</span>`:chip(d)}</div>
-      ${over&&p?`<div class="vc-speed">${i('gauge')}<b>${Math.round(p.speed)} km/h</b><span>${t('Allowed limit: {n} km/h',{n:d.speedLimit})}</span></div>`:''}
-      <div class="vc-place">${i('map-pin')}<div><b>${placeSpan(p,d.id)}</b><small>${t('Last update: {a}',{a:ago(p?.recordedAt??d.lastSeen)})}${parked?` · ${t('standing for {d}',{d:parked})}`:''}</small></div></div>
-    </button>
-    <div class="vc-foot"><span class="tag ${d.ignition?'on':''}">${i('key-round')}${d.ignition==null?t('Ignition —'):d.ignition?t('Ignition on'):t('Ignition off')}</span><button class="btn btn-soft btn-sm" data-history="${d.id}">${i('route')}${t('Route history')}</button></div>
-  </article>`;
-}
 
-/* ---------- Live map ---------- */
-let map:L.Map|undefined,markers:L.LayerGroup|undefined,fences:L.LayerGroup|undefined;
-const todayKm=new globalThis.Map<string,{at:number;km:number|null}>();
-// "Near Indian Oil petrol pump · 120 m" for each position shown in the vehicle sheet.
-const nearCache=new globalThis.Map<string,string>();
-// Google view: Google's own map (with all its places) around the selected vehicle, instead of ours.
-let googleView=false,glive:GoogleLive|undefined;
-// Recent path of each vehicle while the app is open, drawn behind the selected truck in Google view.
+// Recent path of each vehicle while the app is open, drawn behind the truck on its page.
 const trails=new globalThis.Map<string,{latitude:number;longitude:number;at:number}[]>();
 function remember(devices:Vehicle[]){
   const cutoff=Date.now()-60*60000;
   for(const d of devices){const p=d.position;if(!p||p.valid===0)continue;const tr=trails.get(d.id)||[];if(!tr.length||tr.at(-1)!.at!==p.recordedAt)tr.push({latitude:p.latitude,longitude:p.longitude,at:p.recordedAt});while(tr.length&&(tr[0].at<cutoff||tr.length>400))tr.shift();trails.set(d.id,tr)}
 }
+let googleView=false;
 try{googleView=localStorage.getItem('waypoint.googleView')==='1'}catch{/* private mode */}
-function renderLive(){
-  $('#view').innerHTML=`<div class="live" id="live">
-    <div class="map-wrap"><span class="live-count" id="livecount"></span><div class="map" id="map"></div>
-      <div class="map-tools"><button class="fab ${googleView?'on':''}" id="gview" title="${t('Google view with nearby places')}" aria-label="${t('Google view with nearby places')}">${i('layers')}</button><button class="fab ${following?'on':''}" id="follow" title="${t('Follow selected vehicle')}" aria-label="${t('Follow selected vehicle')}">${i('locate-fixed')}</button><button class="fab" id="fit" title="${t('Show all vehicles')}" aria-label="${t('Show all vehicles')}">${i('scan')}</button></div>
-      <div class="gwrap" id="gwrap" hidden></div>
-      <div class="vsheet" id="vsheet" hidden></div>
-      <div class="others" id="others"></div></div></div>`;
-  map=createMap($('#map'));markers=L.layerGroup().addTo(map);fences=L.layerGroup().addTo(map);fitted=false;
-  // Whenever the map's box changes size (layout settling, vehicle page opening), Leaflet must re-measure.
-  const resize=new ResizeObserver(()=>map?.invalidateSize());resize.observe($('#map'));
-  teardown=()=>{resize.disconnect();map?.remove();map=undefined;glive?.destroy();glive=undefined};
-  glive=googleLive($('#gwrap'),{onSelect:id=>select(id),covered:()=>{const sheet=document.querySelector<HTMLElement>('#vsheet:not([hidden])');if(sheet)return getComputedStyle(sheet).position==='absolute'?sheet.offsetHeight:0;return matchMedia('(max-width:900px)').matches?document.querySelector<HTMLElement>('#others')?.offsetHeight||0:0}});
-  on('#gview',()=>setGoogleView(!googleView));
-  on('#fit',fit);on('#follow',el=>{following=!following;el.classList.toggle('on',following);const v=vehicle(selected);if(following&&v?.position)map?.panTo(point(v.position))});
-  updateLive();
-  // The flexible phone layout settles after the first paint; measure the map again then.
-  requestAnimationFrame(()=>{map?.invalidateSize();if(selected&&vehicle(selected)?.position)select(selected);else fit()});
+function setGoogle(on:boolean){googleView=on;try{localStorage.setItem('waypoint.googleView',on?'1':'0')}catch{/* private mode */}}
+
+/* ---------- Shared pieces ---------- */
+// What a vehicle is doing, in one short phrase for its row.
+function doing(d:Vehicle){
+  const s=statusOf(d),p=d.position;
+  if(overspeeding(d))return {main:`${Math.round(p!.speed)}`,unit:'km/h',cls:'sos'};
+  if(s==='running'&&p)return {main:`${Math.round(p.speed)}`,unit:'km/h',cls:'run'};
+  if((s==='stopped'||s==='idle')&&d.stoppedSince)return {main:since(d.stoppedSince),unit:t(s==='idle'?'Idle':'Standing'),cls:'stand'};
+  return {main:statusLabel(s),unit:'',cls:'off'};
 }
-function fit(){
-  const pts=fleet.devices.flatMap(d=>d.position?[point(d.position)]:[]);if(!pts.length||!map)return;
-  map.fitBounds(pts,{paddingTopLeft:[60,70],paddingBottomRight:[70,60],maxZoom:16});
+function vehicleRow(d:Vehicle){
+  const p=d.position,s=statusOf(d),w=doing(d);
+  return `<button class="cx-row" data-open="${d.id}">
+    <span class="cx-av ${overspeeding(d)?'sos':group(s)}">${i('truck')}</span>
+    <span class="cx-row-main"><b class="cx-plate">${esc(d.name)}</b><small>${placeSpan(p,d.id,{short:true})}</small></span>
+    <span class="cx-row-end ${w.cls}"><b>${esc(w.main)}</b><small>${esc(w.unit||ago(p?.recordedAt??d.lastSeen))}</small></span>
+  </button>`;
 }
-// Opening a vehicle is a step in the browser history, so the back button (or the phone's) returns
-// to the list; switching from one open vehicle to another replaces that step instead of stacking.
-function select(id:string,push=true){
-  if(push&&id!==selected){
-    const url=new URL(location.href);url.searchParams.set('view','map');
-    if(id)url.searchParams.set('vehicle',id);else url.searchParams.delete('vehicle');
-    if(id&&!selected)history.pushState({vehicle:id},'',url);else history.replaceState(id?{vehicle:id}:null,'',url);
+const statusPill=(d:Vehicle)=>{const s=statusOf(d),over=overspeeding(d);return `<span class="cx-pill ${over?'sos':group(s)}"><i></i>${over?t('Overspeed'):statusLabel(s)}</span>`};
+
+// The fleet on a map: status markers, a live count, Google view and fit; tapping a truck either
+// shows a small card (Map tab) or opens the vehicle (desktop Home).
+function fleetMap(host:HTMLElement,{peek}:{peek:boolean}){
+  host.innerHTML=`<div class="cx-map" data-fm-map></div><div class="gwrap" data-fm-google hidden></div>
+    <span class="cx-float-pill" data-fm-count></span>
+    <div class="cx-fabs"><button class="cx-fab ${googleView?'on':''}" data-fm="google" title="${t('Google view with nearby places')}" aria-label="${t('Google view with nearby places')}">${i('layers')}</button><button class="cx-fab" data-fm="fit" title="${t('Show all vehicles')}" aria-label="${t('Show all vehicles')}">${i('scan')}</button></div>
+    ${peek?'<div class="cx-peek" data-fm-peek hidden></div>':''}`;
+  const el=host.querySelector<HTMLElement>('[data-fm-map]')!,gHost=host.querySelector<HTMLElement>('[data-fm-google]')!;
+  const map=createMap(el),layer=L.layerGroup().addTo(map),saved=L.layerGroup().addTo(map);
+  let picked='',fitted=false;
+  const gl=googleLive(gHost,{onSelect:id=>pick(id),covered:()=>host.querySelector<HTMLElement>('[data-fm-peek]:not([hidden])')?.offsetHeight||0});
+  const resize=new ResizeObserver(()=>map.invalidateSize());resize.observe(el);
+  const fit=()=>{const pts=fleet.devices.flatMap(d=>d.position?[point(d.position)]:[]);if(pts.length)map.fitBounds(pts,{padding:[70,70],maxZoom:15})};
+  function pick(id:string){if(!peek){openVehicle(id);return}picked=id;update();const d=vehicle(id);if(d?.position&&!googleView)map.panTo(point(d.position))}
+  function update(){
+    const list=fleet.devices;
+    host.querySelector('[data-fm-count]')!.innerHTML=`<i></i>${t('{n} live',{n:list.filter(d=>d.online).length})} · ${t('{n} vehicles',{n:list.length})}`;
+    layer.clearLayers();
+    for(const d of list)if(d.position)L.marker(point(d.position),{icon:fleetIcon(d,d.id===picked,d.id===picked||list.length<=3),title:d.name,zIndexOffset:d.id===picked?1000:overspeeding(d)?500:0}).addTo(layer).on('click',e=>{L.DomEvent.stopPropagation(e);pick(d.id)});
+    saved.clearLayers();
+    for(const f of fleet.fences)L.circle(point(f),{radius:f.radius,color:'#0d5c52',weight:2,fillOpacity:.06}).bindTooltip(`${placeIcon(f.kind)} ${esc(f.name)}`,{permanent:true,direction:'center',className:'fence-label'}).addTo(saved);
+    if(!fitted&&list.some(d=>d.position)){fitted=true;requestAnimationFrame(fit)}
+    gHost.hidden=!googleView;el.style.visibility=googleView?'hidden':'';
+    if(googleView)gl.update(list,picked,picked?trails.get(picked):[]);
+    const pk=host.querySelector<HTMLElement>('[data-fm-peek]');
+    if(pk){const d=vehicle(picked);pk.hidden=!d;if(d){pk.innerHTML=vehicleRow(d);on('[data-open]',b=>openVehicle(b.dataset.open!),pk);icons()}}
   }
-  selected=id;const v=vehicle(id);
-  $('#live')?.classList.toggle('sheet-open',!!id);
-  updateLive();
-  // The layout changes between the list and the vehicle page; measure the map again.
-  map?.invalidateSize();
-  if(v?.position&&map)centre(v.position,Math.max(16,map.getZoom()));
-  else if(!id)fit();
-  if(id)$('#live')?.scrollTo({top:0});
+  map.on('click',()=>{if(picked){picked='';update()}});
+  host.querySelectorAll<HTMLElement>('[data-fm]').forEach(b=>b.addEventListener('click',()=>{
+    if(b.dataset.fm==='fit'){picked='';if(googleView){setGoogle(false);host.querySelector('[data-fm="google"]')!.classList.remove('on')}update();map.invalidateSize();fit();return}
+    setGoogle(!googleView);b.classList.toggle('on',googleView);update();if(!googleView)map.invalidateSize();
+  }));
+  update();icons();
+  return {update,destroy(){resize.disconnect();gl.destroy();map.remove()}};
 }
-function closeVehicle(){if(history.state?.vehicle)history.back();else select('')}
-// Keep the vehicle in the open part of the map, above the detail card when it floats over the map.
-function centre(p:{latitude:number;longitude:number},zoom=map?.getZoom()){
-  if(!map)return;
-  const sheet=document.querySelector<HTMLElement>('#vsheet:not([hidden])');
-  const card=sheet&&getComputedStyle(sheet).position==='absolute'?sheet.offsetHeight:0;
-  map.setView(point(p),zoom,{animate:false});
-  if(card)map.panBy([0,card/2],{animate:false});
+
+/* ---------- Home ---------- */
+function renderHome(){
+  const host=$('#view'),desktop=matchMedia('(min-width:901px)').matches,p=prefs();
+  host.innerHTML=`<div class="cx-home">
+    <section class="cx-home-list">
+      <header class="cx-hero">
+        <div class="cx-hero-top"><span class="cx-mark light">${i('navigation')}</span><div><b>${esc(p.workspace)}</b><small>${t('Real-time GPS updates · auto refresh on')}</small></div></div>
+        <div id="hero"></div>
+      </header>
+      <label class="cx-search">${i('search')}<input id="q" placeholder="${t('Search vehicle number or driver…')}" value="${esc(search)}" autocomplete="off"></label>
+      <div class="cx-list" id="list"></div>
+    </section>
+    ${desktop?'<section class="cx-home-map" id="homemap"></section>':''}
+  </div>`;
+  const input=$<HTMLInputElement>('#q');input.oninput=()=>{search=input.value;drawList()};
+  const fm=desktop?fleetMap($('#homemap'),{peek:false}):undefined;
+  const drawHero=()=>{
+    const n={running:0,stopped:0,offline:0};for(const d of fleet.devices)n[group(statusOf(d))]++;
+    const total=fleet.devices.length||1;
+    $('#hero').innerHTML=`<div class="cx-hero-count"><b>${fleet.devices.length}</b><span>${t('Vehicles')}</span></div>
+      <div class="cx-bar">${(['running','stopped','offline'] as const).map(k=>`<i class="${k}" style="flex:${n[k]/total}"></i>`).join('')}</div>
+      <div class="cx-legend">${(['running','stopped','offline'] as const).map(k=>`<button data-filter="${k}" class="${filter===k?'on':''}" aria-pressed="${filter===k}"><i class="${k}"></i><b>${n[k]}</b>${t(k==='running'?'Moving':k==='stopped'?'Standing':'Offline')}</button>`).join('')}</div>`;
+    on('[data-filter]',el=>{const f=el.dataset.filter as typeof filter;filter=filter===f?'all':f;drawHero();drawList()},$('#hero'));
+  };
+  const order=['running','stopped','offline'];
+  const drawList=()=>{
+    const q=search.toLowerCase();
+    const list=fleet.devices.filter(d=>(filter==='all'||group(statusOf(d))===filter)&&`${d.name} ${d.driver}`.toLowerCase().includes(q))
+      .sort((a,b)=>Number(overspeeding(b))-Number(overspeeding(a))||order.indexOf(group(statusOf(a)))-order.indexOf(group(statusOf(b)))||a.name.localeCompare(b.name));
+    $('#list').innerHTML=list.length?`${filter!=='all'?`<button class="cx-clear" data-clear>${i('x')}${t('Showing: {f}',{f:t(filter==='running'?'Moving':filter==='stopped'?'Standing':'Offline')})}</button>`:''}${list.map(vehicleRow).join('')}`:`<div class="cx-empty">${i('truck')}<h3>${t(fleet.devices.length?'No vehicles match':'No vehicles yet')}</h3><p>${t(fleet.devices.length?'Try another filter.':'Your fleet administrator will add your GPS devices here.')}</p></div>`;
+    on('[data-open]',el=>openVehicle(el.dataset.open!),$('#list'));
+    on('[data-clear]',()=>{filter='all';drawHero();drawList()},$('#list'));
+    icons();
+  };
+  drawHero();drawList();
+  onRefresh=()=>{drawHero();drawList();fm?.update()};
+  teardown=()=>fm?.destroy();
 }
-function setGoogleView(on:boolean){
-  googleView=on;document.querySelector('#gview')?.classList.toggle('on',on);
-  try{localStorage.setItem('waypoint.googleView',on?'1':'0')}catch{/* private mode */}
-  updateLive();if(!on)map?.invalidateSize();
+
+/* ---------- Map ---------- */
+function renderMap(){
+  $('#view').innerHTML='<div class="cx-fullmap" id="fullmap"></div>';
+  const fm=fleetMap($('#fullmap'),{peek:true});
+  onRefresh=()=>fm.update();teardown=()=>fm.destroy();
 }
-function updateLive(){
-  if(!map||!markers)return;
-  // The map always shows the whole fleet; the list and its filters live on the Vehicles page.
-  const list=fleet.devices;
-  $('#livecount').innerHTML=`<i class="dot"></i>${t('{n} live',{n:list.filter(d=>d.online).length})} · ${t('{n} vehicles',{n:list.length})}`;
-  // On a vehicle's page, the other vehicles one tap away.
-  const others=selected?list.filter(d=>d.id!==selected):[];
-  $('#others').innerHTML=others.length?`<div class="others-head"><b>${t('Other vehicles')}</b><button class="linkish" data-go-list>${t('Open list')}</button></div><div class="others-row">${others.map(miniCard).join('')}</div>`:'';
-  on('[data-vehicle]',el=>select(el.dataset.vehicle!),$('#others'));
-  on('[data-go-list]',()=>go('vehicles'),$('#others'));
-  markers.clearLayers();
-  // Bubbles and plates only where they stay readable: the selected vehicle, or a very small fleet.
-  const labels=(d:Vehicle)=>d.id===selected||(!selected&&list.length<=3);
-  for(const d of list){
-    if(!d.position)continue;
-    L.marker(point(d.position),{icon:fleetIcon(d,d.id===selected,labels(d)),title:d.name,zIndexOffset:d.id===selected?1000:overspeeding(d)?500:0}).addTo(markers).on('click',()=>select(d.id));
-  }
-  fences!.clearLayers();
-  // The customer's own places stay labelled, so depots and regular stops are always recognisable.
-  for(const f of fleet.fences)L.circle(point(f),{radius:f.radius,color:'#0d5c52',weight:2,fillOpacity:.06}).bindTooltip(`${placeIcon(f.kind)} ${esc(f.name)}`,{permanent:true,direction:'center',className:'fence-label'}).addTo(fences!);
-  if(!fitted&&list.some(d=>d.position)&&!selected){fit();fitted=true}
-  const v=vehicle(selected);
-  renderSheet();icons();
-  if(following&&v?.position)centre(v.position);
-  // Google view follows the selected vehicle, or the first one with a position.
-  $('#gwrap').hidden=!googleView;$('#map').style.visibility=googleView?'hidden':'';
-  if(googleView)glive?.update(list,selected,selected?trails.get(selected):[]);
-}
-function miniCard(d:Vehicle){
-  const p=d.position,s=statusOf(d),over=overspeeding(d);
-  const state=over&&p?`⚠ ${Math.round(p.speed)} km/h · ${t('Overspeed')}`:s==='running'&&p?`${Math.round(p.speed)} km/h`:(s==='stopped'||s==='idle')&&d.stoppedSince?`${t(s==='idle'?'Idle':'Standing')} · ${since(d.stoppedSince)}`:statusLabel(s);
-  return `<button class="mini s-${s} ${over?'over':''} ${d.id===selected?'on':''}" data-vehicle="${d.id}">
-    <span class="mini-top"><b class="plate">${esc(d.name)}</b><i class="dot" style="background:var(--${over?'sos':s})"></i></span>
-    <span class="mini-state">${esc(state)}</span>
-    <span class="mini-place">${placeSpan(p,d.id,{short:true})}</span></button>`;
-}
-function renderSheet(){
-  const el=document.querySelector<HTMLElement>('#vsheet');if(!el)return;
-  const d=vehicle(selected);if(!d){el.hidden=true;return}
-  const p=d.position,km=todayKm.get(d.id),s=statusOf(d),over=overspeeding(d);
-  if(!km||Date.now()-km.at>60000)void loadTodayKm(d.id);
-  const mine=p?nearSaved(p.latitude,p.longitude,fleet.fences):null;
-  if(p&&!mine&&!nearCache.has(placeKey(p))){const key=placeKey(p);nearCache.set(key,'');void nearest(p.latitude,p.longitude).then(n=>{if(n){nearCache.set(key,nearText(n));if(selected===d.id)renderSheet()}})}
-  const near=mine||(p?nearCache.get(placeKey(p)):'');
-  el.hidden=false;
-  el.innerHTML=`<div class="grab"></div>
-    <div class="sh-head"><button class="icon-btn round" id="close-sheet" aria-label="${t('Back')}">${i('arrow-left')}</button><div><h2 class="plate">${esc(d.name)}</h2><div class="sh-sub">${over?`<span class="chip sos">⚠ ${t('Overspeed')}</span>`:`<span class="chip ${s}">${statusLabel(s)}</span>`}${d.driver?`<span class="muted">${i('user-round')}${esc(d.driver)}</span>`:''}</div></div><button class="icon-btn round" id="sheet-share" aria-label="${t('Share')}">${i('share-2')}</button></div>
-    <div class="vc-place">${i('map-pin')}<div><b>${placeSpan(p,d.id)}</b>${near?`<small class="near">${esc(near)}</small>`:''}<small>${t('Last GPS signal: {a}',{a:ago(p?.recordedAt??d.lastSeen)})}</small></div></div>
-    <div class="sh-stats">
-      <div><span>${t('Speed')}</span><b class="${over?'bad':''}">${p&&d.fresh?Math.round(p.speed):0} <small>km/h</small></b><small>${t('Limit {n}',{n:d.speedLimit})}</small></div>
-      <div><span>${t('Today')}</span><b>${km?.km==null?'…':km.km} <small>km</small></b><small>${t('Distance')}</small></div>
-      <div><span>${t('Ignition')}</span><b class="${d.ignition?'good':''}">${d.ignition==null?'—':d.ignition?t('On'):t('Off')}</b><small>${(s==='stopped'||s==='idle')&&d.stoppedSince?since(d.stoppedSince):statusLabel(s)}</small></div>
-    </div>
-    <div class="sh-acts"><button class="btn btn-primary" id="sheet-history">${i('history')}${t('Route history')}</button><button class="btn btn-soft ${googleView?'on':''}" id="sheet-google">${i('layers')}${t(googleView?'Our map':'Google view')}</button></div>
-    <div class="qa">${p?`<button id="sheet-save">${i('map-pin')}<span>${t('Save place')}</span></button>`:''}<button id="sheet-speed">${i('gauge')}<span>${d.speedLimit} km/h${d.speedAlert===false?` ${t('off')}`:''}</span></button>${d.isMobile?`<button id="sheet-driver">${i('smartphone')}<span>${t('Driver link')}</span></button>`:''}${p?`<a href="${mapsLink(p)}" target="_blank" rel="noopener">${i('navigation')}<span>${t('Directions')}</span></a>`:''}</div>`;
-  on('#close-sheet',closeVehicle,el);
-  on('#sheet-history',()=>{historyVehicle=d.id;go('history')},el);
-  on('#sheet-share',async()=>{if(!p)return;const text=`${d.name}: ${places.get(placeKey(p))?.label||coords(p)}\n${mapsLink(p)}`;if(navigator.share)await navigator.share({title:d.name,text}).catch(()=>{});else{await navigator.clipboard.writeText(text);toast(t('Location copied.'))}},el);
-  on('#sheet-driver',()=>driverLink(d),el);
-  on('#sheet-speed',()=>speedSettings(d),el);
-  on('#sheet-google',()=>setGoogleView(!googleView),el);
-  on('#sheet-save',()=>addFence({latitude:p!.latitude,longitude:p!.longitude,radius:150}),el);
-  icons();
-}
+
+/* ---------- Vehicle page ---------- */
+const todayKm=new globalThis.Map<string,{at:number;km:number|null}>();
+const nearCache=new globalThis.Map<string,string>();
 const dayStart=(offset=0)=>{const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()+offset);return d};
-async function loadTodayKm(id:string){
-  todayKm.set(id,{at:Date.now(),km:todayKm.get(id)?.km??null});
-  try{const r=await reports(dayStart(),new Date(),id);todayKm.set(id,{at:Date.now(),km:r.vehicles[0]?.total.distanceKm??0});if(selected===id)renderSheet()}catch{/* shown as … */}
-}
 function reports(from:Date,to:Date,device?:string){
   return api<{vehicles:VehicleReport[]}>(`/reports?${new URLSearchParams({from:from.toISOString(),to:to.toISOString(),tz:String(new Date().getTimezoneOffset()),...(device?{device}:{})})}`);
+}
+function renderVehicle(){
+  const d0=vehicle(vehicleId);if(!d0){go('home');return}
+  $('#view').innerHTML=`<div class="cx-vpage">
+    <section class="cx-vmap"><div class="cx-map" id="vmap"></div><div class="gwrap" id="vgoogle" hidden></div>
+      <button class="cx-fab cx-vback" data-back aria-label="${t('Back')}">${i('arrow-left')}</button>
+      <div class="cx-fabs"><button class="cx-fab ${googleView?'on':''}" id="vgtoggle" title="${t('Google view with nearby places')}" aria-label="${t('Google view with nearby places')}">${i('layers')}</button><button class="cx-fab ${following?'on':''}" id="vfollow" title="${t('Follow selected vehicle')}" aria-label="${t('Follow selected vehicle')}">${i('locate-fixed')}</button></div></section>
+    <section class="cx-vbody" id="vbody"></section></div>`;
+  on('[data-back]',back);
+  const el=$('#vmap'),p0=d0.position;
+  const map=createMap(el,p0?point(p0):[22.5,79],p0?16:5);
+  const trailLine=L.polyline([],{color:'#0d5c52',weight:5,opacity:.75}).addTo(map);
+  let marker:L.Marker|undefined;
+  const gl=googleLive($('#vgoogle'));
+  const resize=new ResizeObserver(()=>map.invalidateSize());resize.observe(el);
+  teardown=()=>{resize.disconnect();gl.destroy();map.remove()};
+  const drawMap=()=>{
+    const d=vehicle(vehicleId);if(!d)return;
+    const p=d.position,tr=trails.get(d.id)||[];
+    trailLine.setLatLngs(tr.map(point));
+    if(p){
+      if(!marker)marker=L.marker(point(p),{icon:fleetIcon(d,true,true),zIndexOffset:1000}).addTo(map);
+      else{marker.setLatLng(point(p));marker.setIcon(fleetIcon(d,true,true))}
+      if(following&&!map.getBounds().pad(-0.25).contains(point(p)))map.panTo(point(p));
+    }
+    $('#vgoogle').hidden=!googleView;el.style.visibility=googleView?'hidden':'';
+    if(googleView)gl.update([d],d.id,tr);
+  };
+  on('#vgtoggle',b=>{setGoogle(!googleView);b.classList.toggle('on',googleView);drawMap();if(!googleView)map.invalidateSize();drawBody()});
+  on('#vfollow',b=>{following=!following;b.classList.toggle('on',following);const p=vehicle(vehicleId)?.position;if(following&&p)map.panTo(point(p))});
+  const drawBody=()=>{
+    const d=vehicle(vehicleId);if(!d)return;
+    const p=d.position,km=todayKm.get(d.id),s=statusOf(d),over=overspeeding(d);
+    if(!km||Date.now()-km.at>60000)void loadTodayKm(d.id,drawBody);
+    const mine=p?nearSaved(p.latitude,p.longitude,fleet.fences):null;
+    if(p&&!mine&&!nearCache.has(placeKey(p))){const key=placeKey(p);nearCache.set(key,'');void nearest(p.latitude,p.longitude).then(n=>{if(n){nearCache.set(key,nearText(n));if(vehicleId===d.id)drawBody()}})}
+    const near=mine||(p?nearCache.get(placeKey(p)):'');
+    const standing=(s==='stopped'||s==='idle')&&d.stoppedSince;
+    $('#vbody').innerHTML=`<div class="cx-grab"></div>
+      <div class="cx-vhead"><div><h1 class="cx-plate">${esc(d.name)}</h1><div class="cx-vsub">${statusPill(d)}${d.driver?`<span>${i('user-round')}${esc(d.driver)}</span>`:''}</div></div><button class="cx-icon" id="vshare" aria-label="${t('Share')}">${i('share-2')}</button></div>
+      <div class="cx-place">${i('map-pin')}<div><b>${placeSpan(p,d.id)}</b>${near?`<small class="near">${esc(near)}</small>`:''}<small>${t('Last GPS signal: {a}',{a:ago(p?.recordedAt??d.lastSeen)})}</small></div></div>
+      <div class="cx-stats">
+        <div class="${over?'sos':''}"><span>${t('Speed')}</span><b>${p&&d.fresh?Math.round(p.speed):0}<small>km/h</small></b><em>${t('Limit {n}',{n:d.speedLimit})}</em></div>
+        <div><span>${t('Today')}</span><b>${km?.km==null?'…':km.km}<small>km</small></b><em>${t('Distance')}</em></div>
+        <div class="${d.ignition?'good':''}"><span>${t('Ignition')}</span><b>${d.ignition==null?'—':d.ignition?t('On'):t('Off')}</b><em>${standing?t('standing for {d}',{d:since(d.stoppedSince!)}):statusLabel(s)}</em></div>
+      </div>
+      <div class="cx-group">
+        <button class="cx-item" id="vhistory"><span class="cx-ico">${i('history')}</span><span class="cx-item-text"><b>${t('Route history')}</b><small>${t('Replay any day on the map')}</small></span>${i('chevron-right')}</button>
+        <label class="cx-item"><span class="cx-ico">${i('layers')}</span><span class="cx-item-text"><b>${t('Google view')}</b><small>${t('Google map with all nearby places')}</small></span><input type="checkbox" class="cx-switch" id="vgswitch" ${googleView?'checked':''}></label>
+        <button class="cx-item" id="vspeed"><span class="cx-ico">${i('gauge')}</span><span class="cx-item-text"><b>${t('Overspeed alert')}</b><small>${d.speedAlert===false?t('Off'):t('Speed limit: {n} km/h',{n:d.speedLimit})}</small></span>${i('chevron-right')}</button>
+        ${p?`<button class="cx-item" id="vsave"><span class="cx-ico">${i('map-pin')}</span><span class="cx-item-text"><b>${t('Save place')}</b><small>${t('Name this spot, e.g. petrol pump or depot')}</small></span>${i('chevron-right')}</button>`:''}
+        ${d.isMobile?`<button class="cx-item" id="vdriver"><span class="cx-ico">${i('smartphone')}</span><span class="cx-item-text"><b>${t('Driver link')}</b><small>${t("Share location from the driver's phone")}</small></span>${i('chevron-right')}</button>`:''}
+        ${p?`<a class="cx-item" href="${mapsLink(p)}" target="_blank" rel="noopener"><span class="cx-ico">${i('navigation')}</span><span class="cx-item-text"><b>${t('Directions')}</b><small>${t('Open in Google Maps')}</small></span>${i('external-link')}</a>`:''}
+      </div>`;
+    on('#vshare',async()=>{if(!p)return;const text=`${d.name}: ${places.get(placeKey(p))?.label||coords(p)}\n${mapsLink(p)}`;if(navigator.share)await navigator.share({title:d.name,text}).catch(()=>{});else{await navigator.clipboard.writeText(text);toast(t('Location copied.'))}});
+    on('#vhistory',()=>{historyVehicle=d.id;go('history')});
+    on('#vspeed',()=>speedSettings(d,drawBody));
+    on('#vsave',()=>addFence({latitude:p!.latitude,longitude:p!.longitude,radius:150}));
+    on('#vdriver',()=>driverLink(d));
+    $<HTMLInputElement>('#vgswitch').onchange=e=>{setGoogle((e.target as HTMLInputElement).checked);$('#vgtoggle').classList.toggle('on',googleView);drawMap();if(!googleView)map.invalidateSize()};
+    icons();
+  };
+  drawMap();drawBody();
+  onRefresh=()=>{if(!vehicle(vehicleId)){go('home');return}drawMap();drawBody()};
+}
+async function loadTodayKm(id:string,done:()=>void){
+  todayKm.set(id,{at:Date.now(),km:todayKm.get(id)?.km??null});
+  try{const r=await reports(dayStart(),new Date(),id);todayKm.set(id,{at:Date.now(),km:r.vehicles[0]?.total.distanceKm??0});if(vehicleId===id)done()}catch{/* shown as … */}
+}
+
+/* ---------- Alerts ---------- */
+let alertsCat:Category|'all'='all';
+function renderAlerts(){
+  const draw=()=>{
+    const unseen=(c:Category|'all')=>fleet.alerts.filter(a=>!a.acknowledged&&(c==='all'||categoryOf(a.type)===c)).length;
+    const cats=CATEGORIES.filter(c=>fleet.alerts.some(a=>categoryOf(a.type)===c.key));
+    const list=fleet.alerts.filter(a=>alertsCat==='all'||categoryOf(a.type)===alertsCat).sort((a,b)=>b.createdAt-a.createdAt);
+    const dayOf=(at:number)=>{const d=new Date(at);d.setHours(0,0,0,0);const diff=Math.round((+dayStart()-+d)/86400000);return diff===0?t('Today'):diff===1?t('Yesterday'):d.toLocaleDateString(locale(),{weekday:'long',day:'numeric',month:'short'})};
+    const days=new globalThis.Map<string,Alert[]>();for(const a of list){const k=dayOf(a.createdAt);if(!days.has(k))days.set(k,[]);days.get(k)!.push(a)}
+    const style=(type:string)=>{const c=CATEGORIES.find(x=>x.key===categoryOf(type))!;const ic=type==='ignition_on'||type==='ignition_off'?'power':type==='online'?'activity':c.icon;const tone=type==='sos'||type==='speed'||type==='offline'?'sos':type==='ignition_on'||type==='online'||type==='share_resumed'?'good':type==='ignition_off'?'neutral':'warn';return {ic,tone}};
+    $('#view').innerHTML=`<div class="cx-page">
+      <div class="cx-head"><h1 class="cx-title">${t('Alerts')}</h1>${unseen('all')?`<button class="cx-btn soft sm" id="ack-all">${i('check-check')}${t('Mark all seen')}</button>`:''}</div>
+      ${cats.length>1?`<div class="cx-chips"><button data-cat="all" class="${alertsCat==='all'?'on':''}">${t('All')}</button>${cats.map(c=>`<button data-cat="${c.key}" class="${alertsCat===c.key?'on':''}">${esc(t(c.label))}${unseen(c.key)?`<b>${unseen(c.key)}</b>`:''}</button>`).join('')}</div>`:''}
+      ${list.length?[...days].map(([day,items])=>`<h3 class="cx-section">${esc(day)}</h3><div class="cx-group">${items.map(a=>{const st=style(a.type);return `<button class="cx-item cx-alert ${a.acknowledged?'':'new'}" data-alert="${a.id}"><span class="cx-ico ${st.tone}">${i(st.ic)}</span><span class="cx-item-text"><b>${esc(a.deviceName)}</b><small>${esc(alertText(a))}</small></span><span class="cx-time">${clock(a.createdAt)}</span></button>`}).join('')}</div>`).join(''):`<div class="cx-empty">${i('bell')}<h3>${t('All clear')}</h3><p>${t('SOS, engine, geofence, overspeed, hard braking and signal alerts appear here.')}</p></div>`}
+    </div>`;
+    on('[data-cat]',el=>{alertsCat=el.dataset.cat as Category|'all';draw()});
+    // Opening an alert marks it seen and goes where it points: the driver link or the vehicle.
+    on('[data-alert]',async el=>{
+      const a=fleet.alerts.find(x=>x.id===el.dataset.alert)!;
+      if(!a.acknowledged){await post(`/alerts/${a.id}/ack`);a.acknowledged=1;updateBadges()}
+      const v=vehicle(a.deviceId);if(!v){draw();return}
+      if(a.type==='share_stopped'||a.type==='share_expired'){draw();driverLink(v)}else openVehicle(v.id);
+    });
+    on('#ack-all',async()=>{const ids=fleet.alerts.filter(a=>!a.acknowledged).map(a=>a.id);for(const id of ids)await post(`/alerts/${id}/ack`);fleet.alerts.forEach(a=>{a.acknowledged=1});updateBadges();draw();toast(t('All marked seen.'))});
+    icons();
+  };
+  draw();onRefresh=draw;
+}
+
+/* ---------- More ---------- */
+function renderMore(){
+  const p=prefs();
+  $('#view').innerHTML=`<div class="cx-page">
+    <h1 class="cx-title">${t('More')}</h1>
+    <button class="cx-profile" data-go="settings"><span class="cx-avatar lg">${initial(p.workspace)}</span><span><b>${esc(p.workspace)}</b><small>${esc(me.email||p.name)}</small></span>${i('chevron-right')}</button>
+    ${MORE.map(([g,items])=>`<h3 class="cx-section">${t(g)}</h3><div class="cx-group">${items.map(([v,l,ic,h])=>`<button class="cx-item" data-go="${v}"><span class="cx-ico">${i(ic)}</span><span class="cx-item-text"><b>${t(l)}</b><small>${t(h)}</small></span>${i('chevron-right')}</button>`).join('')}</div>`).join('')}
+  </div>`;
+  on('#view [data-go]',el=>go(el.dataset.go as View));icons();
 }
 
 /* ---------- History ---------- */
@@ -292,20 +346,25 @@ function rangeFor(preset:string):[Date,Date]{
   return [dayStart(),new Date()];
 }
 function renderHistory(){
-  historyVehicle=historyVehicle||selected||fleet.devices[0]?.id||'';
+  historyVehicle=historyVehicle||fleet.devices[0]?.id||'';
   const [from,to]=rangeFor('today');
-  $('#view').innerHTML=`<div class="history"><aside class="side">
-      <label class="field">${t('Vehicle')}<select class="input" id="hv">${fleet.devices.map(d=>`<option value="${d.id}" ${d.id===historyVehicle?'selected':''}>${esc(d.name)}</option>`).join('')}</select></label>
-      <div class="pills" id="presets">${[['today','Today'],['yesterday','Yesterday'],['week','Last 7 days'],['custom','Custom']].map(([k,l],n)=>`<button data-preset="${k}" class="pill ${n?'':'on'}">${t(l)}</button>`).join('')}</div>
-      <div class="form-row" id="custom" hidden><label class="field">${t('From')}<input class="input" type="datetime-local" id="hfrom" value="${localInput(from)}"></label><label class="field">${t('To')}<input class="input" type="datetime-local" id="hto" value="${localInput(to)}"></label></div>
-      <button class="btn btn-primary" id="load">${i('route')}${t('Show route')}</button>
-      <div class="summary" id="hsum" hidden></div>
-      <div id="hplayer" hidden><div class="player"><button class="icon-btn" id="play" aria-label="${t('Play')}">${i('play')}</button><input type="range" id="slider" min="0" max="0" value="0" aria-label="${t('Route position')}"></div><p class="small" id="hpoint" style="margin-top:8px"></p><div class="toolbar" style="margin-top:8px"><button class="btn btn-ghost btn-sm" id="hgoogle">${i('layers')}${t('See this point on Google')}</button><button class="btn btn-ghost btn-sm" id="hsave">${i('map-pin')}${t('Save place')}</button></div></div>
-      <p class="hint" id="hstatus">${t(fleet.devices.length?'Choose a day and press Show route.':'No vehicles yet.')}</p>
-      <button class="btn btn-ghost btn-sm" id="csv" hidden>${i('download')}${t('Download CSV')}</button>
-    </aside><div class="map-wrap"><div class="map" id="hmap"></div></div></div>`;
+  $('#view').innerHTML=`<div class="cx-history"><section class="cx-hmap"><div class="cx-map" id="hmap"></div></section>
+    <section class="cx-hpanel">
+      <label class="cx-field">${t('Vehicle')}<select id="hv">${fleet.devices.map(d=>`<option value="${d.id}" ${d.id===historyVehicle?'selected':''}>${esc(d.name)}</option>`).join('')}</select></label>
+      <div class="cx-chips" id="presets">${[['today','Today'],['yesterday','Yesterday'],['week','Last 7 days'],['custom','Custom']].map(([k,l],n)=>`<button data-preset="${k}" class="${n?'':'on'}">${t(l)}</button>`).join('')}</div>
+      <div class="cx-row2" id="custom" hidden><label class="cx-field">${t('From')}<input type="datetime-local" id="hfrom" value="${localInput(from)}"></label><label class="cx-field">${t('To')}<input type="datetime-local" id="hto" value="${localInput(to)}"></label><button class="cx-btn primary" id="load">${t('Show route')}</button></div>
+      <div class="cx-player" id="hplayer" hidden><button class="cx-play" id="play" aria-label="${t('Play')}">${i('play')}</button><div><input type="range" id="slider" min="0" max="0" value="0" aria-label="${t('Route position')}"><p id="hpoint"></p></div></div>
+      <div class="cx-stats four" id="hsum" hidden></div>
+      <p class="cx-hint" id="hstatus">${t(fleet.devices.length?'Choose a day and press Show route.':'No vehicles yet.')}</p>
+      <div class="cx-group" id="hactions" hidden>
+        <button class="cx-item" id="hgoogle"><span class="cx-ico">${i('layers')}</span><span class="cx-item-text"><b>${t('See this point on Google')}</b></span>${i('chevron-right')}</button>
+        <button class="cx-item" id="hsave"><span class="cx-ico">${i('map-pin')}</span><span class="cx-item-text"><b>${t('Save place')}</b></span>${i('chevron-right')}</button>
+        <button class="cx-item" id="csv"><span class="cx-ico">${i('download')}</span><span class="cx-item-text"><b>${t('Download CSV')}</b></span>${i('chevron-right')}</button>
+      </div>
+    </section></div>`;
   const hmap=createMap($('#hmap')),layer=L.layerGroup().addTo(hmap);let truck:L.Marker|undefined;
-  teardown=()=>{clearInterval(playTimer);hmap.remove()};
+  const resize=new ResizeObserver(()=>hmap.invalidateSize());resize.observe($('#hmap'));
+  teardown=()=>{clearInterval(playTimer);resize.disconnect();hmap.remove()};
   let preset='today';
   on('[data-preset]',el=>{preset=el.dataset.preset!;$$('[data-preset]').forEach(b=>b.classList.toggle('on',b===el));$('#custom').hidden=preset!=='custom';if(preset!=='custom')void load()});
   $<HTMLSelectElement>('#hv').onchange=e=>{historyVehicle=(e.target as HTMLSelectElement).value;void load()};
@@ -318,9 +377,8 @@ function renderHistory(){
     else{truck.setLatLng(point(p));const pin=truck.getElement()?.querySelector<HTMLElement>('.gps-pin');if(pin){pin.className=`gps-pin on ${p.speed>=3?'running':'stopped'}`;pin.querySelector<HTMLElement>('span')!.style.transform=`rotate(${heading}deg)`}}
     $<HTMLInputElement>('#slider').value=String(n);
     // Look places up only while paused; during playback show what is already known.
-    $('#hpoint').innerHTML=`<b>${clock(p.recordedAt)}</b> · ${Math.round(p.speed)} km/h<br><span class="muted">${placeSpan(p,'history',{lookup:!playTimer})}</span>`;
-    // Keep the truck on screen while it plays, however far the user has zoomed in.
-    if(following||!hmap.getBounds().pad(-0.15).contains(point(p)))hmap.panTo(point(p),{animate:true});
+    $('#hpoint').innerHTML=`<b>${clock(p.recordedAt)}</b> · ${Math.round(p.speed)} km/h · <span>${placeSpan(p,'history',{lookup:!playTimer,short:true})}</span>`;
+    if(!hmap.getBounds().pad(-0.15).contains(point(p)))hmap.panTo(point(p),{animate:true});
   };
   const stopPlay=()=>{clearInterval(playTimer);playTimer=undefined;$('#play').innerHTML=i('play');icons()};
   on('#play',()=>{if(playTimer){stopPlay();return}let n=Number($<HTMLInputElement>('#slider').value);if(n>=track.length-1)n=0;$('#play').innerHTML=i('pause');icons();playTimer=setInterval(()=>{showPoint(n++);if(n>=track.length){stopPlay();showPoint(track.length-1)}},400)});
@@ -334,18 +392,18 @@ function renderHistory(){
     const [from,to]=preset==='custom'?[new Date($<HTMLInputElement>('#hfrom').value),new Date($<HTMLInputElement>('#hto').value)]:rangeFor(preset);
     if(!(+from<+to)||+to-+from>31*86400000){toast(t('Choose a range of up to 31 days.'),true);return}
     stopPlay();layer.clearLayers();truck?.remove();truck=undefined;track=[];
-    $('#hstatus').textContent=t('Loading route…');$('#hplayer').hidden=true;$('#hsum').hidden=true;$('#csv').hidden=true;
+    $('#hstatus').textContent=t('Loading route…');$('#hplayer').hidden=true;$('#hsum').hidden=true;$('#hactions').hidden=true;
     try{
       const points:Fix[]=[];let after:number|null=0;
       do{const r:{positions:Fix[];next:number|null}=await api(`/devices/${historyVehicle}/history?${new URLSearchParams({from:from.toISOString(),to:to.toISOString(),after:String(after)})}`);points.push(...r.positions);after=r.next}while(after!==null&&points.length<100000);
       track=points.filter(p=>p.valid!==0).sort((a,b)=>a.recordedAt-b.recordedAt||a.id-b.id);
       if(!track.length){$('#hstatus').textContent=t('No movement recorded in this period.');return}
-      drawRoute(layer,track);hmap.fitBounds(track.map(point),{padding:[50,50],maxZoom:16});
+      drawRoute(layer,track);hmap.fitBounds(track.map(point),{padding:[40,40],maxZoom:16});
       const slider=$<HTMLInputElement>('#slider');slider.max=String(track.length-1);slider.value='0';
-      $('#hplayer').hidden=false;$('#csv').hidden=false;showPoint(0);
+      $('#hplayer').hidden=false;$('#hactions').hidden=false;showPoint(0);
       $('#hstatus').textContent=`${time(track[0].recordedAt)} – ${time(track.at(-1)!.recordedAt)}`;
       const r=(await reports(from,to,historyVehicle)).vehicles[0];
-      if(r){const gaps=r.days.flatMap(d=>d.gaps);$('#hsum').innerHTML=`<div><span>${t('Distance')}</span><b>${r.total.distanceKm} km</b></div><div><span>${t('Running')}</span><b>${hm(r.total.runningMinutes)}</b></div><div><span>${t('Idle')}</span><b>${hm(r.total.idleMinutes)}</b></div><div><span>${t('Max speed')}</span><b>${r.total.maxSpeed} km/h</b></div>${gaps.map(g=>`<p class="gap-note" style="grid-column:1/-1">${i('triangle-alert')}${esc(gapNote(g))}</p>`).join('')}`;$('#hsum').hidden=false;icons()}
+      if(r){const gaps=r.days.flatMap(d=>d.gaps);$('#hsum').innerHTML=`<div><span>${t('Distance')}</span><b>${r.total.distanceKm}<small>km</small></b></div><div><span>${t('Running')}</span><b>${hm(r.total.runningMinutes)}</b></div><div><span>${t('Idle')}</span><b>${hm(r.total.idleMinutes)}</b></div><div><span>${t('Max speed')}</span><b>${r.total.maxSpeed}<small>km/h</small></b></div>${gaps.map(g=>`<p class="cx-note">${i('triangle-alert')}${esc(gapNote(g))}</p>`).join('')}`;$('#hsum').hidden=false;icons()}
     }catch(e){$('#hstatus').textContent=(e as Error).message}
   };
   on('#load',load);
@@ -359,49 +417,32 @@ function download(name:string,rows:(string|number)[][]){
 /* ---------- Reports ---------- */
 function renderReports(){
   const [from,to]=rangeFor('today');
-  $('#view').innerHTML=`<div class="page">
-    <div class="card card-pad" style="display:flex;flex-direction:column;gap:12px">
-      <div class="pills" id="rpresets">${[['today','Today'],['yesterday','Yesterday'],['week','Last 7 days'],['month','This month'],['custom','Custom']].map(([k,l],n)=>`<button data-preset="${k}" class="pill ${n?'':'on'}">${t(l)}</button>`).join('')}</div>
-      <div class="form-row" id="rcustom" hidden><label class="field">${t('From')}<input class="input" type="date" id="rfrom" value="${localInput(from).slice(0,10)}"></label><label class="field">${t('To')}<input class="input" type="date" id="rto" value="${localInput(to).slice(0,10)}"></label></div>
-      <div class="toolbar"><select class="input" id="rv" style="max-width:280px"><option value="">${t('All vehicles')}</option>${fleet.devices.map(d=>`<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select><button class="btn btn-primary" id="rload">${i('chart-column')}${t('Show report')}</button><button class="btn btn-ghost" id="rcsv" hidden>${i('download')}CSV</button></div>
-    </div>
-    <div class="stat-grid" id="rkpi"></div>
-    <div class="card" id="rtable"><div class="empty">${i('chart-column')}<h3>${t('Daily vehicle report')}</h3><p>${t('Distance, running time, idle time (engine on but standing) and speeds.')}</p></div></div></div>`;
+  $('#view').innerHTML=`<div class="cx-page">
+    <div class="cx-chips" id="rpresets">${[['today','Today'],['yesterday','Yesterday'],['week','Last 7 days'],['month','This month'],['custom','Custom']].map(([k,l],n)=>`<button data-preset="${k}" class="${n?'':'on'}">${t(l)}</button>`).join('')}</div>
+    <div class="cx-row2" id="rcustom" hidden><label class="cx-field">${t('From')}<input type="date" id="rfrom" value="${localInput(from).slice(0,10)}"></label><label class="cx-field">${t('To')}<input type="date" id="rto" value="${localInput(to).slice(0,10)}"></label><button class="cx-btn primary" id="rload">${t('Show report')}</button></div>
+    <label class="cx-field">${t('Vehicle')}<select id="rv"><option value="">${t('All vehicles')}</option>${fleet.devices.map(d=>`<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select></label>
+    <div class="cx-stats four" id="rkpi"></div>
+    <div id="rtable"></div>
+    <button class="cx-btn soft" id="rcsv" hidden>${i('download')}${t('Download CSV')}</button></div>`;
   let preset='today',last:VehicleReport[]=[];
   on('[data-preset]',el=>{preset=el.dataset.preset!;$$('#rpresets [data-preset]').forEach(b=>b.classList.toggle('on',b===el));$('#rcustom').hidden=preset!=='custom';if(preset!=='custom')void load()});
+  $<HTMLSelectElement>('#rv').onchange=()=>void load();
   const load=async()=>{
     const [from,to]=preset==='custom'?[new Date($<HTMLInputElement>('#rfrom').value+'T00:00'),new Date($<HTMLInputElement>('#rto').value+'T23:59:59')]:rangeFor(preset);
     if(!(+from<+to)||+to-+from>31*86400000){toast(t('Choose a range of up to 31 days.'),true);return}
-    $('#rtable').innerHTML=`<div class="empty"><p>${t('Calculating…')}</p></div>`;
+    $('#rtable').innerHTML=`<p class="cx-hint">${t('Calculating…')}</p>`;
     try{
       last=(await reports(from,to,$<HTMLSelectElement>('#rv').value||undefined)).vehicles;
       const sum=last.reduce((s,v)=>({km:s.km+v.total.distanceKm,run:s.run+v.total.runningMinutes,idle:s.idle+v.total.idleMinutes,max:Math.max(s.max,v.total.maxSpeed)}),{km:0,run:0,idle:0,max:0});
-      $('#rkpi').innerHTML=`<div class="stat"><span>${t('Total distance')}</span><b>${Math.round(sum.km*10)/10} <small>km</small></b><em class="si">${i('route')}</em></div><div class="stat"><span>${t('Running time')}</span><b>${hm(sum.run)}</b><em class="si run">${i('navigation')}</em></div><div class="stat"><span>${t('Idle time')}</span><b style="color:var(--idle)">${hm(sum.idle)}</b><em class="si">${i('pause')}</em></div><div class="stat"><span>${t('Top speed')}</span><b>${sum.max} <small>km/h</small></b><em class="si">${i('gauge')}</em></div>`;
+      $('#rkpi').innerHTML=`<div><span>${t('Total distance')}</span><b>${Math.round(sum.km*10)/10}<small>km</small></b></div><div><span>${t('Running time')}</span><b>${hm(sum.run)}</b></div><div><span>${t('Idle time')}</span><b>${hm(sum.idle)}</b></div><div><span>${t('Top speed')}</span><b>${sum.max}<small>km/h</small></b></div>`;
       const day=(date:string)=>new Date(date+'T00:00').toLocaleDateString(locale(),{weekday:'short',day:'2-digit',month:'short'});
-      $('#rtable').innerHTML=`<div class="table-wrap"><table class="table"><thead><tr><th>${t('Vehicle / day')}</th><th>${t('Distance')}</th><th>${t('Running')}</th><th>${t('Idle')}</th><th>${t('Max speed')}</th><th>${t('Avg speed')}</th><th class="hide-sm">${t('First / last move')}</th></tr></thead><tbody>${last.map(v=>`<tr><td><b class="plate">${esc(v.name)}</b></td><td><b>${v.total.distanceKm} km</b></td><td>${hm(v.total.runningMinutes)}</td><td>${hm(v.total.idleMinutes)}</td><td>${v.total.maxSpeed} km/h</td><td>${v.total.avgSpeed} km/h</td><td class="hide-sm"></td></tr>${v.days.map(d=>`<tr class="report-days"><td>&nbsp;&nbsp;${day(d.date)}</td><td>${d.distanceKm} km</td><td>${hm(d.runningMinutes)}</td><td>${hm(d.idleMinutes)}</td><td>${d.maxSpeed} km/h</td><td>${d.avgSpeed} km/h</td><td class="hide-sm">${d.firstMove?`${clock(d.firstMove)} – ${clock(d.lastMove)}`:'—'}</td></tr>${d.gaps.map(g=>`<tr class="report-days"><td colspan="7"><div class="gap-note">${i('triangle-alert')}${esc(gapNote(g))}</div></td></tr>`).join('')}`).join('')}`).join('')||`<tr><td colspan="7" class="muted">${t('No vehicles.')}</td></tr>`}</tbody></table></div>`;
+      $('#rtable').innerHTML=last.length?last.map(v=>`<h3 class="cx-section split"><span class="cx-plate">${esc(v.name)}</span><span>${v.total.distanceKm} km</span></h3><div class="cx-group">${v.days.map(d=>`<div class="cx-item static"><span class="cx-item-text"><b>${day(d.date)}</b><small>${t('Running')} ${hm(d.runningMinutes)} · ${t('Idle')} ${hm(d.idleMinutes)} · ${t('Max speed')} ${d.maxSpeed} km/h${d.firstMove?` · ${clock(d.firstMove)}–${clock(d.lastMove)}`:''}</small>${d.gaps.map(g=>`<p class="cx-note">${i('triangle-alert')}${esc(gapNote(g))}</p>`).join('')}</span><span class="cx-km">${d.distanceKm}<small>km</small></span></div>`).join('')||`<p class="cx-hint pad">${t('No movement recorded in this period.')}</p>`}</div>`).join(''):`<p class="cx-hint">${t('No vehicles.')}</p>`;
       $('#rcsv').hidden=!last.length;icons();
-    }catch(e){$('#rtable').innerHTML=`<div class="empty"><p class="error">${esc((e as Error).message)}</p></div>`}
+    }catch(e){$('#rtable').innerHTML=`<p class="cx-error">${esc((e as Error).message)}</p>`}
   };
   on('#rload',load);
   on('#rcsv',()=>download('waypoint-report.csv',[['Vehicle','Date','Distance km','Running min','Idle min','Max speed','Avg speed'],...last.flatMap(v=>v.days.map(d=>[v.name,d.date,d.distanceKm,d.runningMinutes,d.idleMinutes,d.maxSpeed,d.avgSpeed]))]));
   if(fleet.devices.length)void load();
-}
-
-/* ---------- Alerts ---------- */
-let alertsAll=false,alertsCat:Category|'all'='all';
-function renderAlerts(){
-  const open=(c:Category|'all')=>fleet.alerts.filter(a=>!a.acknowledged&&(c==='all'||categoryOf(a.type)===c)).length;
-  const list=fleet.alerts.filter(a=>(alertsAll||!a.acknowledged)&&(alertsCat==='all'||categoryOf(a.type)===alertsCat));
-  const style=(type:string)=>{const c=CATEGORIES.find(x=>x.key===categoryOf(type))!;const ic=type==='ignition_on'||type==='ignition_off'?'power':type==='online'?'activity':c.icon;const good=type==='ignition_on'||type==='online'||type==='share_resumed';return {ic,color:good?'var(--running)':type==='ignition_off'?'var(--stopped)':c.color}};
-  $('#view').innerHTML=`<div class="page"><div class="pills" id="cats"><button data-cat="all" class="pill ${alertsCat==='all'?'on':''}">${t('All')} <b>${open('all')}</b></button>${CATEGORIES.map(c=>`<button data-cat="${c.key}" class="pill ${alertsCat===c.key?'on':''}">${esc(t(c.label))} <b>${open(c.key)}</b></button>`).join('')}</div>
-    <div class="toolbar"><div class="seg"><button data-all="0" class="${alertsAll?'':'on'}">${t('Open')}</button><button data-all="1" class="${alertsAll?'on':''}">${t('All')}</button></div><span style="flex:1"></span>${open(alertsCat)?`<button class="btn btn-ghost btn-sm" id="ack-all">${i('check')}${t('Mark all seen')}</button>`:''}</div>
-    <div class="card">${list.map(a=>{const st=style(a.type),sos=a.type==='sos';return `<div class="alert-item ${a.acknowledged?'done':''} ${sos?'sos':''}"><span class="ico" style="background:var(--soft);color:${st.color}">${i(st.ic)}</span><div class="body"><b class="plate">${esc(a.deviceName)}</b><p>${esc(alertText(a))}</p><span class="small muted">${esc(t(CATEGORIES.find(c=>c.key===categoryOf(a.type))!.label))} · ${time(a.createdAt)}</span>${a.type==='share_stopped'||a.type==='share_expired'?`<div class="toolbar" style="margin-top:6px"><button class="btn btn-primary btn-sm" data-driver="${a.deviceId}">${i('share-2')}${t('Ask driver to share / new link')}</button></div>`:''}</div>${a.acknowledged?`<span class="chip plain ok">${i('check')}${t('Seen')}</span>`:`<button class="btn btn-ghost btn-sm" data-ack="${a.id}">${t('Mark seen')}</button>`}</div>`}).join('')||`<div class="empty">${i('bell')}<h3>${t('All clear')}</h3><p>${t(alertsCat==='all'?'SOS, engine, geofence, overspeed, hard braking and signal alerts appear here.':'Nothing in this category.')}</p></div>`}</div></div>`;
-  on('[data-cat]',el=>{alertsCat=el.dataset.cat as Category|'all';renderAlerts()});
-  on('[data-driver]',el=>{const v=vehicle(el.dataset.driver!);if(v)driverLink(v)});
-  on('[data-all]',el=>{alertsAll=el.dataset.all==='1';renderAlerts()});
-  on('[data-ack]',async el=>{await post(`/alerts/${el.dataset.ack}/ack`);fleet.alerts=fleet.alerts.map(a=>a.id===el.dataset.ack?{...a,acknowledged:1}:a);updateBadges();renderAlerts()});
-  on('#ack-all',async()=>{const ids=fleet.alerts.filter(a=>!a.acknowledged&&(alertsCat==='all'||categoryOf(a.type)===alertsCat)).map(a=>a.id);for(const id of ids)await post(`/alerts/${id}/ack`);const set=new Set(ids);fleet.alerts=fleet.alerts.map(a=>set.has(a.id)?{...a,acknowledged:1}:a);updateBadges();renderAlerts();toast(t('All marked seen.'))});
-  icons();
 }
 
 /* ---------- Places ---------- */
@@ -409,9 +450,13 @@ type Stop={latitude:number;longitude:number;visits:number;totalMinutes:number;la
 let stopsCache:{at:number;stops:Stop[]}|null=null;
 const kindLabel=(kind?:string)=>t((PLACE_KIND[kind||'other']||PLACE_KIND.other)[1]);
 function renderGeofences(){
-  $('#view').innerHTML=`<div class="page"><div class="toolbar"><p class="muted" style="flex:1">${t('Your own places: petrol pumps, dhabas, depots, loading points. They show on the map with their name, and you get an alert when a vehicle enters or leaves one.')}</p><button class="btn btn-primary" id="add-fence">${i('plus')}${t('Add place')}</button></div>
-    <div class="place-list">${fleet.fences.length?fleet.fences.map(f=>`<div class="card place-row"><span class="place-ico">${placeIcon(f.kind)}</span><div class="body"><b>${esc(f.name)}</b><small>${esc(kindLabel(f.kind))} · ${f.radius} m</small><small class="muted">${placeSpan(f,'fence-'+f.id)}</small></div><div class="actions"><button class="icon-btn" data-gfence="${f.id}" aria-label="${t('Google view')}">${i('layers')}</button><button class="icon-btn danger" data-del="${f.id}" aria-label="${t('Delete')}">${i('trash-2')}</button></div></div>`).join(''):`<div class="card empty">${i('map-pin')}<h3>${t('No places yet')}</h3><p>${t("Save a vehicle's current place, or name one of the suggested stops below.")}</p></div>`}</div>
-    <div class="card card-pad" id="suggested"><h2>${t('Suggested stops')}</h2><p class="hint">${t('Places where your vehicles stopped 10 minutes or more, at least 3 times in the last 14 days. Check what is there on Google and give it a name.')}</p><div id="stops"><p class="muted">${t('Looking at the last 14 days…')}</p></div></div></div>`;
+  $('#view').innerHTML=`<div class="cx-page">
+    <p class="cx-hint">${t('Your own places: petrol pumps, dhabas, depots, loading points. They show on the map with their name, and you get an alert when a vehicle enters or leaves one.')}</p>
+    <button class="cx-btn primary" id="add-fence">${i('plus')}${t('Add place')}</button>
+    ${fleet.fences.length?`<div class="cx-group">${fleet.fences.map(f=>`<div class="cx-item static"><span class="cx-ico emoji">${placeIcon(f.kind)}</span><span class="cx-item-text"><b>${esc(f.name)}</b><small>${esc(kindLabel(f.kind))} · ${f.radius} m · ${placeSpan(f,'fence-'+f.id,{short:true})}</small></span><button class="cx-icon" data-gfence="${f.id}" aria-label="${t('Google view')}">${i('layers')}</button><button class="cx-icon danger" data-del="${f.id}" aria-label="${t('Delete')}">${i('trash-2')}</button></div>`).join('')}</div>`:`<div class="cx-empty">${i('map-pin')}<h3>${t('No places yet')}</h3><p>${t("Save a vehicle's current place, or name one of the suggested stops below.")}</p></div>`}
+    <h3 class="cx-section">${t('Suggested stops')}</h3>
+    <p class="cx-hint">${t('Places where your vehicles stopped 10 minutes or more, at least 3 times in the last 14 days. Check what is there on Google and give it a name.')}</p>
+    <div id="stops"><p class="cx-hint">${t('Looking at the last 14 days…')}</p></div></div>`;
   on('#add-fence',()=>addFence());
   on('[data-gfence]',el=>{const f=fleet.fences.find(x=>x.id===el.dataset.gfence)!;googleModal(f.name,f.latitude,f.longitude)});
   on('[data-del]',async el=>{const f=fleet.fences.find(x=>x.id===el.dataset.del)!;if(!confirm(t('Delete place {n}?',{n:f.name})))return;await api(`/fences/${f.id}`,{method:'DELETE'});fleet=await api<Fleet>('/state');stopsCache=null;renderGeofences()});
@@ -420,14 +465,13 @@ function renderGeofences(){
 async function showStops(){
   try{
     if(!stopsCache||Date.now()-stopsCache.at>10*60000)stopsCache={at:Date.now(),stops:(await api<{stops:Stop[]}>('/stops?days=14')).stops};
-    const host=document.querySelector('#stops');if(!host)return;
+    const host=document.querySelector<HTMLElement>('#stops');if(!host)return;
     const stops=stopsCache.stops;
-    host.innerHTML=stops.length?stops.map((s,n)=>`<div class="alert-item"><span class="ico" style="background:var(--soft);color:var(--blue-600)">${i('circle-parking')}</span><div class="body"><b>${placeSpan(s,'stop-'+n)}</b><p>${t('{n} stops · {d} in all · last {t}',{n:s.visits,d:hm(s.totalMinutes),t:time(s.lastVisit)})}</p><span class="small muted">${esc(s.vehicles.join(', '))}</span>
-      <div class="toolbar" style="margin-top:6px"><button class="btn btn-ghost btn-sm" data-sgoogle="${n}">${i('layers')}${t('Show on Google')}</button><button class="btn btn-primary btn-sm" data-sname="${n}">${i('plus')}${t('Name this place')}</button></div></div></div>`).join(''):`<p class="muted">${t('No regular stops yet. They appear once a vehicle has stopped at the same place 3 times.')}</p>`;
-    on('[data-sgoogle]',el=>{const s=stops[Number(el.dataset.sgoogle)];googleModal(t('Stop · {n} visits',{n:s.visits}),s.latitude,s.longitude)},host as HTMLElement);
-    on('[data-sname]',el=>{const s=stops[Number(el.dataset.sname)];addFence({latitude:s.latitude,longitude:s.longitude,radius:150})},host as HTMLElement);
+    host.innerHTML=stops.length?`<div class="cx-group">${stops.map((s,n)=>`<div class="cx-item static"><span class="cx-ico">${i('circle-parking')}</span><span class="cx-item-text"><b>${placeSpan(s,'stop-'+n,{short:true})}</b><small>${t('{n} stops · {d} in all · last {t}',{n:s.visits,d:hm(s.totalMinutes),t:time(s.lastVisit)})} · ${esc(s.vehicles.join(', '))}</small></span><button class="cx-icon" data-sgoogle="${n}" aria-label="${t('Show on Google')}">${i('layers')}</button><button class="cx-btn soft sm" data-sname="${n}">${t('Name')}</button></div>`).join('')}</div>`:`<p class="cx-hint">${t('No regular stops yet. They appear once a vehicle has stopped at the same place 3 times.')}</p>`;
+    on('[data-sgoogle]',el=>{const s=stops[Number(el.dataset.sgoogle)];googleModal(t('Stop · {n} visits',{n:s.visits}),s.latitude,s.longitude)},host);
+    on('[data-sname]',el=>{const s=stops[Number(el.dataset.sname)];addFence({latitude:s.latitude,longitude:s.longitude,radius:150})},host);
     icons();
-  }catch(e){const host=document.querySelector('#stops');if(host)host.innerHTML=`<p class="error">${esc((e as Error).message)}</p>`}
+  }catch(e){const host=document.querySelector('#stops');if(host)host.innerHTML=`<p class="cx-error">${esc((e as Error).message)}</p>`}
 }
 function addFence(at?:{latitude:number;longitude:number;radius:number}){
   const withPos=fleet.devices.filter(d=>d.position);
@@ -443,31 +487,29 @@ function addFence(at?:{latitude:number;longitude:number;radius:number}){
   if(from){from.onchange=()=>{const d=vehicle(from.value);if(d?.position){form.latitude.value=d.position.latitude.toFixed(6);form.longitude.value=d.position.longitude.toFixed(6)}};if(withPos[0]){from.value=withPos[0].id;from.dispatchEvent(new Event('change'))}}
   // Opens Google in its own tab so the form being filled in is not lost.
   on('#fence-google',()=>{const lat=Number(form.latitude.value),lon=Number(form.longitude.value);if(Number.isFinite(lat)&&Number.isFinite(lon))window.open(mapsLink({latitude:lat,longitude:lon}),'_blank','noopener')});
-  form.addEventListener('submit',async e=>{e.preventDefault();const v=Object.fromEntries(new FormData(form));try{await post('/fences',{name:v.name,kind:v.kind,latitude:Number(v.latitude),longitude:Number(v.longitude),radius:Number(v.radius)});closeModal();fleet=await api<Fleet>('/state');stopsCache=null;if(view==='geofences')renderGeofences();else if(view==='map')updateLive();toast(t('Place saved.'))}catch(err){$('#fence-error').textContent=(err as Error).message}});
+  form.addEventListener('submit',async e=>{e.preventDefault();const v=Object.fromEntries(new FormData(form));try{await post('/fences',{name:v.name,kind:v.kind,latitude:Number(v.latitude),longitude:Number(v.longitude),radius:Number(v.radius)});closeModal();fleet=await api<Fleet>('/state');stopsCache=null;if(view==='geofences')renderGeofences();toast(t('Place saved.'))}catch(err){$('#fence-error').textContent=(err as Error).message}});
 }
 
 /* ---------- Overspeed and driver link ---------- */
 // The owner's own overspeed limit and on/off switch for one vehicle.
 function speedForm(d:Vehicle,compact=false){
-  return `<form class="form speed-form" data-speed="${d.id}">${compact?`<b class="plate">${esc(d.name)}</b>`:''}
-    <div class="form-row"><label class="field">${t('Speed limit (km/h)')}<input class="input" type="number" name="speedLimit" min="1" max="250" step="1" required value="${d.speedLimit}"></label>
-    <label class="switch-row" style="align-self:end"><span>${t('Alert me when crossed')}</span><input type="checkbox" class="switch" name="speedAlert" ${d.speedAlert===false?'':'checked'}></label></div>
-    <p class="error"></p><button class="btn btn-primary btn-sm" type="submit" style="align-self:flex-start">${i('save')}${t('Save')}</button></form>`;
+  return `<form class="form speed-form" data-speed="${d.id}">${compact?`<b class="cx-plate">${esc(d.name)}</b>`:''}
+    <label class="field">${t('Speed limit (km/h)')}<input class="input" type="number" name="speedLimit" min="1" max="250" step="1" required value="${d.speedLimit}"></label>
+    <label class="cx-item flat"><span class="cx-item-text"><b>${t('Alert me when crossed')}</b></span><input type="checkbox" class="cx-switch" name="speedAlert" ${d.speedAlert===false?'':'checked'}></label>
+    <p class="error"></p><button class="btn btn-primary" type="submit">${t('Save')}</button></form>`;
 }
-function bindSpeedForms(root:ParentNode,done?:()=>void){
-  root.querySelectorAll<HTMLFormElement>('form[data-speed]').forEach(form=>form.addEventListener('submit',async e=>{
+function speedSettings(d?:Vehicle,done?:()=>void){
+  const list=d?[d]:fleet.devices;
+  modal(d?`${d.name} · ${t('Overspeed')}`:t('Overspeed limits'),`<p class="hint">${t('As soon as a vehicle goes faster than its limit you get an alert, a pop-up and a voice message.')}</p>${list.length?list.map(v=>speedForm(v,!d)).join('<hr class="sep">'):`<p class="muted">${t('No vehicles yet.')}</p>`}`);
+  document.querySelectorAll<HTMLFormElement>('dialog.modal form[data-speed]').forEach(form=>form.addEventListener('submit',async e=>{
     e.preventDefault();const f=new FormData(form),err=form.querySelector('.error')!;err.textContent='';
     try{
       const r=await post<{speedLimit:number;speedAlert:boolean}>(`/devices/${form.dataset.speed}/speed`,{speedLimit:Number(f.get('speedLimit')),speedAlert:f.has('speedAlert')},'PUT');
       const v=vehicle(form.dataset.speed!);if(v){v.speedLimit=r.speedLimit;v.speedAlert=r.speedAlert}
-      unlockVoice();toast(r.speedAlert?t('Overspeed alert on at {n} km/h.',{n:r.speedLimit}):t('Overspeed alert switched off.'));done?.();
+      unlockVoice();toast(r.speedAlert?t('Overspeed alert on at {n} km/h.',{n:r.speedLimit}):t('Overspeed alert switched off.'));
+      if(d)closeModal();done?.();
     }catch(x){err.textContent=(x as Error).message}
   }));
-}
-function speedSettings(d?:Vehicle){
-  const list=d?[d]:fleet.devices;
-  modal(d?`${d.name} · ${t('Overspeed')}`:t('Overspeed limits'),`<p class="hint">${t('As soon as a vehicle goes faster than its limit you get an alert, a pop-up and a voice message.')}</p>${list.length?list.map(v=>speedForm(v,!d)).join('<hr class="sep">'):`<p class="muted">${t('No vehicles yet.')}</p>`}`);
-  bindSpeedForms(document.querySelector('dialog.modal')!,()=>{if(d){closeModal();renderSheet()}});
 }
 const SHARE_FOR:[number,string][]=[[4,'4 hours'],[12,'12 hours'],[24,'1 day'],[168,'1 week'],[720,'1 month'],[8760,'1 year']];
 function driverLink(d:Vehicle){
@@ -501,75 +543,71 @@ function driverLink(d:Vehicle){
 
 /* ---------- Documents / E-way (existing module) ---------- */
 async function renderDocuments(section:'Documents'|'E-way bills'){
-  const host=$('#view');host.innerHTML=`<div class="page"><p class="muted">${t('Loading…')}</p></div>`;
-  try{const {mountDocuments}=await import('../main');const page=document.createElement('div');page.className='page';host.replaceChildren(page);mountDocuments(page,section,fleet.devices.map(d=>({name:d.name,model:'',driver:d.driver})))}
-  catch{host.innerHTML=`<div class="page"><p class="error">${t('Unable to load this section. Refresh to retry.')}</p></div>`}
+  const host=$('#view');host.innerHTML=`<div class="cx-page"><p class="cx-hint">${t('Loading…')}</p></div>`;
+  try{const {mountDocuments}=await import('../main');const page=document.createElement('div');page.className='cx-page cx-docs';host.replaceChildren(page);mountDocuments(page,section,fleet.devices.map(d=>({name:d.name,model:'',driver:d.driver})))}
+  catch{host.innerHTML=`<div class="cx-page"><p class="cx-error">${t('Unable to load this section. Refresh to retry.')}</p></div>`}
 }
 
 /* ---------- Settings ---------- */
-const row=(icon:string,title:string,sub:string,control:string,id='')=>`<div class="set-row"${id?` id="${id}"`:''}><span class="set-ico">${i(icon)}</span><div class="set-text"><b>${title}</b><small>${sub}</small></div>${control}</div>`;
-const toggle=(attr:string)=>`<input type="checkbox" class="switch" ${attr}>`;
+const item=(icon:string,title:string,sub:string,end:string)=>`<label class="cx-item"><span class="cx-ico">${i(icon)}</span><span class="cx-item-text"><b>${title}</b>${sub?`<small>${sub}</small>`:''}</span>${end}</label>`;
+const sw=(attr:string)=>`<input type="checkbox" class="cx-switch" ${attr}>`;
 function renderSettings(){
   const p=prefs(),np=notifyPrefs(),lang=getLang();
   const limits=[...new Set(fleet.devices.map(d=>d.speedLimit))];
-  $('#view').innerHTML=`<div class="page settings">
-    <section class="card profile"><div class="profile-top"><span class="avatar xl">${initial(p.workspace)}</span><div class="profile-text"><h2>${esc(p.name||p.workspace)}</h2><span class="muted">${esc(p.workspace)}</span><span class="muted">${i('mail')}${esc(me.email||'')}</span></div><button class="icon-btn" id="edit-profile" aria-label="${t('Edit profile')}">${i('pencil')}</button></div>
-      <div class="profile-band">${i('truck')}<span><b>${t('{n} GPS vehicles active',{n:fleet.devices.length})}</b><small>${t('Live GPS tracking')}</small></span></div></section>
+  $('#view').innerHTML=`<div class="cx-page">
+    <button class="cx-profile" id="edit-profile"><span class="cx-avatar lg">${initial(p.workspace)}</span><span><b>${esc(p.name||p.workspace)}</b><small>${esc(p.workspace)} · ${esc(me.email||'')}</small></span>${i('pencil')}</button>
 
-    <section class="card set-card"><div class="set-head"><span class="set-badge">${i('bell')}</span><div><h2>${t('GPS & alert settings')}</h2><small>${t('Telemetry and security alerts')}</small></div></div>
-      ${row('gauge',t('Overspeed alert limit'),limits.length===1?t('Speed limit: {n} km/h',{n:limits[0]}):t('Set for each vehicle'),`<button class="btn btn-soft btn-sm" id="edit-speed">${t('Change')}</button>`)}
-      ${row('message-square',t('Show a pop-up message'),t('A short message on screen for every alert'),toggle('data-n="popup"'))}
-      ${row('volume-2',t('Speak alerts aloud'),voiceSupported()?t('Vehicle started, engine off, SOS, overspeed…'):t('Not supported in this browser'),toggle('data-n="voice"'))}
-      ${row('bell-ring',t('Browser notifications'),`<span id="browser-note"></span>`,toggle('data-n="browser"'))}
-      <h3 class="set-sub">${t('Which alerts?')}</h3>
-      ${CATEGORIES.map(c=>row(c.icon,esc(t(c.label)),esc(t(c.hint)),toggle(`data-cat-n="${c.key}"`))).join('')}
-      <p class="hint">${t('Voice and notifications work while Waypoint is open in a browser tab, including a background tab. They stop when the tab or browser is closed or the phone suspends it.')}</p></section>
+    <h3 class="cx-section">${t('Language')}</h3>
+    <div class="cx-seg">${LANGS.map(([k,l])=>`<button data-lang="${k}" class="${lang===k?'on':''}">${l}</button>`).join('')}</div>
 
-    <section class="card set-card"><div class="set-head"><span class="set-badge">${i('languages')}</span><div><h2>${t('App language & voice guide')}</h2><small>${t('Language and voice assistance')}</small></div></div>
-      <p class="set-sub">${t('Choose app language')}</p>
-      <div class="lang-seg">${LANGS.map(([k,l,s])=>`<button data-lang="${k}" class="${lang===k?'on':''}"><b>${l}</b><small>${k==='hi'?`${s} · ${t('Default')}`:s}</small></button>`).join('')}</div>
-      <div class="toolbar"><button class="btn btn-ghost btn-sm" type="button" id="test-voice">${i('play')}${t('Test voice')}</button></div></section>
+    <h3 class="cx-section">${t('Alert notifications')}</h3>
+    <div class="cx-group">
+      ${item('message-square',t('Show a pop-up message'),'',sw('data-n="popup"'))}
+      ${item('volume-2',t('Speak alerts aloud'),voiceSupported()?t('Vehicle started, engine off, SOS, overspeed…'):t('Not supported in this browser'),sw('data-n="voice"'))}
+      ${item('bell-ring',t('Browser notifications'),'<span id="browser-note"></span>',sw('data-n="browser"'))}
+      <button class="cx-item" id="test-voice"><span class="cx-ico">${i('play')}</span><span class="cx-item-text"><b>${t('Test voice')}</b></span>${i('chevron-right')}</button>
+    </div>
 
-    <section class="card set-card"><div class="set-head"><span class="set-badge">${i('sliders-horizontal')}</span><div><h2>${t('App preferences')}</h2><small>${t('How the app opens and follows vehicles')}</small></div></div>
-      ${row('house',t('Open the app on'),'',`<select class="input compact" id="default-view">${NAV.map(([v,l])=>`<option value="${v}" ${p.defaultView===v?'selected':''}>${t(l)}</option>`).join('')}</select>`)}
-      ${row('locate-fixed',t('Keep the map centred on the selected vehicle'),'',toggle(`id="follow-pref" ${p.follow?'checked':''}`))}
-      ${DEMO_MODE?'':row('key-round',t('Change password'),t('Your other devices will be signed out.'),`<button class="btn btn-soft btn-sm" id="change-password">${t('Change')}</button>`)}</section>
+    <h3 class="cx-section">${t('Which alerts?')}</h3>
+    <div class="cx-group">${CATEGORIES.map(c=>item(c.icon,esc(t(c.label)),esc(t(c.hint)),sw(`data-cat-n="${c.key}"`))).join('')}</div>
 
-    <div class="app-foot"><span class="muted">${t('App version: {v}',{v:APP_VERSION})}</span><span class="ok-line"><i class="dot" style="background:var(--running)"></i>${t('Server online')}</span></div>
-    <button class="btn btn-sos-soft btn-block" data-logout>${i('log-out')}${t('Sign out securely')}</button></div>`;
+    <h3 class="cx-section">${t('Vehicles')}</h3>
+    <div class="cx-group">
+      <button class="cx-item" id="edit-speed"><span class="cx-ico">${i('gauge')}</span><span class="cx-item-text"><b>${t('Overspeed alert limit')}</b><small>${limits.length===1?t('Speed limit: {n} km/h',{n:limits[0]}):t('Set for each vehicle')}</small></span>${i('chevron-right')}</button>
+      ${item('locate-fixed',t('Keep the map centred on the selected vehicle'),'',sw(`id="follow-pref" ${p.follow?'checked':''}`))}
+      ${item('house',t('Open the app on'),'',`<select class="cx-select" id="default-view">${(['home','map','alerts'] as View[]).map(v=>`<option value="${v}" ${p.defaultView===v?'selected':''}>${t(TITLES[v])}</option>`).join('')}</select>`)}
+    </div>
+
+    ${DEMO_MODE?'':`<h3 class="cx-section">${t('Security')}</h3><div class="cx-group"><button class="cx-item" id="change-password"><span class="cx-ico">${i('key-round')}</span><span class="cx-item-text"><b>${t('Change password')}</b><small>${t('Your other devices will be signed out.')}</small></span>${i('chevron-right')}</button></div>`}
+
+    <div class="cx-group spaced"><button class="cx-item danger" data-logout><span class="cx-ico">${i('log-out')}</span><span class="cx-item-text"><b>${t('Sign out securely')}</b></span></button></div>
+    <p class="cx-foot">${t('App version: {v}',{v:APP_VERSION})} · <span class="ok">● ${t('Server online')}</span></p>
+  </div>`;
   const note=()=>{const st=browserState();$('#browser-note').textContent=!browserSupported()?t('This browser cannot show notifications.'):st==='denied'?t('Blocked. Allow them from the lock icon in the address bar.'):st==='granted'?t('Allowed. Shown when this tab is in the background.'):t('Shown when this tab is in the background.')};
   $$<HTMLInputElement>('[data-n]').forEach(box=>{const k=box.dataset.n as 'popup'|'voice'|'browser';box.checked=np[k];box.addEventListener('change',async()=>{
     if(k==='browser'&&box.checked){const r=await askBrowserPermission();if(r!=='granted'){box.checked=false;note();toast(t('Browser notifications were not allowed.'),true);return}}
     if(k==='voice')unlockVoice();
-    np[k]=box.checked;$$<HTMLInputElement>(`[data-n="${k}"]`).forEach(b=>b.checked=box.checked);await saveNotify(np);note();toast(t('Saved.'))})});
+    np[k]=box.checked;await saveNotify(np);note();toast(t('Saved.'))})});
   $$<HTMLInputElement>('[data-cat-n]').forEach(box=>{const k=box.dataset.catN as Category;box.checked=np.categories[k];box.addEventListener('change',async()=>{np.categories[k]=box.checked;await saveNotify(np);toast(t('Saved.'))})});
-  on('[data-lang]',el=>{setLang(el.dataset.lang as Lang);shell();toast(t('Language changed.'))});
-  on('#test-voice',()=>{unlockVoice();speakAlert('Vehicle {n} started',{n:'MH 12 AB 1234'})});note();
-  on('#edit-speed',()=>speedSettings());
+  on('[data-lang]',el=>{setLang(el.dataset.lang as Lang);render();toast(t('Language changed.'))});
+  on('#test-voice',()=>{unlockVoice();speakAlert('Vehicle {n} started',{n:fleet.devices[0]?.name||'MH 12 AB 1234'})});note();
+  on('#edit-speed',()=>speedSettings(undefined,renderSettings));
   on('#edit-profile',editProfile);
   on('#change-password',changePassword);
   $<HTMLSelectElement>('#default-view').onchange=async e=>{await savePrefs({defaultView:(e.target as HTMLSelectElement).value as View});toast(t('Saved.'))};
-  $<HTMLInputElement>('#follow-pref').onchange=async e=>{const on=(e.target as HTMLInputElement).checked;await savePrefs({follow:on});following=on;toast(t('Saved.'))};
+  $<HTMLInputElement>('#follow-pref').onchange=async e=>{const v=(e.target as HTMLInputElement).checked;await savePrefs({follow:v});following=v;toast(t('Saved.'))};
   on('[data-logout]',logout);icons();
 }
-async function savePrefs(change:Partial<Prefs>){await workspaceStorage.setItem('workspace-preferences',JSON.stringify({...prefs(),...change}))}
 function editProfile(){
   const p=prefs();
   modal(t('Edit profile'),`<form class="form" id="prefs"><label class="field">${t('Your name')}<input class="input" name="name" maxlength="100" value="${esc(p.name)}"></label><label class="field">${t('Fleet name')}<input class="input" name="workspace" maxlength="100" required value="${esc(p.workspace)}"></label>
-    <p class="error" id="prefs-error"></p><button class="btn btn-primary" type="submit">${i('save')}${t('Save')}</button></form>`);
-  $('#prefs').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target as HTMLFormElement);try{await savePrefs({name:String(f.get('name')).trim(),workspace:String(f.get('workspace')).trim()||t('My fleet')});closeModal();toast(t('Saved.'));shell()}catch(err){$('#prefs-error').textContent=(err as Error).message}});
+    <p class="error" id="prefs-error"></p><button class="btn btn-primary" type="submit">${t('Save')}</button></form>`);
+  $('#prefs').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target as HTMLFormElement);try{await savePrefs({name:String(f.get('name')).trim(),workspace:String(f.get('workspace')).trim()||t('My fleet')});closeModal();toast(t('Saved.'));render()}catch(err){$('#prefs-error').textContent=(err as Error).message}});
 }
 function changePassword(){
   modal(t('Change password'),`<form class="form" id="password"><p class="hint">${t('Signed in as {e}. Your other devices will be signed out.',{e:esc(me.email)})}</p>
     <label class="field">${t('Current password')}<input class="input" type="password" name="currentPassword" required autocomplete="current-password"></label>
     <label class="field">${t('New password')}<input class="input" type="password" name="newPassword" required minlength="12" maxlength="128" autocomplete="new-password"></label><label class="field">${t('Confirm new password')}<input class="input" type="password" name="confirmPassword" required minlength="12" maxlength="128" autocomplete="new-password"></label>
-    <p class="hint">${t('At least 12 characters.')}</p><p class="error" id="password-error"></p><button class="btn btn-primary" type="submit">${i('key-round')}${t('Change password')}</button></form>`);
+    <p class="hint">${t('At least 12 characters.')}</p><p class="error" id="password-error"></p><button class="btn btn-primary" type="submit">${t('Change password')}</button></form>`);
   $('#password').addEventListener('submit',async e=>{e.preventDefault();const form=e.target as HTMLFormElement,f=new FormData(form);$('#password-error').textContent='';try{if(f.get('newPassword')!==f.get('confirmPassword'))throw Error(t('New passwords do not match.'));await post('/account/password',{currentPassword:f.get('currentPassword'),newPassword:f.get('newPassword')});closeModal();toast(t('Password changed.'))}catch(err){$('#password-error').textContent=(err as Error).message}});
-}
-
-/* ---------- Menu ---------- */
-function renderMore(){
-  const items=NAV.filter(([v])=>!ROOT.includes(v));
-  $('#view').innerHTML=`<div class="page menu-page"><div class="tiles">${items.map(([v,label,icon])=>`<button class="tile" data-go="${v}"><span class="tile-ico">${i(icon)}</span><b>${t(label)}</b><small>${t(HINTS[v]||'')}</small></button>`).join('')}</div></div>`;
-  on('#view [data-go]',el=>go(el.dataset.go as View));icons();
 }
