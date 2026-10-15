@@ -267,6 +267,9 @@ export class PostgresTrackingStore {
     return { positions: rows, next: more ? rows.at(-1).id : null };
   }
   async alert(id,type,message,at=this.now()) { (await this.db.prepare('INSERT INTO alerts(id,deviceId,type,message,createdAt) VALUES (?,?,?,?,?)').run(randomUUID(),id,type,message,at)); }
+  // Newest rows by arrival time: fixes and the heartbeats the receiver stores as copies of the last fix.
+  async recentPackets(id,limit=100){(await this.raw(id));return (await this.db.prepare('SELECT * FROM positions WHERE deviceId=? ORDER BY receivedAt DESC,id DESC LIMIT ?').all(id,limit));}
+  async deviceAlerts(id,limit=20){return (await this.db.prepare('SELECT * FROM alerts WHERE deviceId=? ORDER BY createdAt DESC LIMIT ?').all(id,limit));}
   async alerts(tenantId){return tenantId?(await this.db.prepare('SELECT alerts.*,devices.name AS deviceName FROM alerts JOIN devices ON devices.id=alerts.deviceId WHERE devices.tenantId=? ORDER BY alerts.createdAt DESC LIMIT 200').all(tenantId)):(await this.db.prepare('SELECT alerts.*,devices.name AS deviceName FROM alerts JOIN devices ON devices.id=alerts.deviceId ORDER BY alerts.createdAt DESC LIMIT 200').all());}
   async acknowledge(id,tenantId){const result=tenantId?(await this.db.prepare('UPDATE alerts SET acknowledged=1 WHERE id=? AND deviceId IN (SELECT id FROM devices WHERE tenantId=?)').run(id,tenantId)):(await this.db.prepare('UPDATE alerts SET acknowledged=1 WHERE id=?').run(id));if(!result.changes)fail(404,'Alert not found.');}
   async fences(tenantId){return tenantId?(await this.db.prepare('SELECT * FROM fences WHERE tenantId=? ORDER BY name').all(tenantId)):(await this.db.prepare('SELECT * FROM fences ORDER BY name').all());}

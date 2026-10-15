@@ -279,5 +279,6 @@ dialog.modal::backdrop{background:#0f1d3d66;backdrop-filter:blur(2px)}
   .form-row{grid-template-columns:1fr}
   .toast{bottom:calc(var(--tabbar) + 14px)}
   .hide-sm{display:none}
+  .dp-cols{grid-template-columns:1fr!important}
 }
 @media (min-width:901px){.grabber,.show-sm{display:none}}

@@ -211,6 +211,14 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
           const result=await store.createDevice(input,tenant);if(backgroundTasks)void bridge.sync();return json(res,201,result);
         }
         const adminDevice=path.match(/^\/api\/gps\/admin\/devices\/([\w-]+)$/);
+        if(adminDevice&&method==='GET'){
+          const id=adminDevice[1],device=await store.device(id),tz=Number(url.searchParams.get('tz')??-330);
+          let customer=null;if(device.tenantId!=='owner')try{customer=await store.customer(device.tenantId)}catch{/* customer removed */}
+          // Today in the admin's own time zone.
+          const start=new Date(Date.now()-tz*60000);start.setUTCHours(0,0,0,0);const from=start.getTime()+tz*60000;
+          const today=(await vehicleReport(store,[device],from,Date.now(),Number.isInteger(tz)?tz:-330)).vehicles[0]?.days.at(-1)||null;
+          return json(res,200,{device:{...device,customerId:customer?.id||null,customerName:customer?.name||null},packets:await store.recentPackets(id,100),alerts:await store.deviceAlerts(id,20),today,gateway:bridge.state});
+        }
         if(adminDevice&&method==='PATCH')return json(res,200,await store.updateDevice(adminDevice[1],await body(req)));
         if(adminDevice&&method==='DELETE'){await store.deleteDevice(adminDevice[1]);return json(res,200,{ok:true});}
         if(path==='/api/gps/admin/admins'&&method==='GET')return json(res,200,{admins:await store.admins()});

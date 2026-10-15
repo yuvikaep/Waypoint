@@ -170,6 +170,10 @@ test('admin console manages every customer vehicle; customers only see their own
   assert.equal(overview.devices.total,1);assert.equal(overview.customers.total,2);assert.equal(overview.devices.unassigned,0);
   assert.equal((await (await call('/customers','GET',null,admin)).json()).customers.find(c=>c.id===a.customer.id).devices,1);
 
+  const detail=await (await call(`/admin/devices/${truck.id}?tz=-330`,'GET',null,admin)).json();
+  assert.equal(detail.device.customerName,'Alpha Fleet');assert.equal(detail.device.uniqueId,'867111062240426');
+  assert.equal(detail.packets.length,1);assert.equal(detail.alerts[0].message,'Over limit');
+  assert.equal((await call(`/admin/devices/${truck.id}`,'GET',null,alpha)).status,403);
   // Reassign to Beta: it leaves Alpha's fleet and joins Beta's.
   const moved=await call(`/admin/devices/${truck.id}`,'PATCH',{customerId:b.customer.id,name:'MH 12 AB 9999',speedLimit:60},admin);
   assert.equal(moved.status,200);assert.equal((await moved.json()).name,'MH 12 AB 9999');
