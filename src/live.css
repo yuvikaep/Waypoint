@@ -36,3 +36,4 @@ html{scrollbar-gutter:stable}
 .gps-pin .truck-icon .ribs{fill:none;stroke:#fff;stroke-opacity:.45;stroke-width:1.2}
 .leaflet-tooltip.truck-tooltip{padding:5px 8px;border-radius:6px;border:0;box-shadow:0 2px 8px #0003;width:max-content;max-width:230px;white-space:normal}
 .truck-tag{display:flex;flex-direction:column;gap:1px;line-height:1.25}.truck-tag strong{font-size:12px}.truck-tag small{font-size:11px;color:#4d625e}.truck-tag small:empty{display:none}
+.form-hint{margin:0;font-size:12px;color:var(--muted);line-height:1.5}

@@ -53,3 +53,26 @@ test('PostgreSQL durable fleet, links, sessions, and real heartbeat contracts', 
     assert.equal((await store.history(hardware.id,now-60000,now+60000)).positions.length,1);
   }finally{await store?.close();await client.end();}
 });
+
+test('PostgreSQL password change and admin recovery reset', {skip:!process.env.TEST_DATABASE_URL}, async()=>{
+  const client=new pg.Client({connectionString:process.env.TEST_DATABASE_URL});await client.connect();
+  let store;
+  try{
+    store=await PostgresTrackingStore.create({client});
+    await client.query('DELETE FROM admins');
+    const admin=await store.createAdmin(`boss-${crypto.randomUUID()}@example.test`);
+    const customer=await store.registerCustomer({name:'Pw customer',email:`pw-${crypto.randomUUID()}@example.test`,password:'first-password-1234'});
+    await assert.rejects(store.changePassword('customer',customer.email,'wrong-password-1234','second-password-1234'),e=>e.status===400&&/incorrect/.test(e.message));
+    await assert.rejects(store.changePassword('customer',customer.email,'first-password-1234','short'),e=>e.status===400);
+    await store.changePassword('customer',customer.email,'first-password-1234','second-password-1234');
+    await assert.rejects(store.customerLogin(customer.email,'first-password-1234'),e=>e.status===401);
+    assert.equal((await store.customerLogin(customer.email,'second-password-1234')).id,customer.id);
+    const reset=await store.resetAdminPassword();
+    assert.equal(reset.email,admin.email);
+    await assert.rejects(store.adminLogin(admin.email,admin.password),e=>e.status===401);
+    await store.changePassword('admin',admin.email,reset.password,'admin-chosen-password-9');
+    assert.equal((await store.adminLogin(admin.email,'admin-chosen-password-9')).email,admin.email);
+    await store.createAdmin(`second-${crypto.randomUUID()}@example.test`);
+    await assert.rejects(store.resetAdminPassword(),e=>e.status===409);
+  }finally{await store?.close();await client.end();}
+});

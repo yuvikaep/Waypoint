@@ -67,6 +67,13 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
         res.setHeader('Set-Cookie',`waypoint_session=${session}; HttpOnly; SameSite=Strict; Path=/api/gps; Max-Age=43200${publicOrigin?.startsWith('https:')?'; Secure':''}`);
         return json(res,200,{ok:true});
       }
+      if(path==='/api/gps/admin/reset-password'&&method==='POST'){
+        // Recovery only: the server maintenance key already grants full admin access.
+        await limited(`login:${clientAddress}`,10);
+        const input=await body(req);
+        if(typeof input.token!=='string'||hash(input.token)!==hash(adminToken))fail(401,'Incorrect workspace access key.');
+        return json(res,200,await store.resetAdminPassword(input.email));
+      }
       if(path==='/api/gps/admin/session'&&method==='POST'){
         await limited(`admin-login:${clientAddress}`,10);
         const input=await body(req),admin=await store.adminLogin(input.email,input.password);
@@ -126,6 +133,20 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
         if(method==='GET')return json(res,200,{value:await store.workspaceData(session.tenantId,key)});
         if(method==='PUT')return json(res,200,await store.saveWorkspaceData(session.tenantId,key,(await body(req,26*1024*1024)).value));
         fail(405,'Method not allowed.');
+      }
+      if(path==='/api/gps/account/password'&&method==='POST'){
+        await limited(`password:${clientAddress}`,10);
+        if(!session.email)fail(400,'Sign in with your admin email and password to change it.');
+        const input=await body(req);
+        await store.changePassword(session.role==='admin'?'admin':'customer',session.email,input.currentPassword,input.newPassword);
+        if(session.role==='customer'){
+          // Sign out every other device of this customer, then keep this browser signed in.
+          await sessions.set(generationKey(session.tenantId),token());
+          await sessions.delete(hash(cookie));
+          const fresh=token();await saveSession(hash(fresh),{role:'customer',tenantId:session.tenantId,name:session.name,email:session.email,expiresAt:Date.now()+12*3600000});
+          res.setHeader('Set-Cookie',`waypoint_session=${fresh}; HttpOnly; SameSite=Strict; Path=/api/gps; Max-Age=43200${publicOrigin?.startsWith('https:')?'; Secure':''}`);
+        }
+        return json(res,200,{ok:true});
       }
       if (path==='/api/gps/session' && method==='DELETE') {
         await sessions.delete(hash(cookie));res.setHeader('Set-Cookie','waypoint_session=; HttpOnly; SameSite=Strict; Path=/api/gps; Max-Age=0');return json(res,200,{ok:true});

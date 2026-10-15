@@ -80,3 +80,45 @@ test('customer can sign up but receives no admin access',async t=>{
   assert.equal((await fetch(base+'/customers/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'Duplicate',email:'new@example.test',password:'strong-passphrase-123'})})).status,409);
   assert.equal((await fetch(base+'/customers/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'Weak',email:'weak@example.test',password:'short'})})).status,400);
 });
+
+test('users change their own password; a maintenance-key reset gives the admin a temporary one',async t=>{
+  const store=new TrackingStore(':memory:');t.after(()=>store.close());
+  const adminKey='customer-test-admin-secret-12345';
+  const admin=store.createAdmin('boss@example.test');
+  const customer=store.createCustomer({name:'Gamma Fleet',email:'gamma@example.test'});
+  const server=createTrackingServer({store,adminToken:adminKey,bridge:{state:{configured:false,connected:false},sync:async()=>{}}});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>{server.close(resolve);server.closeAllConnections()}));
+  const base=`http://127.0.0.1:${server.address().port}/api/gps`;
+  const post=(path,body,cookie)=>fetch(base+path,{method:'POST',headers:{'Content-Type':'application/json',...(cookie?{cookie}:{})},body:JSON.stringify(body)});
+  const cookieOf=r=>r.headers.get('set-cookie').split(';')[0];
+
+  // Customer: wrong current password, too short, then success; old password stops working.
+  const c1=cookieOf(await post('/customers/session',{email:customer.customer.email,password:customer.password}));
+  const c2=cookieOf(await post('/customers/session',{email:customer.customer.email,password:customer.password}));
+  {const wrong=await post('/account/password',{currentPassword:'wrong-password-12345',newPassword:'a-brand-new-password-1'},c1);assert.equal(wrong.status,400);assert.match((await wrong.json()).error,/Current password is incorrect/);}
+  assert.equal((await post('/account/password',{currentPassword:customer.password,newPassword:'short'},c1)).status,400);
+  const changed=await post('/account/password',{currentPassword:customer.password,newPassword:'a-brand-new-password-1'},c1);
+  assert.equal(changed.status,200);const c1b=cookieOf(changed);
+  assert.equal((await post('/customers/session',{email:customer.customer.email,password:customer.password})).status,401);
+  assert.equal((await post('/customers/session',{email:customer.customer.email,password:'a-brand-new-password-1'})).status,200);
+  assert.equal((await fetch(base+'/state',{headers:{cookie:c2}})).status,401,'other devices are signed out');
+  assert.equal((await fetch(base+'/state',{headers:{cookie:c1b}})).status,200,'this browser stays signed in');
+
+  // Admin: reset needs the maintenance key; the temporary password logs in and can then be changed.
+  assert.equal((await post('/admin/reset-password',{token:'not-the-maintenance-key-at-all-1'})).status,401);
+  const reset=await (await post('/admin/reset-password',{token:adminKey})).json();
+  assert.equal(reset.email,'boss@example.test');assert.notEqual(reset.password,admin.password);
+  assert.equal((await post('/admin/session',{email:'boss@example.test',password:admin.password})).status,401);
+  const login=await post('/admin/session',{email:'boss@example.test',password:reset.password});assert.equal(login.status,200);
+  const a1=cookieOf(login);
+  assert.equal((await post('/account/password',{currentPassword:reset.password,newPassword:'admin-chosen-password-9'},a1)).status,200);
+  assert.equal((await post('/admin/session',{email:'boss@example.test',password:'admin-chosen-password-9'})).status,200);
+  // A session opened with the maintenance key has no email, so it cannot use the password form.
+  const keyCookie=cookieOf(await post('/session',{token:adminKey}));
+  assert.equal((await post('/account/password',{currentPassword:'x',newPassword:'another-long-password-1'},keyCookie)).status,400);
+  // Several admins: the email is required.
+  store.createAdmin('second@example.test');
+  assert.equal((await post('/admin/reset-password',{token:adminKey})).status,409);
+  assert.equal((await post('/admin/reset-password',{token:adminKey,email:'second@example.test'})).status,200);
+});

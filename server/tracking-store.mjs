@@ -116,6 +116,24 @@ export class TrackingStore {
     this.db.prepare('UPDATE customers SET salt=?,passwordHash=? WHERE id=?').run(salt,scryptSync(password,salt,64).toString('hex'),id);
     return {password};
   }
+  // Signed-in users change their own password; the current one is always re-checked.
+  changePassword(role,email,current,next){
+    if(typeof next!=='string'||next.length<12||next.length>128)fail(400,'New password must be 12-128 characters.');
+    if(next===current)fail(400,'New password must be different from the current one.');
+    let account;try{account=role==='admin'?this.adminLogin(email,current):this.customerLogin(email,current);}catch(e){fail(e.status===401?400:e.status||500,e.status===401?'Current password is incorrect.':e.message);}
+    const salt=randomBytes(16).toString('hex');
+    this.db.prepare(`UPDATE ${role==='admin'?'admins':'customers'} SET salt=?,passwordHash=? WHERE email=?`).run(salt,scryptSync(next,salt,64).toString('hex'),account.email);
+    return account;
+  }
+  // Recovery with the server maintenance key: give the admin a temporary password to change after login.
+  resetAdminPassword(email){
+    const admins=this.db.prepare('SELECT email FROM admins WHERE enabled=1 ORDER BY createdAt').all();
+    const target=email==null?(admins.length===1?admins[0].email:fail(409,'Specify which admin email to reset.')):String(email).trim().toLowerCase();
+    if(!admins.some(a=>a.email===target))fail(404,'Admin not found.');
+    const password=randomBytes(12).toString('base64url'),salt=randomBytes(16).toString('hex');
+    this.db.prepare('UPDATE admins SET salt=?,passwordHash=? WHERE email=?').run(salt,scryptSync(password,salt,64).toString('hex'),target);
+    return {email:target,password};
+  }
   setCustomerEnabled(id,enabled){this.customer(id);this.db.prepare('UPDATE customers SET enabled=? WHERE id=?').run(Number(enabled),id);return this.customer(id);}
   raw(id) { return this.db.prepare('SELECT * FROM devices WHERE id=?').get(id) || fail(404, 'Device not found.'); }
   createDevice(body,tenantId='owner') {

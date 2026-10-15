@@ -121,7 +121,7 @@ async function api<T=any>(path:string, options:RequestInit={}):Promise<T>{
   if(DEMO_MODE)return demoRequest(path,options);
   const response=await fetch('/api/gps'+path,{...options,headers:{'Content-Type':'application/json',...options.headers},signal:AbortSignal.timeout(15000)});
   const body=await response.json().catch(()=>({error:'Tracking service is temporarily unavailable. Please try again shortly.'}));
-  if(!response.ok){if(response.status===401 && !path.startsWith('/sender/') && !['/session','/customers/session','/customers/register','/admin/session'].includes(path))showLogin();throw new Error(body.error || 'Request failed.');}
+  if(!response.ok){if(response.status===401 && !path.startsWith('/sender/') && !['/session','/customers/session','/customers/register','/admin/session','/account/password'].includes(path))showLogin();throw new Error(body.error || 'Request failed.');}
   return body;
 }
 function action(selector:string,callback:()=>void|Promise<void>){$(selector)?.addEventListener('click',()=>{Promise.resolve().then(callback).catch(e=>notify(e.message))})}
@@ -199,7 +199,22 @@ function renderPreferences(){
     ${profile?`<label>Display name<input name="name" maxlength="100" required value="${esc(p.name)}"></label><label>Workspace name<input name="workspace" maxlength="100" required value="${esc(p.workspace)}"></label><label>Email<input name="email" type="email" maxlength="254" value="${esc(p.email)}"></label>`:
     `<label>Default page<select name="defaultView">${views.map(([name])=>`<option ${p.defaultView===name?'selected':''}>${name}</option>`).join('')}</select></label><label class="check-setting"><input type="checkbox" name="follow" ${p.follow?'checked':''}>Follow selected vehicle on map</label><dl class="setup-facts"><dt>Mobile heartbeat</dt><dd>30 seconds</dd><dt>Map refresh</dt><dd>3 seconds</dd><dt>Preference storage</dt><dd>Cloud workspace</dd></dl>`}
     <p class="error" id="preferences-error" role="alert"></p>
-    <button class="primary" type="submit">${i('save')}Save changes</button></form>`;
+    <button class="primary" type="submit">${i('save')}Save changes</button></form>${profile||DEMO_MODE?'':`<form class="workspace-form" id="change-password" autocomplete="off">
+    <h2>Change password</h2>
+    ${identity?.email?`<p class="form-hint">Signed in as ${esc(identity.email)}. Other devices of a customer account are signed out after the change.</p>`:`<p class="form-hint">You signed in with the workspace access key, which has no password. Sign in with your admin email and password to change it.</p>`}
+    <label>Current password<input name="currentPassword" type="password" required autocomplete="current-password" ${identity?.email?'':'disabled'}></label>
+    <label>New password (12-128 characters)<input name="newPassword" type="password" required minlength="12" maxlength="128" autocomplete="new-password" ${identity?.email?'':'disabled'}></label>
+    <label>Confirm new password<input name="confirmPassword" type="password" required minlength="12" maxlength="128" autocomplete="new-password" ${identity?.email?'':'disabled'}></label>
+    <p class="error" id="password-error" role="alert"></p>
+    <button class="primary" type="submit" ${identity?.email?'':'disabled'}>${i('save')}Change password</button></form>`}`;
+  $('#change-password')?.addEventListener('submit',async event=>{
+    event.preventDefault();const form=event.target as HTMLFormElement,data=new FormData(form),error=$('#password-error');error.textContent='';
+    try{
+      if(data.get('newPassword')!==data.get('confirmPassword'))throw Error('New passwords do not match.');
+      await api('/account/password',{method:'POST',body:JSON.stringify({currentPassword:data.get('currentPassword'),newPassword:data.get('newPassword')})});
+      form.reset();notify('Password changed.');
+    }catch(e){error.textContent=(e as Error).message}
+  });
   $('#workspace-preferences').addEventListener('submit',async event=>{
     event.preventDefault();const form=new FormData(event.target as HTMLFormElement);
     try{
