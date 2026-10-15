@@ -303,16 +303,18 @@ function alertText(a:Alert){
   if(a.type==='ignition_on')return 'Vehicle started · engine on';
   if(a.type==='ignition_off')return 'Engine off';
   if(a.type==='online')return 'Signal restored';
+  if(a.type==='share_stopped')return `${a.message} Send the link again or create a new one.`;
   return a.message;
 }
 function renderAlerts(){
   const open=(c:Category|'all')=>fleet.alerts.filter(a=>!a.acknowledged&&(c==='all'||categoryOf(a.type)===c)).length;
   const list=fleet.alerts.filter(a=>(alertsAll||!a.acknowledged)&&(alertsCat==='all'||categoryOf(a.type)===alertsCat));
-  const style=(t:string)=>{const c=CATEGORIES.find(x=>x.key===categoryOf(t))!;const ic=t==='ignition_on'?'power':t==='ignition_off'?'power':t==='online'?'activity':c.icon;const on=t==='ignition_on'||t==='online';return {ic,color:on?'var(--running)':t==='ignition_off'?'var(--stopped)':c.color}};
+  const style=(t:string)=>{const c=CATEGORIES.find(x=>x.key===categoryOf(t))!;const ic=t==='ignition_on'?'power':t==='ignition_off'?'power':t==='online'?'activity':c.icon;const on=t==='ignition_on'||t==='online'||t==='share_resumed';return {ic,color:on?'var(--running)':t==='ignition_off'?'var(--stopped)':c.color}};
   $('#view').innerHTML=`<div class="page"><div class="filters" id="cats"><button data-cat="all" class="${alertsCat==='all'?'on':''}">All <b>${open('all')}</b></button>${CATEGORIES.map(c=>`<button data-cat="${c.key}" class="${alertsCat===c.key?'on':''}">${esc(c.label)} <b>${open(c.key)}</b></button>`).join('')}</div>
     <div class="toolbar"><div class="seg"><button data-all="0" class="${alertsAll?'':'on'}">Open</button><button data-all="1" class="${alertsAll?'on':''}">All</button></div><span style="flex:1"></span>${open(alertsCat)?`<button class="btn btn-ghost btn-sm" id="ack-all">${i('check')}Mark all seen</button>`:''}<button class="btn btn-ghost btn-sm" data-go="settings">${i('settings')}Notification settings</button></div>
-    <div class="card">${list.map(a=>{const st=style(a.type);return `<div class="alert-item ${a.acknowledged?'done':''}"><span class="ico" style="background:var(--soft);color:${st.color}">${i(st.ic)}</span><div class="body"><b>${esc(a.deviceName)}</b><p>${esc(alertText(a))}</p><span class="small muted">${esc(CATEGORIES.find(c=>c.key===categoryOf(a.type))!.label)} · ${time(a.createdAt)}</span></div>${a.acknowledged?`<span class="chip plain ok">${i('check')}Seen</span>`:`<button class="btn btn-ghost btn-sm" data-ack="${a.id}">Mark seen</button>`}</div>`}).join('')||`<div class="empty">${i('bell')}<h3>All clear</h3><p>${alertsCat==='all'?'SOS, engine, geofence, overspeed, hard braking and signal alerts appear here.':'Nothing in this category.'}</p></div>`}</div></div>`;
+    <div class="card">${list.map(a=>{const st=style(a.type);return `<div class="alert-item ${a.acknowledged?'done':''}"><span class="ico" style="background:var(--soft);color:${st.color}">${i(st.ic)}</span><div class="body"><b>${esc(a.deviceName)}</b><p>${esc(alertText(a))}</p><span class="small muted">${esc(CATEGORIES.find(c=>c.key===categoryOf(a.type))!.label)} · ${time(a.createdAt)}</span>${a.type==='share_stopped'||a.type==='share_expired'?`<div class="toolbar" style="margin-top:6px"><button class="btn btn-blue btn-sm" data-driver="${a.deviceId}">${i('share-2')}Ask driver to share / new link</button></div>`:''}</div>${a.acknowledged?`<span class="chip plain ok">${i('check')}Seen</span>`:`<button class="btn btn-ghost btn-sm" data-ack="${a.id}">Mark seen</button>`}</div>`}).join('')||`<div class="empty">${i('bell')}<h3>All clear</h3><p>${alertsCat==='all'?'SOS, engine, geofence, overspeed, hard braking and signal alerts appear here.':'Nothing in this category.'}</p></div>`}</div></div>`;
   on('[data-cat]',el=>{alertsCat=el.dataset.cat as Category|'all';renderAlerts()});
+  on('[data-driver]',el=>{const v=vehicle(el.dataset.driver!);if(v)driverLink(v)});
   on('[data-all]',el=>{alertsAll=el.dataset.all==='1';renderAlerts()});
   on('#view [data-go]',el=>go(el.dataset.go as View));
   on('[data-ack]',async el=>{await post(`/alerts/${el.dataset.ack}/ack`);fleet.alerts=fleet.alerts.map(a=>a.id===el.dataset.ack?{...a,acknowledged:1}:a);updateBadges();renderAlerts()});
@@ -361,23 +363,33 @@ function speedSettings(d:Vehicle){
   modal(`${d.name} · Overspeed`,`<p class="hint">As soon as this vehicle goes faster than this you get an alert, a pop-up and a voice message. Choose which alerts pop up or speak in Settings.</p>${speedForm(d)}`);
   bindSpeedForms(document.querySelector('dialog.modal')!,()=>{closeModal();renderSheet()});
 }
+const SHARE_FOR:[number,string][]=[[4,'4 hours'],[12,'12 hours'],[24,'1 day'],[168,'1 week'],[720,'1 month'],[8760,'1 year']];
 function driverLink(d:Vehicle){
-  modal(`${d.name} · Driver link`,`<p>Driver ko yeh link bhejein. Link kholkar "Location shuru karein" dabane par gaadi map par dikhegi.</p><div id="link-box"><p class="muted">Loading…</p></div><p class="error" id="link-error"></p>
+  modal(`${d.name} · Driver link`,`<p>Driver ko yeh link bhejein. Link kholkar "Location shuru karein" dabane par gaadi map par dikhegi.</p>
+    <label class="field">Share location for<select class="input" id="share-for">${SHARE_FOR.map(([h,l])=>`<option value="${h}" ${h===168?'selected':''}>${l}</option>`).join('')}</select></label>
+    <div id="link-box"><p class="muted">Loading…</p></div><p class="error" id="link-error"></p>
     <div class="toolbar"><button class="btn btn-primary" id="make-link">${i('plus')}Create link</button><button class="btn btn-ghost" id="stop-link">Disable link</button></div>`);
-  const show=async(create:boolean,regenerate=false)=>{
+  const hours=()=>Number($<HTMLSelectElement>('#share-for').value);
+  const show=async(mode:'get'|'create'|'renew'|'extend')=>{
+    $('#link-error').textContent='';
     try{
-      const r=await api<{code:string|null}|null>(`/devices/${d.id}/driver-link`,create?{method:'POST',body:JSON.stringify({regenerate})}:{});
-      if(!r?.code){$('#link-box').innerHTML='<p class="muted">No active link yet.</p>';return}
+      const r=await api<{code:string|null;expiresAt:number|null}|null>(`/devices/${d.id}/driver-link`,mode==='get'?{}:{method:'POST',body:JSON.stringify({regenerate:mode==='renew',hours:hours()})});
+      if(!r?.code){$('#link-box').innerHTML='<p class="muted">No active link. Choose how long and press Create link.</p>';$('#make-link').innerHTML=`${i('plus')}Create link`;delete $('#make-link').dataset.active;icons();return}
       const url=new URL('/?sender=1',location.origin);url.hash=new URLSearchParams({join:r.code}).toString();
-      $('#link-box').innerHTML=`<label class="field">Driver link<input class="input" readonly value="${esc(url)}"></label><div class="toolbar"><button class="btn btn-ghost btn-sm" data-copy="${esc(url)}">${i('copy')}Copy</button>${typeof navigator.share==='function'?`<button class="btn btn-blue btn-sm" id="share-link">${i('share-2')}Share</button>`:''}</div>`;
+      const until=r.expiresAt?`Valid till ${time(r.expiresAt)}`:'No end date (old link)';
+      const msg=`${d.name}: location share karne ke liye yeh link kholein aur "Location shuru karein" dabayein. ${until}.\n${url}`;
+      $('#link-box').innerHTML=`<label class="field">Driver link<input class="input" readonly value="${esc(url)}"></label><p class="hint">${esc(until)}</p>
+        <div class="toolbar"><button class="btn btn-ghost btn-sm" data-copy="${esc(url)}">${i('copy')}Copy</button><a class="btn btn-blue btn-sm" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(msg)}">${i('share-2')}WhatsApp</a><a class="btn btn-ghost btn-sm" href="sms:?&body=${encodeURIComponent(msg)}">SMS</a>${typeof navigator.share==='function'?`<button class="btn btn-ghost btn-sm" id="share-link">${i('share-2')}Share</button>`:''}<button class="btn btn-ghost btn-sm" id="extend-link">${i('clock')}Set to ${esc($<HTMLSelectElement>('#share-for').selectedOptions[0].text)} from now</button></div>`;
       on('[data-copy]',async el=>{await navigator.clipboard.writeText(el.dataset.copy!);toast('Link copied.')});
-      on('#share-link',()=>navigator.share({title:d.name,text:'Location share karne ke liye yeh link kholein.',url:String(url)}).catch(()=>{}));
+      on('#share-link',()=>navigator.share({title:d.name,text:msg}).catch(()=>{}));
+      on('#extend-link',async()=>{await show('extend');toast('Link time updated. The driver keeps the same link.')});
       $('#make-link').innerHTML=`${i('refresh-cw')}New link`;$('#make-link').dataset.active='1';icons();
     }catch(e){$('#link-error').textContent=(e as Error).message}
   };
-  on('#make-link',async el=>{const regen=el.dataset.active==='1';if(regen&&!confirm('Create a new link? The old link will stop working.'))return;await show(true,regen)});
-  on('#stop-link',async()=>{await api(`/devices/${d.id}/driver-link`,{method:'DELETE'});$('#link-box').innerHTML='<p class="muted">Driver link disabled.</p>'});
-  void show(false);
+  $<HTMLSelectElement>('#share-for').onchange=()=>{const b=document.querySelector('#extend-link');if(b){b.innerHTML=`${i('clock')}Set to ${esc($<HTMLSelectElement>('#share-for').selectedOptions[0].text)} from now`;icons()}};
+  on('#make-link',async el=>{const regen=el.dataset.active==='1';if(regen&&!confirm('Create a new link? The old link will stop working.'))return;await show(regen?'renew':'create')});
+  on('#stop-link',async()=>{await api(`/devices/${d.id}/driver-link`,{method:'DELETE'});$('#link-box').innerHTML='<p class="muted">Driver link disabled.</p>';$('#make-link').innerHTML=`${i('plus')}Create link`;delete $('#make-link').dataset.active;icons()});
+  void show('get');
 }
 
 /* ---------- Documents / E-way (existing module) ---------- */

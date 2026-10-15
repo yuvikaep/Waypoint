@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
-import { cleanExtra, alarmAlerts, hardBrake, overspeed, REPEAT, SPEED_REPEAT } from './extra.mjs';
+import { cleanExtra, alarmAlerts, hardBrake, overspeed, REPEAT, SPEED_REPEAT, shareHours, SHARE_STOPPED, shareSilent } from './extra.mjs';
 import { cleanSetup } from './provision.mjs';
 
 export const hash = value => createHash('sha256').update(value).digest('hex');
@@ -60,6 +60,9 @@ export class TrackingStore {
     if(!this.db.prepare('PRAGMA table_info(fences)').all().some(c=>c.name==='tenantId'))this.db.exec("ALTER TABLE fences ADD COLUMN tenantId TEXT NOT NULL DEFAULT 'owner'");
     if(!this.db.prepare('PRAGMA table_info(driver_links)').all().some(c=>c.name==='code')){
       this.db.exec('ALTER TABLE driver_links ADD COLUMN code TEXT');
+    }
+    if(!this.db.prepare('PRAGMA table_info(driver_links)').all().some(c=>c.name==='notified')){
+      this.db.exec('ALTER TABLE driver_links ADD COLUMN notified INTEGER NOT NULL DEFAULT 0');
       this.db.prepare('UPDATE driver_links SET expiresAt=0 WHERE revoked=0 AND expiresAt>?').run(this.now());
     }
   }
@@ -218,28 +221,36 @@ export class TrackingStore {
   }
   getDriverLink(id) {
     this.raw(id);
-    const link=this.db.prepare('SELECT code FROM driver_links WHERE deviceId=? AND revoked=0 AND expiresAt=0 ORDER BY rowid DESC LIMIT 1').get(id);
-    return link?{code:link.code,expiresAt:null,active:true}:null;
+    const link=this.db.prepare('SELECT code,expiresAt FROM driver_links WHERE deviceId=? AND revoked=0 AND (expiresAt=0 OR expiresAt>?) ORDER BY rowid DESC LIMIT 1').get(id,this.now());
+    return link?{code:link.code,expiresAt:Number(link.expiresAt)||null,active:true}:null;
   }
-  createDriverLink(id,{regenerate=false}={}) {
+  createDriverLink(id,{regenerate=false,hours}={}) {
     if(this.raw(id).model!=='Mobile')fail(400,'Driver links are for mobile devices.');
     const existing=this.getDriverLink(id);
-    if(existing&&!regenerate)return existing;
-    const code=token(),expiresAt=null;
+    // Changing how long it lasts keeps the same link, so the driver does not need a new one.
+    if(existing&&!regenerate){if(hours===undefined)return existing;const until=this.now()+shareHours(hours)*3600000;this.db.prepare('UPDATE driver_links SET expiresAt=?,notified=0 WHERE code=? AND deviceId=?').run(until,existing.code,id);return {...existing,expiresAt:until};}
+    const code=token(),expiresAt=this.now()+shareHours(hours)*3600000;
     this.db.exec('BEGIN IMMEDIATE');
     try{
       this.revokeDriverLinks(id);
       this.db.prepare('UPDATE devices SET tokenHash=NULL WHERE id=?').run(id);
-      this.db.prepare('INSERT INTO driver_links(hash,deviceId,expiresAt,code) VALUES (?,?,0,?)').run(hash(code),id,code);
+      this.db.prepare('INSERT INTO driver_links(hash,deviceId,expiresAt,code) VALUES (?,?,?,?)').run(hash(code),id,expiresAt,code);
       this.db.exec('COMMIT');return {code,expiresAt};
     }catch(e){this.db.exec('ROLLBACK');throw e;}
   }
   revokeDriverLinks(id) {this.raw(id);this.db.prepare('UPDATE driver_links SET revoked=1 WHERE deviceId=?').run(id);}
+  // The driver's page says why sharing ended; the customer hears it at once instead of after the offline wait.
+  sharingStopped(id,reason) {
+    const message=SHARE_STOPPED[reason]||SHARE_STOPPED.stopped;
+    if(this.db.prepare("SELECT id FROM alerts WHERE deviceId=? AND type='share_stopped' AND createdAt>?").get(id,this.now()-120000))return;
+    this.alert(id,'share_stopped',message);this.db.prepare('UPDATE devices SET offlineAlert=1 WHERE id=?').run(id);
+  }
   joinDriver(code) {
     const link=typeof code==='string'&&this.db.prepare('SELECT * FROM driver_links WHERE hash=? AND revoked=0 AND (expiresAt=0 OR expiresAt>?)').get(hash(code),this.now());
     if(!link)fail(401,'This driver link has expired or been replaced. Ask your fleet admin for a new link.');
     if(!link.code)this.db.prepare('UPDATE driver_links SET code=? WHERE hash=?').run(code,link.hash);
-    const secret=token(),expiresAt=Math.min(link.expiresAt||Infinity,this.now()+12*3600000);
+    // The phone stays signed in for as long as the link lasts (12 h for links made before durations).
+    const secret=token(),expiresAt=Number(link.expiresAt)||this.now()+12*3600000;
     this.db.prepare('INSERT INTO driver_sessions VALUES (?,?,?)').run(hash(secret),link.hash,expiresAt);
     return {secret,expiresAt,device:this.raw(link.deviceId)};
   }
@@ -272,7 +283,7 @@ export class TrackingStore {
     const previous = this.raw(id);
     this.db.prepare('UPDATE devices SET lastSeen=MAX(COALESCE(lastSeen,0),?),offlineAlert=CASE WHEN ?>? THEN 0 ELSE offlineAlert END WHERE id=?')
       .run(at, at, this.now()-previous.offlineSeconds*1000, id);
-    if (previous.offlineAlert && at > this.now()-previous.offlineSeconds*1000) this.alert(id, 'online', 'Tracker reconnected.');
+    if (previous.offlineAlert && at > this.now()-previous.offlineSeconds*1000) this.alert(id, previous.model==='Mobile'?'share_resumed':'online', previous.model==='Mobile'?'Driver started sharing location again.':'Tracker reconnected.');
   }
   ingest(id, body, { receivedAt = this.now(), heartbeat = true } = {}) {
     const device = this.raw(id);
@@ -372,9 +383,14 @@ export class TrackingStore {
   tick() {
     for (const device of this.db.prepare('SELECT * FROM devices WHERE lastSeen IS NOT NULL AND offlineAlert=0').all()) {
       if (this.now()-device.lastSeen >= device.offlineSeconds*1000) {
-        this.alert(device.id,'offline',`No heartbeat for ${device.offlineSeconds} seconds.`);
+        this.alert(device.id,device.model==='Mobile'?'share_stopped':'offline',device.model==='Mobile'?shareSilent(device.offlineSeconds):`No heartbeat for ${device.offlineSeconds} seconds.`);
         this.db.prepare('UPDATE devices SET offlineAlert=1 WHERE id=?').run(device.id);
       }
+    }
+    // A driver link that ran out: tell the customer once, so they can send a new one.
+    for (const link of this.db.prepare('SELECT hash,deviceId FROM driver_links WHERE revoked=0 AND notified=0 AND expiresAt>0 AND expiresAt<=?').all(this.now())) {
+      this.db.prepare('UPDATE driver_links SET notified=1 WHERE hash=?').run(link.hash);
+      this.alert(link.deviceId,'share_expired','Driver location link expired. Send a new link to keep tracking.');
     }
     this.db.prepare("UPDATE commands SET status='timed out',detail='No fresh location received within two minutes.',updatedAt=? WHERE status IN ('queued','dispatching','sent') AND createdAt<?").run(this.now(),this.now()-120000);
   }

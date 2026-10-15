@@ -60,3 +60,19 @@ export function hardBrake(previous, speed, recordedAt) {
   if ((previous.speed - speed) / seconds < 7) return null;
   return `Hard braking: ${Math.round(previous.speed)} → ${Math.round(speed)} km/h in ${Math.round(seconds)} s.`;
 }
+
+// How long a driver's phone link stays valid: 4 hours at the least, a year at the most.
+export const SHARE_HOURS = [4, 12, 24, 168, 720, 8760];
+export function shareHours(value) {
+  if (value === undefined || value === null) return 168;
+  const hours = Number(value);
+  if (!SHARE_HOURS.includes(hours)) throw Object.assign(new Error('Choose 4 hours, 12 hours, 1 day, 1 week, 1 month or 1 year.'), { status: 400 });
+  return hours;
+}
+// Why a driver's phone stopped sharing, in the words the customer sees.
+export const SHARE_STOPPED = {
+  stopped: 'Driver stopped sharing location.',
+  permission: 'Location is switched off or blocked on the driver\'s phone.',
+  closed: 'Driver closed the location sharing page.',
+};
+export const shareSilent = seconds => `Driver's phone stopped sending location (no update for ${seconds >= 120 ? `${Math.round(seconds / 60)} min` : `${seconds} sec`}).`;

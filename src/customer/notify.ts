@@ -1,20 +1,21 @@
 import {toast,type Alert} from '../shared/core';
 
 // Alert categories shown separately in the Alerts page and switchable in Settings.
-export type Category='sos'|'ignition'|'geofence'|'speed'|'driving'|'connection'|'tracker';
+export type Category='driver'|'sos'|'ignition'|'geofence'|'speed'|'driving'|'connection'|'tracker';
 export const CATEGORIES:{key:Category;label:string;hint:string;icon:string;color:string}[]=[
   {key:'sos',label:'SOS',hint:'Emergency button pressed in the vehicle',icon:'siren',color:'var(--stopped)'},
   {key:'ignition',label:'Ignition',hint:'Engine started / engine off',icon:'power',color:'var(--running)'},
   {key:'geofence',label:'Geofence',hint:'Vehicle entered or left a place',icon:'map-pin',color:'var(--blue-600)'},
   {key:'speed',label:'Overspeed',hint:'Vehicle crossed its speed limit',icon:'gauge',color:'var(--stopped)'},
   {key:'driving',label:'Hard braking',hint:'Sudden braking, hard acceleration, sharp turns',icon:'octagon-alert',color:'var(--idle)'},
+  {key:'driver',label:'Driver phone',hint:'Driver\'s phone stopped or restarted sharing location, link expired',icon:'smartphone',color:'var(--idle)'},
   {key:'connection',label:'Signal',hint:'Tracker signal lost or restored',icon:'wifi-off',color:'var(--offline)'},
   {key:'tracker',label:'Vehicle alarms',hint:'Power cut, tampering, vibration',icon:'triangle-alert',color:'var(--idle)'},
 ];
-export const categoryOf=(type:string):Category=>type==='sos'?'sos':type==='harsh_brake'||type==='harsh'?'driving':type==='ignition_on'||type==='ignition_off'?'ignition':type==='enter'||type==='exit'?'geofence':type==='speed'?'speed':type==='offline'||type==='online'?'connection':'tracker';
+export const categoryOf=(type:string):Category=>type.startsWith('share_')?'driver':type==='sos'?'sos':type==='harsh_brake'||type==='harsh'?'driving':type==='ignition_on'||type==='ignition_off'?'ignition':type==='enter'||type==='exit'?'geofence':type==='speed'?'speed':type==='offline'||type==='online'?'connection':'tracker';
 
 export type NotifyPrefs={popup:boolean;voice:boolean;browser:boolean;categories:Record<Category,boolean>};
-export const defaultNotify=():NotifyPrefs=>({popup:true,voice:true,browser:false,categories:{sos:true,ignition:true,geofence:true,speed:true,driving:true,connection:true,tracker:true}});
+export const defaultNotify=():NotifyPrefs=>({popup:true,voice:true,browser:false,categories:{driver:true,sos:true,ignition:true,geofence:true,speed:true,driving:true,connection:true,tracker:true}});
 export function mergeNotify(saved:Partial<NotifyPrefs>|undefined):NotifyPrefs{
   const d=defaultNotify();
   return {popup:saved?.popup??d.popup,voice:saved?.voice??d.voice,browser:saved?.browser??d.browser,categories:{...d.categories,...(saved?.categories||{})}};
@@ -29,6 +30,9 @@ export function alertWords(a:Alert){
     case 'enter':return {title:'Entered geofence',text:`${name} ${a.message.replace(/\.$/,'').replace(/^Entered/,'entered')}`};
     case 'exit':return {title:'Left geofence',text:`${name} ${a.message.replace(/\.$/,'').replace(/^Left/,'left')}`};
     case 'speed':{const [now,limit]=[...a.message.matchAll(/(\d+) km\/h/g)].map(m=>m[1]);return {title:'Overspeed',text:now?`Vehicle ${name} overspeeding, ${now} kilometre per hour. Limit ${limit}`:`Vehicle ${name} is overspeeding`}}
+    case 'share_stopped':return {title:'Driver location off',text:`Driver location for vehicle ${name} has stopped`};
+    case 'share_expired':return {title:'Driver link expired',text:`Driver link for vehicle ${name} has expired`};
+    case 'share_resumed':return {title:'Driver sharing again',text:`Driver location for vehicle ${name} is back`};
     case 'sos':return {title:'SOS emergency',text:`Emergency! SOS from vehicle ${name}`};
     case 'harsh_brake':return {title:'Hard braking',text:`Vehicle ${name} hard braking`};
     case 'harsh':return {title:'Harsh driving',text:`Vehicle ${name}. ${a.message.replace(/\.$/,'')}`};

@@ -89,7 +89,7 @@ export async function demoRequest(path:string,options:RequestInit={}):Promise<an
         d.lastSeen=now();if(d.position)d.position.recordedAt=now();
       }
     }
-    result={...data,gateway:{configured:true,connected:true,lastSync:now(),error:null},serverTime:now()};
+    result={...data,devices:data.devices.map(d=>({...d,isMobile:d.model==='Mobile'})),gateway:{configured:true,connected:true,lastSync:now(),error:null},serverTime:now()};
   }else if(url.pathname==='/devices'&&method==='POST'){
     if(!body.name?.trim())throw new Error('Vehicle name is required.');
     if(body.model!=='Mobile'&&!/^\d{15}$/.test(body.uniqueId||''))throw new Error('Enter a 15-digit IMEI.');
@@ -102,7 +102,7 @@ export async function demoRequest(path:string,options:RequestInit={}):Promise<an
     else if(action==='ping'){
       d.command={status:'answered',detail:'Demo response received. No real tracker was contacted.',createdAt:now()};d.lastSeen=now();d.online=true;d.fresh=true;if(d.position)d.position.recordedAt=now();d.status=d.position?.speed?'Moving':'Stopped';result=d.command;
     }else if(action==='speed'){if(body.speedLimit!==undefined)d.speedLimit=Number(body.speedLimit);if(body.speedAlert!==undefined)d.speedAlert=body.speedAlert;result={speedLimit:d.speedLimit,speedAlert:d.speedAlert!==false};
-    }else if(action==='driver-link'){result=method==='DELETE'?{ok:true}:{code:`demo:${d.id}`,expiresAt:now()+7*86400000};}
+    }else if(action==='driver-link'){result=method==='DELETE'?{ok:true}:{code:`demo:${d.id}`,expiresAt:now()+(Number(body.hours)||168)*3600000};}
     else throw new Error('Not available in the demo.');
   }else if(url.pathname==='/fences'&&method==='POST'){
     if(!body.name||body.radius<50||body.radius>100000||Math.abs(body.latitude)>90||Math.abs(body.longitude)>180)throw new Error('Enter a valid geofence name, coordinates and radius.');

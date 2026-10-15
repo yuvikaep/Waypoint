@@ -146,6 +146,11 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
           if(path.endsWith('/position'))return json(res,200,await store.ingest(device.id,payload));
           await store.seen(device.id);return json(res,200,{ok:true,commands:await store.commands(device.id)});
         }
+        if (path==='/api/gps/sender/stopped' && method==='POST') {
+          const payload=await body(req);
+          if(session && payload.deviceId!==device.id)fail(409,'This browser is connected to a different vehicle. Reopen your driver link.');
+          await store.sharingStopped(device.id,typeof payload.reason==='string'?payload.reason:'stopped');return json(res,200,{ok:true});
+        }
         if (path==='/api/gps/sender/commands' && method==='GET') return json(res,200,{commands:await store.commands(device.id)});
         fail(404,'Sender endpoint not found.');
       }
@@ -313,7 +318,7 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
           return json(res,200,method==='PUT'?await relay.configure(id,input):await relay.execute(id,input));
         }
         if(action==='driver-link' && method==='GET')return json(res,200,await store.getDriverLink(id));
-        if(action==='driver-link' && method==='POST'){const input=await body(req);return json(res,201,await store.createDriverLink(id,{regenerate:input.regenerate===true}));}
+        if(action==='driver-link' && method==='POST'){const input=await body(req);return json(res,201,await store.createDriverLink(id,{regenerate:input.regenerate===true,...(input.hours!==undefined?{hours:input.hours}:{})}));}
         if(action==='driver-link' && method==='DELETE'){await store.revokeDriverLinks(id);return json(res,200,{ok:true});}
         if (action==='history' && method==='GET') {
           const from=Date.parse(url.searchParams.get('from')),to=Date.parse(url.searchParams.get('to')),after=Number(url.searchParams.get('after') || 0);

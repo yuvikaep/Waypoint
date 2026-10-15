@@ -189,9 +189,18 @@ test('driver links stay fixed until explicit regeneration or disable; sessions e
   const replacement=store.createDriverLink(device.id,{regenerate:true});
   assert.throws(()=>store.joinDriver(link.code),/expired|replaced/);
   assert.throws(()=>store.driverSession(joined.secret),/driver link/);
-  const newSession=store.joinDriver(replacement.code);advance(12*3600000+1);
-  assert.throws(()=>store.driverSession(newSession.secret),/driver link/);
-  advance(365*86400000);assert.equal(store.joinDriver(replacement.code).device.id,device.id);
+  // A link lasts one week unless another duration is chosen; the phone stays signed in that long.
+  const newSession=store.joinDriver(replacement.code);advance(6*86400000);
+  assert.equal(store.driverSession(newSession.secret).device.id,device.id);
+  advance(86400000+1);assert.throws(()=>store.driverSession(newSession.secret),/driver link/);
+  assert.equal(store.getDriverLink(device.id),null);
+  store.tick();assert.equal(store.alerts().filter(a=>a.type==='share_expired').length,1);
+  store.tick();assert.equal(store.alerts().filter(a=>a.type==='share_expired').length,1,'expiry is reported once');
+  const yearly=store.createDriverLink(device.id,{regenerate:true,hours:8760});
+  assert.throws(()=>store.createDriverLink(device.id,{hours:2}),/4 hours/);
+  const shorter=store.createDriverLink(device.id,{hours:4});assert.equal(shorter.code,yearly.code,'changing the duration keeps the link');
+  assert.equal(shorter.expiresAt,store.now()+4*3600000);
+  advance(364*86400000);assert.throws(()=>store.joinDriver(replacement.code),/expired|replaced/);
   store.revokeDriverLinks(device.id);
   assert.equal(store.getDriverLink(device.id),null);
   assert.throws(()=>store.joinDriver(replacement.code),/expired|replaced/);
@@ -213,6 +222,8 @@ test('driver cookie authenticates only assigned sender; revocation blocks active
   assert.equal((await post('/sender/position',{...position(),deviceId:'different'},{Cookie:cookie})).status,409);
   assert.equal((await post('/sender/position',{...position(),deviceId:device.id},{Cookie:cookie})).status,200);
   assert.equal((await fetch(base+'/sender/me',{headers:{Cookie:cookie}})).status,200);
+  assert.equal((await post('/sender/stopped',{deviceId:device.id,reason:'permission'},{Cookie:cookie})).status,200);
+  assert.match(store.alerts().find(a=>a.type==='share_stopped').message,/blocked/);
   store.revokeDriverLinks(device.id);
   assert.equal((await post('/sender/heartbeat',{deviceId:device.id},{Cookie:cookie})).status,401);
 });
@@ -359,4 +370,16 @@ test('hard braking from GPS speed and tracker SOS / harsh alarms get their own a
   assert.equal(of('sos').length,1,'a held SOS button is reported once');
   fix(0,5000,{alarm:'hardBraking,powerCut'});
   assert.equal(of('harsh_brake').length,2);assert.equal(of('alarm')[0].message,'Main power cut');
+});
+
+test('customer hears when the driver phone stops sharing and when it comes back',t=>{
+  const {store,device,position,advance}=fixture(t);
+  store.ingest(device.id,position());
+  store.sharingStopped(device.id,'permission');store.sharingStopped(device.id,'stopped');
+  const stopped=store.alerts().filter(a=>a.type==='share_stopped');
+  assert.equal(stopped.length,1);assert.match(stopped[0].message,/switched off or blocked/);
+  advance(1000);store.ingest(device.id,position({eventId:'again'}));
+  assert.equal(store.alerts().filter(a=>a.type==='share_resumed').length,1);
+  advance(60000);store.tick();
+  assert.match(store.alerts().find(a=>a.type==='share_stopped'&&a.id!==stopped[0].id).message,/stopped sending location/);
 });
