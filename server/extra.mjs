@@ -76,3 +76,6 @@ export const SHARE_STOPPED = {
   closed: 'Driver closed the location sharing page.',
 };
 export const shareSilent = seconds => `Driver's phone stopped sending location (no update for ${seconds >= 120 ? `${Math.round(seconds / 60)} min` : `${seconds} sec`}).`;
+
+// Types of place a customer can save (the map shows an icon for each).
+export const PLACE_KINDS = ['fuel', 'food', 'depot', 'loading', 'unloading', 'parking', 'other'];

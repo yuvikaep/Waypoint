@@ -55,3 +55,4 @@ CREATE INDEX IF NOT EXISTS cloud_sessions_expiry ON cloud_sessions(expiresAt);
 CREATE TABLE IF NOT EXISTS gateway_state (id INTEGER PRIMARY KEY CHECK(id=1),connected BOOLEAN NOT NULL,lastSync BIGINT NOT NULL,error TEXT);
 
 CREATE TABLE IF NOT EXISTS landmark_tiles (key TEXT PRIMARY KEY,value TEXT NOT NULL,fetchedAt BIGINT NOT NULL);
+ALTER TABLE fences ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'other';

@@ -383,3 +383,11 @@ test('customer hears when the driver phone stops sharing and when it comes back'
   advance(60000);store.tick();
   assert.match(store.alerts().find(a=>a.type==='share_stopped'&&a.id!==stopped[0].id).message,/stopped sending location/);
 });
+
+test('saved places carry a type from the list',t=>{
+  const {store}=fixture(t);
+  assert.equal(store.addFence({name:'HP pump',latitude:25.48,longitude:82.79,radius:150,kind:'fuel'}).kind,'fuel');
+  assert.equal(store.addFence({name:'Somewhere',latitude:25.4,longitude:82.7,radius:150}).kind,'other');
+  assert.throws(()=>store.addFence({name:'Bad',latitude:25.4,longitude:82.7,radius:150,kind:'casino'}),/place type/);
+  assert.equal(store.fences().find(f=>f.name==='HP pump').kind,'fuel');
+});

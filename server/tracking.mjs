@@ -8,6 +8,7 @@ import { TraccarBridge } from './traccar.mjs';
 import { RelayService } from './relay.mjs';
 import { vehicleReport } from './reports.mjs';
 import { landmarks } from './landmarks.mjs';
+import { suggestedStops } from './stops.mjs';
 import { commandAllowed } from './command-channel.mjs';
 import { powerTimeline } from './extra.mjs';
 import { apnFor, bootstrapSms, buildPlan, cleanIntervals, OPERATORS } from './provision.mjs';
@@ -214,6 +215,13 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
         await limited(`landmarks:${session.tenantId}`,120);
         try{return json(res,200,await landmarks(store,url.searchParams.get('tile')))}
         catch(e){if(e.status)throw e;fail(503,'Nearby places are unavailable right now.')}
+      }
+      if(path==='/api/gps/stops'&&method==='GET'){
+        const days=Number(url.searchParams.get('days')??14);
+        if(!Number.isInteger(days)||days<1||days>31)fail(400,'Choose 1-31 days.');
+        await limited(`stops:${session.tenantId}`,10);
+        const to=Date.now(),devices=await store.devices(session.tenantId);
+        return json(res,200,{stops:await suggestedStops(store,devices,await store.fences(session.tenantId),to-days*86400000,to)});
       }
       if(path==='/api/gps/reports'&&method==='GET'){
         const from=Date.parse(url.searchParams.get('from')),to=Date.parse(url.searchParams.get('to')),tz=Number(url.searchParams.get('tz')??-330);

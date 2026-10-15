@@ -1,6 +1,7 @@
 import {$,$$,api,post,brand,chip,closeModal,coords,esc,hm,i,icons,mapsLink,modal,on,showSecret,statusLine,time,ago,toast,whenUnauthorized,wireCopy,type Identity,type Vehicle} from '../shared/core';
 import {createMap,point,truckIcon,L} from '../shared/map';
 import {placeSpan} from '../shared/places';
+import {googleFrame} from '../shared/google';
 import {showLogin} from '../auth';
 
 type View='overview'|'devices'|'device'|'customers'|'admins'|'settings'|'more';
@@ -188,7 +189,9 @@ function locate(d:AdminDevice){
   const p=d.position!;
   modal(`${d.name} · Current location`,`<div style="height:320px;border-radius:14px;overflow:hidden;position:relative"><div class="map" id="locate-map"></div></div>
     <div><div style="display:flex;gap:8px;font-weight:600">${i('map-pin')}${placeSpan(p,'admin-'+d.id)}</div><p class="small muted" style="margin-top:4px">${esc(statusLine(d))} · ${esc(coords(p))} · ${ago(p.recordedAt)}</p></div>
-    <div class="toolbar"><a class="btn btn-blue" href="${mapsLink(p)}" target="_blank" rel="noopener">${i('external-link')}Open in Google Maps</a></div>`,{wide:true});
+    <div class="toolbar"><a class="btn btn-blue" href="${mapsLink(p)}" target="_blank" rel="noopener">${i('external-link')}Open in Google Maps</a><button class="btn btn-ghost" id="locate-google">${i('landmark')}Nearby places (Google)</button></div>
+    <div class="gmodal" id="locate-gmap" hidden></div>`,{wide:true});
+  on('#locate-google',el=>{const host=$('#locate-gmap');host.hidden=false;if(!host.firstChild)googleFrame(host).show(p.latitude,p.longitude,true);el.remove()});
   requestAnimationFrame(()=>{const m=createMap($('#locate-map'),point(p),16);L.marker(point(p),{icon:truckIcon(d,true)}).addTo(m);const dialog=document.querySelector('dialog.modal')!;dialog.addEventListener('close',()=>m.remove(),{once:true});icons()});
 }
 

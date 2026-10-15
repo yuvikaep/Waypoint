@@ -1,7 +1,8 @@
 import {$,$$,api,post,brand,chip,clock,closeModal,coords,esc,hm,i,icons,localInput,mapsLink,modal,on,since,STATUS_LABEL,statusLine,statusOf,time,ago,toast,whenUnauthorized,type Alert,type Fence,type Fix,type Identity,type StatusKey,type Vehicle} from '../shared/core';
 import {bearing,createMap,drawRoute,playbackIcon,point,truckIcon,truckTag,L} from '../shared/map';
 import {placeSpan,places,placeKey} from '../shared/places';
-import {nearest,nearText} from '../shared/poi';
+import {nearest,nearText,nearSaved,placeIcon,PLACE_KIND} from '../shared/poi';
+import {googleFrame,googleModal} from '../shared/google';
 import {DEMO_MODE,workspaceStorage} from '../demo';
 import {showLogin} from '../auth';
 import {CATEGORIES,alertWords,announceNew,askBrowserPermission,browserState,browserSupported,categoryOf,mergeNotify,primeSeen,speak,unlockVoice,voiceSupported,type Category,type NotifyPrefs} from './notify';
@@ -17,9 +18,9 @@ type Prefs={name:string;workspace:string;follow:boolean;defaultView:View;notify?
 const notifyPrefs=():NotifyPrefs=>mergeNotify(prefs().notify);
 async function saveNotify(next:NotifyPrefs){await workspaceStorage.setItem('workspace-preferences',JSON.stringify({...prefs(),notify:next}))}
 
-const NAV:[View,string,string][]=[['map','Live map','map'],['vehicles','Vehicles','truck'],['history','History','route'],['reports','Reports','chart-column'],['alerts','Alerts','bell'],['geofences','Geofences','map-pin'],['documents','Documents','files'],['ebills','E-way bills','file-text'],['settings','Settings','settings']];
+const NAV:[View,string,string][]=[['map','Live map','map'],['vehicles','Vehicles','truck'],['history','History','route'],['reports','Reports','chart-column'],['alerts','Alerts','bell'],['geofences','Places','map-pin'],['documents','Documents','files'],['ebills','E-way bills','file-text'],['settings','Settings','settings']];
 const TABS:[View,string,string][]=[['map','Map','map'],['vehicles','Vehicles','truck'],['history','History','route'],['reports','Reports','chart-column'],['more','More','ellipsis']];
-const TITLES:Record<View,string>={map:'Live map',vehicles:'Vehicles',history:'Route history',reports:'Reports',alerts:'Alerts',geofences:'Geofences',documents:'Documents',ebills:'E-way bills',settings:'Settings',more:'More'};
+const TITLES:Record<View,string>={map:'Live map',vehicles:'Vehicles',history:'Route history',reports:'Reports',alerts:'Alerts',geofences:'Places',documents:'Documents',ebills:'E-way bills',settings:'Settings',more:'More'};
 
 let me:Identity,fleet:Fleet={devices:[],fences:[],alerts:[]},view:View='map',selected='',filter:StatusKey|'all'='all',search='',following=false,fitted=false;
 let poll:ReturnType<typeof setTimeout>|undefined,teardown:(()=>void)|undefined;
@@ -87,16 +88,22 @@ let map:L.Map|undefined,markers:L.LayerGroup|undefined,fences:L.LayerGroup|undef
 const todayKm=new globalThis.Map<string,{at:number;km:number|null}>();
 // "Near Indian Oil petrol pump · 120 m" for each position shown in the vehicle sheet.
 const nearCache=new globalThis.Map<string,string>();
+// Google view: Google's own map (with all its places) around the selected vehicle, instead of ours.
+let googleView=false,gframe:ReturnType<typeof googleFrame>|undefined;
+try{googleView=localStorage.getItem('waypoint.googleView')==='1'}catch{/* private mode */}
 function renderLive(){
   $('#view').innerHTML=`<div class="live" id="live">
     <section class="live-panel" id="panel"><div class="grabber" id="grabber"></div>
       <div class="panel-head"><label class="search">${i('search')}<input class="input" id="q" placeholder="Search vehicle or driver" value="${esc(search)}"></label><div class="filters" id="filters"></div></div>
       <div class="vlist" id="vlist"></div></section>
     <div class="map-wrap"><div class="map" id="map"></div>
-      <div class="map-tools"><button class="icon-btn" id="fit" title="Show all vehicles" aria-label="Show all vehicles">${i('scan')}</button><button class="icon-btn ${following?'on':''}" id="follow" title="Follow selected vehicle" aria-label="Follow selected vehicle">${i('locate-fixed')}</button></div>
+      <div class="map-tools"><button class="icon-btn" id="fit" title="Show all vehicles" aria-label="Show all vehicles">${i('scan')}</button><button class="icon-btn ${following?'on':''}" id="follow" title="Follow selected vehicle" aria-label="Follow selected vehicle">${i('locate-fixed')}</button><button class="icon-btn gtoggle ${googleView?'on':''}" id="gview" title="Google map with nearby places" aria-label="Google map with nearby places">G</button></div>
+      <div class="gwrap" id="gwrap" hidden><span class="gtag" id="gtag"></span></div>
       <div class="vsheet card" id="vsheet" hidden></div></div></div>`;
   map=createMap($('#map'));markers=L.layerGroup().addTo(map);fences=L.layerGroup().addTo(map);fitted=false;
-  teardown=()=>{map?.remove();map=undefined};
+  teardown=()=>{map?.remove();map=undefined;gframe=undefined};
+  gframe=googleFrame($('#gwrap'));
+  on('#gview',el=>{googleView=!googleView;el.classList.toggle('on',googleView);try{localStorage.setItem('waypoint.googleView',googleView?'1':'0')}catch{}updateLive();if(!googleView)map?.invalidateSize()});
   $<HTMLInputElement>('#q').oninput=e=>{search=(e.target as HTMLInputElement).value;updateLive()};
   on('#fit',fit);on('#follow',el=>{following=!following;el.classList.toggle('on',following);const v=vehicle(selected);if(following&&v?.position)map?.panTo(point(v.position))});
   on('#grabber',()=>{$('#panel').classList.toggle('collapsed')});
@@ -138,11 +145,15 @@ function updateLive(){
   }
   fences!.clearLayers();
   // The customer's own places stay labelled, so depots and regular stops are always recognisable.
-  for(const f of fleet.fences)L.circle(point(f),{radius:f.radius,color:'#7c5cc4',weight:2,fillOpacity:.07}).bindTooltip(f.name,{permanent:true,direction:'center',className:'fence-label'}).addTo(fences!);
+  for(const f of fleet.fences)L.circle(point(f),{radius:f.radius,color:'#7c5cc4',weight:2,fillOpacity:.07}).bindTooltip(`${placeIcon(f.kind)} ${esc(f.name)}`,{permanent:true,direction:'center',className:'fence-label'}).addTo(fences!);
   if(!fitted&&list.some(d=>d.position)&&!selected){fit();fitted=true}
   const v=vehicle(selected);
   renderSheet();icons();
   if(following&&v?.position)centre(v.position);
+  // Google view follows the selected vehicle, or the first one with a position.
+  const g=v?.position?v:list.find(d=>d.position);
+  $('#gwrap').hidden=!googleView;$('#map').style.visibility=googleView?'hidden':'';
+  if(googleView&&g?.position){gframe?.show(g.position.latitude,g.position.longitude);$('#gtag').textContent=`Google map · ${g.name}`}
 }
 function vehicleCard(d:Vehicle){
   const p=d.position,s=statusOf(d);
@@ -157,17 +168,20 @@ function renderSheet(){
   const d=vehicle(selected);if(!d){el.hidden=true;return}
   const p=d.position,km=todayKm.get(d.id);
   if(!km||Date.now()-km.at>60000)void loadTodayKm(d.id);
-  if(p&&!nearCache.has(placeKey(p))){const key=placeKey(p);nearCache.set(key,'');void nearest(p.latitude,p.longitude).then(n=>{if(n){nearCache.set(key,nearText(n));if(selected===d.id)renderSheet()}})}
+  const mine=p?nearSaved(p.latitude,p.longitude,fleet.fences):null;
+  if(p&&!mine&&!nearCache.has(placeKey(p))){const key=placeKey(p);nearCache.set(key,'');void nearest(p.latitude,p.longitude).then(n=>{if(n){nearCache.set(key,nearText(n));if(selected===d.id)renderSheet()}})}
   el.hidden=false;
   el.innerHTML=`<div class="head"><div><h2>${esc(d.name)}</h2>${d.driver?`<span class="small muted">${i('user-round')} ${esc(d.driver)}</span>`:''}</div><div style="display:flex;gap:8px;align-items:center">${chip(d)}<button class="icon-btn" id="close-sheet" aria-label="Close">${i('x')}</button></div></div>
-    <div><div class="place">${i('map-pin')}${placeSpan(p,d.id)}</div>${p&&nearCache.get(placeKey(p))?`<div class="since near">${i('landmark')}${esc(nearCache.get(placeKey(p))!)}</div>`:''}<div class="since">${esc(statusLine(d))}</div></div>
+    <div><div class="place">${i('map-pin')}${placeSpan(p,d.id)}</div>${mine?`<div class="since near">${esc(mine)}</div>`:p&&nearCache.get(placeKey(p))?`<div class="since near">${i('landmark')}${esc(nearCache.get(placeKey(p))!)}</div>`:''}<div class="since">${esc(statusLine(d))}</div></div>
     <div class="stats"><div><span>Speed</span><b${p&&d.fresh&&p.speed>d.speedLimit?' style="color:var(--stopped)"':''}>${p&&d.fresh?Math.round(p.speed):0} km/h</b></div><div><span>Ignition</span><b>${d.ignition==null?'—':d.ignition?'On':'Off'}</b></div><div><span>Today</span><b>${km?.km==null?'…':`${km.km} km`}</b></div><div><span>Updated</span><b>${ago(p?.recordedAt??d.lastSeen)}</b></div></div>
-    <div class="acts"><button class="btn btn-primary btn-sm" id="sheet-history">${i('route')}History</button>${p?`<a class="btn btn-ghost btn-sm" href="${mapsLink(p)}" target="_blank" rel="noopener">${i('external-link')}Google Maps</a><button class="btn btn-ghost btn-sm" id="sheet-share">${i('share-2')}Share</button>`:''}<button class="btn btn-ghost btn-sm" id="sheet-speed">${i('gauge')}Limit ${d.speedLimit} km/h${d.speedAlert===false?' · off':''}</button>${d.isMobile?`<button class="btn btn-ghost btn-sm" id="sheet-driver">${i('smartphone')}Driver link</button>`:''}</div>`;
+    <div class="acts"><button class="btn btn-primary btn-sm" id="sheet-history">${i('route')}History</button>${p?`<a class="btn btn-ghost btn-sm" href="${mapsLink(p)}" target="_blank" rel="noopener">${i('external-link')}Google Maps</a><button class="btn btn-ghost btn-sm" id="sheet-share">${i('share-2')}Share</button><button class="btn btn-blue btn-sm" id="sheet-google">${i('landmark')}Nearby (Google)</button><button class="btn btn-ghost btn-sm" id="sheet-save">${i('map-pin')}Save this place</button>`:''}<button class="btn btn-ghost btn-sm" id="sheet-speed">${i('gauge')}Limit ${d.speedLimit} km/h${d.speedAlert===false?' · off':''}</button>${d.isMobile?`<button class="btn btn-ghost btn-sm" id="sheet-driver">${i('smartphone')}Driver link</button>`:''}</div>`;
   on('#close-sheet',()=>{selected='';$('#live').classList.remove('sheet-open');updateLive()},el);
   on('#sheet-history',()=>{historyVehicle=d.id;go('history')},el);
   on('#sheet-share',async()=>{const text=`${d.name}: ${places.get(placeKey(p!))?.label||coords(p!)}\n${mapsLink(p!)}`;if(navigator.share)await navigator.share({title:d.name,text}).catch(()=>{});else{await navigator.clipboard.writeText(text);toast('Location copied.')}},el);
   on('#sheet-driver',()=>driverLink(d),el);
   on('#sheet-speed',()=>speedSettings(d),el);
+  on('#sheet-google',()=>googleModal(`${d.name} · Nearby (Google)`,p!.latitude,p!.longitude),el);
+  on('#sheet-save',()=>addFence({latitude:p!.latitude,longitude:p!.longitude,radius:150}),el);
   icons();
 }
 const dayStart=(offset=0)=>{const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()+offset);return d};
@@ -212,7 +226,7 @@ function renderHistory(){
       <div class="form-row" id="custom" hidden><label class="field">From<input class="input" type="datetime-local" id="hfrom" value="${localInput(from)}"></label><label class="field">To<input class="input" type="datetime-local" id="hto" value="${localInput(to)}"></label></div>
       <button class="btn btn-primary" id="load">${i('route')}Show route</button>
       <div class="summary" id="hsum" hidden></div>
-      <div id="hplayer" hidden><div class="player"><button class="icon-btn" id="play" aria-label="Play">${i('play')}</button><input type="range" id="slider" min="0" max="0" value="0" aria-label="Route position"></div><p class="small" id="hpoint" style="margin-top:8px"></p></div>
+      <div id="hplayer" hidden><div class="player"><button class="icon-btn" id="play" aria-label="Play">${i('play')}</button><input type="range" id="slider" min="0" max="0" value="0" aria-label="Route position"></div><p class="small" id="hpoint" style="margin-top:8px"></p><div class="toolbar" style="margin-top:8px"><button class="btn btn-ghost btn-sm" id="hgoogle">${i('landmark')}See this point on Google</button><button class="btn btn-ghost btn-sm" id="hsave">${i('map-pin')}Save this place</button></div></div>
       <p class="hint" id="hstatus">${fleet.devices.length?'Choose a day and press Show route.':'No vehicles yet.'}</p>
       <button class="btn btn-ghost btn-sm" id="csv" hidden>${i('download')}Download CSV</button>
     </aside><div class="map-wrap"><div class="map" id="hmap"></div></div></div>`;
@@ -237,6 +251,9 @@ function renderHistory(){
   const stopPlay=()=>{clearInterval(playTimer);playTimer=undefined;$('#play').innerHTML=i('play');icons()};
   on('#play',()=>{if(playTimer){stopPlay();return}let n=Number($<HTMLInputElement>('#slider').value);if(n>=track.length-1)n=0;$('#play').innerHTML=i('pause');icons();playTimer=setInterval(()=>{showPoint(n++);if(n>=track.length){stopPlay();showPoint(track.length-1)}},400)});
   $<HTMLInputElement>('#slider').oninput=e=>{stopPlay();showPoint(Number((e.target as HTMLInputElement).value))};
+  const here=()=>track[Number($<HTMLInputElement>('#slider').value)];
+  on('#hgoogle',()=>{const p=here();if(p){stopPlay();googleModal(`${vehicle(historyVehicle)?.name||'Route'} · ${clock(p.recordedAt)}`,p.latitude,p.longitude)}});
+  on('#hsave',()=>{const p=here();if(p){stopPlay();addFence({latitude:p.latitude,longitude:p.longitude,radius:150})}});
   on('#csv',()=>{const v=vehicle(historyVehicle);const rows=[['Time','Latitude','Longitude','Speed km/h','Ignition'],...track.map(p=>[new Date(p.recordedAt).toISOString(),p.latitude,p.longitude,Math.round(p.speed),p.ignition==null?'':p.ignition?'On':'Off'])];download(`${v?.name||'route'}-history.csv`,rows)});
   const load=async()=>{
     if(!historyVehicle)return;
@@ -321,24 +338,44 @@ function renderAlerts(){
   on('#ack-all',async()=>{const ids=fleet.alerts.filter(a=>!a.acknowledged&&(alertsCat==='all'||categoryOf(a.type)===alertsCat)).map(a=>a.id);for(const id of ids)await post(`/alerts/${id}/ack`);const set=new Set(ids);fleet.alerts=fleet.alerts.map(a=>set.has(a.id)?{...a,acknowledged:1}:a);updateBadges();renderAlerts();toast('All marked seen.')});
   icons();
 }
+type Stop={latitude:number;longitude:number;visits:number;totalMinutes:number;lastVisit:number;vehicles:string[]};
+let stopsCache:{at:number;stops:Stop[]}|null=null;
 function renderGeofences(){
-  $('#view').innerHTML=`<div class="page"><div class="toolbar"><p class="muted" style="flex:1">Get an alert when a vehicle enters or leaves a place, like your depot or a customer site.</p><button class="btn btn-primary" id="add-fence">${i('plus')}Add geofence</button></div>
-    <div class="card">${fleet.fences.length?`<div class="table-wrap"><table class="table"><thead><tr><th>Name</th><th>Place</th><th>Radius</th><th></th></tr></thead><tbody>${fleet.fences.map(f=>`<tr><td><b>${esc(f.name)}</b></td><td>${placeSpan(f,'fence-'+f.id)}</td><td>${f.radius} m</td><td><div class="actions"><button class="btn btn-danger btn-sm" data-del="${f.id}">${i('trash-2')}Delete</button></div></td></tr>`).join('')}</tbody></table></div>`:`<div class="empty">${i('map-pin')}<h3>No geofences yet</h3><p>Create one from a vehicle's current place.</p></div>`}</div></div>`;
-  on('#add-fence',addFence);
-  on('[data-del]',async el=>{const f=fleet.fences.find(x=>x.id===el.dataset.del)!;if(!confirm(`Delete geofence ${f.name}?`))return;await api(`/fences/${f.id}`,{method:'DELETE'});fleet=await api<Fleet>('/state');renderGeofences()});
-  icons();
+  $('#view').innerHTML=`<div class="page"><div class="toolbar"><p class="muted" style="flex:1">Your own places: petrol pumps, dhabas, depots, loading points. They show on the map with their name, and you get an alert when a vehicle enters or leaves one.</p><button class="btn btn-primary" id="add-fence">${i('plus')}Add place</button></div>
+    <div class="card">${fleet.fences.length?`<div class="table-wrap"><table class="table"><thead><tr><th>Name</th><th>Type</th><th>Place</th><th>Radius</th><th></th></tr></thead><tbody>${fleet.fences.map(f=>`<tr><td><b>${placeIcon(f.kind)} ${esc(f.name)}</b></td><td>${esc((PLACE_KIND[f.kind||'other']||PLACE_KIND.other)[1])}</td><td>${placeSpan(f,'fence-'+f.id)}</td><td>${f.radius} m</td><td><div class="actions"><button class="btn btn-ghost btn-sm" data-gfence="${f.id}">${i('landmark')}Google</button><button class="btn btn-danger btn-sm" data-del="${f.id}">${i('trash-2')}Delete</button></div></td></tr>`).join('')}</tbody></table></div>`:`<div class="empty">${i('map-pin')}<h3>No places yet</h3><p>Save a vehicle's current place, or name one of the suggested stops below.</p></div>`}</div>
+    <div class="card card-pad" id="suggested"><h2>Suggested stops</h2><p class="hint">Places where your vehicles stopped 10 minutes or more, at least 3 times in the last 14 days. Check what is there on Google and give it a name.</p><div id="stops"><p class="muted">Looking at the last 14 days…</p></div></div></div>`;
+  on('#add-fence',()=>addFence());
+  on('[data-gfence]',el=>{const f=fleet.fences.find(x=>x.id===el.dataset.gfence)!;googleModal(f.name,f.latitude,f.longitude)});
+  on('[data-del]',async el=>{const f=fleet.fences.find(x=>x.id===el.dataset.del)!;if(!confirm(`Delete place ${f.name}?`))return;await api(`/fences/${f.id}`,{method:'DELETE'});fleet=await api<Fleet>('/state');stopsCache=null;renderGeofences()});
+  icons();void showStops();
 }
-function addFence(){
+async function showStops(){
+  try{
+    if(!stopsCache||Date.now()-stopsCache.at>10*60000)stopsCache={at:Date.now(),stops:(await api<{stops:Stop[]}>('/stops?days=14')).stops};
+    const host=document.querySelector('#stops');if(!host)return;
+    const stops=stopsCache.stops;
+    host.innerHTML=stops.length?stops.map((s,n)=>`<div class="alert-item"><span class="ico" style="background:var(--soft);color:var(--blue-600)">${i('circle-parking')}</span><div class="body"><b>${placeSpan(s,'stop-'+n)}</b><p>${s.visits} stops · ${hm(s.totalMinutes)} in all · last ${time(s.lastVisit)}</p><span class="small muted">${esc(s.vehicles.join(', '))}</span>
+      <div class="toolbar" style="margin-top:6px"><button class="btn btn-ghost btn-sm" data-sgoogle="${n}">${i('landmark')}Show on Google</button><button class="btn btn-blue btn-sm" data-sname="${n}">${i('plus')}Name this place</button></div></div></div>`).join(''):'<p class="muted">No regular stops yet. They appear once a vehicle has stopped at the same place 3 times.</p>';
+    on('[data-sgoogle]',el=>{const s=stops[Number(el.dataset.sgoogle)];googleModal(`Stop · ${s.visits} visits`,s.latitude,s.longitude)},host as HTMLElement);
+    on('[data-sname]',el=>{const s=stops[Number(el.dataset.sname)];addFence({latitude:s.latitude,longitude:s.longitude,radius:150})},host as HTMLElement);
+    icons();
+  }catch(e){const host=document.querySelector('#stops');if(host)host.innerHTML=`<p class="error">${esc((e as Error).message)}</p>`}
+}
+function addFence(at?:{latitude:number;longitude:number;radius:number}){
   const withPos=fleet.devices.filter(d=>d.position);
-  modal('Add geofence',`<form class="form" id="fence-form"><label class="field">Name<input class="input" name="name" required maxlength="100" placeholder="Pune depot"></label>
-    <label class="field">Centre<select class="input" id="fence-from"><option value="">Enter coordinates</option>${withPos.map(d=>`<option value="${d.id}">Current place of ${esc(d.name)}</option>`).join('')}</select></label>
-    <div class="form-row"><label class="field">Latitude<input class="input" type="number" step="any" min="-90" max="90" name="latitude" required></label><label class="field">Longitude<input class="input" type="number" step="any" min="-180" max="180" name="longitude" required></label></div>
-    <label class="field">Radius (metres)<input class="input" type="number" name="radius" min="50" max="100000" value="500" required></label>
-    <p class="error" id="fence-error"></p><button class="btn btn-primary" type="submit">Save geofence</button></form>`);
+  modal('Add place',`<form class="form" id="fence-form"><label class="field">Name<input class="input" name="name" required maxlength="100" placeholder="HP petrol pump, Tridev dhaba, Pune depot"></label>
+    <label class="field">Type<select class="input" name="kind">${Object.entries(PLACE_KIND).map(([k,[ic,l]])=>`<option value="${k}">${ic} ${esc(l)}</option>`).join('')}</select></label>
+    ${at?'':`<label class="field">Centre<select class="input" id="fence-from"><option value="">Enter coordinates</option>${withPos.map(d=>`<option value="${d.id}">Current place of ${esc(d.name)}</option>`).join('')}</select></label>`}
+    <div class="form-row"><label class="field">Latitude<input class="input" type="number" step="any" min="-90" max="90" name="latitude" required value="${at?at.latitude.toFixed(6):''}"></label><label class="field">Longitude<input class="input" type="number" step="any" min="-180" max="180" name="longitude" required value="${at?at.longitude.toFixed(6):''}"></label></div>
+    <label class="field">Radius (metres)<input class="input" type="number" name="radius" min="50" max="100000" value="${at?.radius??500}" required></label>
+    <p class="hint">Not sure what is there? <button type="button" class="linkish" id="fence-google">See it on Google</button>.</p>
+    <p class="error" id="fence-error"></p><button class="btn btn-primary" type="submit">Save place</button></form>`);
   const form=$<HTMLFormElement>('#fence-form');
-  $<HTMLSelectElement>('#fence-from').onchange=e=>{const d=vehicle((e.target as HTMLSelectElement).value);if(d?.position){form.latitude.value=d.position.latitude.toFixed(6);form.longitude.value=d.position.longitude.toFixed(6)}};
-  if(withPos[0]){$<HTMLSelectElement>('#fence-from').value=withPos[0].id;$<HTMLSelectElement>('#fence-from').dispatchEvent(new Event('change'))}
-  form.addEventListener('submit',async e=>{e.preventDefault();const v=Object.fromEntries(new FormData(form));try{await post('/fences',{name:v.name,latitude:Number(v.latitude),longitude:Number(v.longitude),radius:Number(v.radius)});closeModal();fleet=await api<Fleet>('/state');renderGeofences();toast('Geofence saved.')}catch(err){$('#fence-error').textContent=(err as Error).message}});
+  const from=document.querySelector<HTMLSelectElement>('#fence-from');
+  if(from){from.onchange=()=>{const d=vehicle(from.value);if(d?.position){form.latitude.value=d.position.latitude.toFixed(6);form.longitude.value=d.position.longitude.toFixed(6)}};if(withPos[0]){from.value=withPos[0].id;from.dispatchEvent(new Event('change'))}}
+  // Opens Google in its own tab so the form being filled in is not lost.
+  on('#fence-google',()=>{const lat=Number(form.latitude.value),lon=Number(form.longitude.value);if(Number.isFinite(lat)&&Number.isFinite(lon))window.open(mapsLink({latitude:lat,longitude:lon}),'_blank','noopener')});
+  form.addEventListener('submit',async e=>{e.preventDefault();const v=Object.fromEntries(new FormData(form));try{await post('/fences',{name:v.name,kind:v.kind,latitude:Number(v.latitude),longitude:Number(v.longitude),radius:Number(v.radius)});closeModal();fleet=await api<Fleet>('/state');stopsCache=null;if(view==='geofences')renderGeofences();else if(view==='map')updateLive();toast('Place saved.')}catch(err){$('#fence-error').textContent=(err as Error).message}});
 }
 
 /* ---------- Driver link (phone senders only) ---------- */
@@ -437,7 +474,7 @@ function renderSettings(){
   on('[data-logout]',logout);icons();
 }
 function renderMore(){
-  const items:[View,string,string,string][]=[['alerts','Alerts','bell',openAlerts()?`${openAlerts()} open`:''],['geofences','Geofences','map-pin',''],['documents','Documents','files',''],['ebills','E-way bills','file-text',''],['settings','Settings','settings','']];
+  const items:[View,string,string,string][]=[['alerts','Alerts','bell',openAlerts()?`${openAlerts()} open`:''],['geofences','Places','map-pin',''],['documents','Documents','files',''],['ebills','E-way bills','file-text',''],['settings','Settings','settings','']];
   $('#view').innerHTML=`<div class="page"><div class="card who" style="display:flex;gap:12px;align-items:center"><span class="ico" style="width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:var(--blue);color:#fff">${i('user-round')}</span><div><strong>${esc(prefs().workspace)}</strong><small>${esc(me.email||'')}</small></div></div>
     <div class="card more-list">${items.map(([v,l,ic,note])=>`<button data-go="${v}"><span class="ico">${i(ic)}</span>${l}${note?`<span class="chip bad plain" style="margin-left:auto">${note}</span>`:''}${i('chevron-right')}</button>`).join('')}<button data-logout><span class="ico" style="background:var(--stopped-50);color:var(--stopped)">${i('log-out')}</span>Sign out${i('chevron-right')}</button></div></div>`;
   on('#view [data-go]',el=>go(el.dataset.go as View));on('#view [data-logout]',logout);icons();

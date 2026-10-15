@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
-import { cleanExtra, alarmAlerts, hardBrake, overspeed, REPEAT, SPEED_REPEAT, shareHours, SHARE_STOPPED, shareSilent } from './extra.mjs';
+import { cleanExtra, alarmAlerts, hardBrake, overspeed, REPEAT, SPEED_REPEAT, shareHours, SHARE_STOPPED, shareSilent, PLACE_KINDS } from './extra.mjs';
 import { cleanSetup } from './provision.mjs';
 
 export const hash = value => createHash('sha256').update(value).digest('hex');
@@ -56,6 +56,7 @@ export class TrackingStore {
     if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name==='speedAlert'))this.db.exec('ALTER TABLE devices ADD COLUMN speedAlert INTEGER NOT NULL DEFAULT 1');
     for(const column of ['simOperator','simType','simNumber','apn','apnUser','apnPass'])
       if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name===column))this.db.exec(`ALTER TABLE devices ADD COLUMN ${column} TEXT`);
+    if(!this.db.prepare('PRAGMA table_info(fences)').all().some(c=>c.name==='kind'))this.db.exec("ALTER TABLE fences ADD COLUMN kind TEXT NOT NULL DEFAULT 'other'");
     this.db.exec('CREATE TABLE IF NOT EXISTS landmark_tiles (key TEXT PRIMARY KEY,value TEXT NOT NULL,fetchedAt INTEGER NOT NULL)');
     this.db.exec('CREATE TABLE IF NOT EXISTS provision_steps (id TEXT PRIMARY KEY,deviceId TEXT NOT NULL,seq INTEGER NOT NULL,command TEXT NOT NULL,label TEXT NOT NULL,status TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,commandId TEXT,sentAt INTEGER,doneAt INTEGER,reply TEXT)');
     if(!this.db.prepare('PRAGMA table_info(fences)').all().some(c=>c.name==='tenantId'))this.db.exec("ALTER TABLE fences ADD COLUMN tenantId TEXT NOT NULL DEFAULT 'owner'");
@@ -364,9 +365,11 @@ export class TrackingStore {
   addFence(body,tenantId='owner') {
     const id=randomUUID(), name=text(body.name,'Geofence name');
     const latitude=number(body.latitude,'Latitude',-90,90), longitude=number(body.longitude,'Longitude',-180,180), radius=number(body.radius,'Radius (m)',50,100000);
-    this.db.prepare('INSERT INTO fences(id,name,latitude,longitude,radius,tenantId) VALUES (?,?,?,?,?,?)').run(id,name,latitude,longitude,radius,tenantId);
+    const kind=body.kind===undefined||body.kind===null||body.kind===''?'other':String(body.kind);
+    if(!PLACE_KINDS.includes(kind))fail(400,'Choose a place type from the list.');
+    this.db.prepare('INSERT INTO fences(id,name,latitude,longitude,radius,tenantId,kind) VALUES (?,?,?,?,?,?,?)').run(id,name,latitude,longitude,radius,tenantId,kind);
     for (const device of this.devices(tenantId)) if (device.position) this.db.prepare('INSERT INTO fence_state VALUES (?,?,?)').run(device.id,id,Number(distance(device.position,{latitude,longitude}) <= radius));
-    return {id,name,latitude,longitude,radius};
+    return {id,name,latitude,longitude,radius,kind};
   }
   deleteFence(id,tenantId){
     const result=tenantId?this.db.prepare('DELETE FROM fences WHERE id=? AND tenantId=?').run(id,tenantId):this.db.prepare('DELETE FROM fences WHERE id=?').run(id);

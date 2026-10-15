@@ -2,7 +2,7 @@ import L from 'leaflet';
 import {api} from './core';
 
 // Landmarks around the vehicles (petrol pumps, dhabas, temples, hospitals, tolls...). The server
-// fetches them per ~2.8 km tile (TomTom when configured, otherwise OpenStreetMap) and caches them;
+// fetches them per ~2.8 km tile from OpenStreetMap and caches them;
 // this browser keeps tiles for a week too, and a failing lookup is left alone for a while.
 export type Poi={id:string;name:string;kind:Kind;lat:number;lon:number};
 type Kind='fuel'|'food'|'worship'|'health'|'police'|'money'|'toll'|'stay'|'school'|'parking'|'bus';
@@ -65,4 +65,15 @@ export function landmarkLayer(map:L.Map,minZoom=14){
   const later=()=>{clearTimeout(timer);timer=setTimeout(draw,600)};
   map.on('moveend zoomend',later);later();
   return layer;
+}
+
+// The customer's own saved places, by type.
+export const PLACE_KIND:Record<string,[string,string]>={fuel:['⛽','Petrol pump'],food:['🍽','Dhaba / food'],depot:['🏭','Depot'],loading:['📦','Loading point'],unloading:['📤','Unloading point'],parking:['🅿','Parking'],other:['📍','Other']};
+export const placeIcon=(kind?:string)=>(PLACE_KIND[kind||'other']||PLACE_KIND.other)[0];
+// "At HP Petrol Pump" inside a saved place, otherwise "Near <place> · 600 m" within 1.5 km.
+export function nearSaved(lat:number,lon:number,saved:{name:string;latitude:number;longitude:number;radius:number;kind?:string}[]){
+  let best:{name:string;kind?:string;m:number;inside:boolean}|null=null;
+  for(const f of saved){const m=metres({lat,lon},{lat:f.latitude,lon:f.longitude}),inside=m<=f.radius;if((inside||m<=1500)&&(!best||(inside&&!best.inside)||(inside===best.inside&&m<best.m)))best={name:f.name,kind:f.kind,m,inside}}
+  if(!best)return null;
+  return `${placeIcon(best.kind)} ${best.inside?'At':'Near'} ${best.name}${best.inside?'':` · ${best.m<1000?`${Math.round(best.m)} m`:`${(best.m/1000).toFixed(1)} km`}`}`;
 }

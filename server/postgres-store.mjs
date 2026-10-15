@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { PgAdapter } from './pg-adapter.mjs';
-import { cleanExtra, alarmAlerts, hardBrake, overspeed, REPEAT, SPEED_REPEAT, shareHours, SHARE_STOPPED, shareSilent } from './extra.mjs';
+import { cleanExtra, alarmAlerts, hardBrake, overspeed, REPEAT, SPEED_REPEAT, shareHours, SHARE_STOPPED, shareSilent, PLACE_KINDS } from './extra.mjs';
 import { cleanSetup } from './provision.mjs';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 
@@ -331,9 +331,11 @@ export class PostgresTrackingStore {
   async addFence(body,tenantId='owner') {
     const id=randomUUID(), name=text(body.name,'Geofence name');
     const latitude=number(body.latitude,'Latitude',-90,90), longitude=number(body.longitude,'Longitude',-180,180), radius=number(body.radius,'Radius (m)',50,100000);
-    (await this.db.prepare('INSERT INTO fences(id,name,latitude,longitude,radius,tenantId) VALUES (?,?,?,?,?,?)').run(id,name,latitude,longitude,radius,tenantId));
+    const kind=body.kind===undefined||body.kind===null||body.kind===''?'other':String(body.kind);
+    if(!PLACE_KINDS.includes(kind))fail(400,'Choose a place type from the list.');
+    (await this.db.prepare('INSERT INTO fences(id,name,latitude,longitude,radius,tenantId,kind) VALUES (?,?,?,?,?,?,?)').run(id,name,latitude,longitude,radius,tenantId,kind));
     for (const device of (await this.devices(tenantId))) if (device.position) (await this.db.prepare('INSERT INTO fence_state VALUES (?,?,?)').run(device.id,id,Number(distance(device.position,{latitude,longitude}) <= radius)));
-    return {id,name,latitude,longitude,radius};
+    return {id,name,latitude,longitude,radius,kind};
   }
   async deleteFence(id,tenantId){
     const result=tenantId?(await this.db.prepare('DELETE FROM fences WHERE id=? AND tenantId=?').run(id,tenantId)):(await this.db.prepare('DELETE FROM fences WHERE id=?').run(id));
