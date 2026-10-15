@@ -13,11 +13,14 @@ export function createMap(el:HTMLElement,center:L.LatLngTuple=[22.5,79],zoom=5){
   L.control.zoom({position:'bottomright'}).addTo(map);
   // Petrol pumps, dhabas, temples and other landmarks with their names, once zoomed in.
   landmarkLayer(map);
+  // Labels thin out as the map zooms out, so the overview never becomes a pile of text.
+  const depth=()=>{const z=map.getZoom(),c=map.getContainer().classList;c.toggle('z-wide',z<10);c.toggle('z-far',z<12);c.toggle('z-mid',z<16)};
+  map.on('zoomend',depth);depth();
   return map;
 }
 
 // Top-down truck, cab at the top so rotating by GPS course points it the way it is driving.
-const TRUCK='<svg class="truck-icon" viewBox="0 0 24 40" aria-hidden="true"><rect x="2.5" y="6" width="2.5" height="4" rx="1"/><rect x="19" y="6" width="2.5" height="4" rx="1"/><rect x="5" y="2" width="14" height="10" rx="3.5"/><rect class="glass" x="7" y="4.2" width="10" height="3.6" rx="1.2"/><rect x="4" y="13.5" width="16" height="24.5" rx="2"/><path class="ribs" d="M7 18h10M7 23h10M7 28h10M7 33h10"/></svg>';
+export const TRUCK='<svg class="truck-icon" viewBox="0 0 24 40" aria-hidden="true"><rect x="2.5" y="6" width="2.5" height="4" rx="1"/><rect x="19" y="6" width="2.5" height="4" rx="1"/><rect x="5" y="2" width="14" height="10" rx="3.5"/><rect class="glass" x="7" y="4.2" width="10" height="3.6" rx="1.2"/><rect x="4" y="13.5" width="16" height="24.5" rx="2"/><path class="ribs" d="M7 18h10M7 23h10M7 28h10M7 33h10"/></svg>';
 export function truckIcon(v:Vehicle,selected=false){
   return L.divIcon({className:'gps-marker',html:`<div class="gps-pin ${statusOf(v)} ${selected?'on':''}"><span style="transform:rotate(${v.position?.heading||0}deg)">${TRUCK}</span></div>`,iconSize:[40,40],iconAnchor:[20,20]});
 }
@@ -32,9 +35,11 @@ export function bearing(a:Point,b:Point){
   return (Math.atan2(y,x)/r+360)%360;
 }
 // Vehicle name and road/area tag that stays readable without zooming in.
-export function truckTag(v:Vehicle){
+// With place: the selected vehicle. Without: just the number plate, so a full map stays readable.
+export function truckTag(v:Vehicle,withPlace=true){
   const tag=document.createElement('span');tag.className='truck-tag';
   const name=document.createElement('strong');name.textContent=v.name;
+  if(!withPlace){tag.append(name);return tag}
   const where=document.createElement('small');
   const {key,text}=placeText(v.position!,v.id);
   where.dataset.place=key;where.dataset.short='1';where.textContent=text?shortPlace(text):coords(v.position!);

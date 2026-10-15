@@ -188,7 +188,7 @@ dialog.modal::backdrop{background:#0f1d3d66;backdrop-filter:blur(2px)}
 .gps-pin{width:40px;height:40px;display:grid;place-items:center;border-radius:50%}
 .gps-pin.on{background:#1990ff26;box-shadow:0 0 0 2px #1990ff66}
 .gps-pin span{display:grid;place-items:center;transition:transform .4s ease}
-.leaflet-container .gps-pin svg.truck-icon{width:22px;height:36px;fill:currentColor;stroke:#fff;stroke-width:1.4;stroke-linejoin:round;filter:drop-shadow(0 1px 2px #0006)}
+.leaflet-container .gps-pin svg.truck-icon,.gl .gps-pin svg.truck-icon{width:22px;height:36px;fill:currentColor;stroke:#fff;stroke-width:1.4;stroke-linejoin:round;filter:drop-shadow(0 1px 2px #0006)}
 .gps-pin .truck-icon .glass{fill:#fff;fill-opacity:.85;stroke:none}
 .gps-pin .truck-icon .ribs{fill:none;stroke:#fff;stroke-opacity:.45;stroke-width:1.2}
 .gps-pin.running{color:var(--running)}.gps-pin.idle{color:var(--idle)}.gps-pin.stopped{color:var(--stopped)}.gps-pin.offline{color:var(--offline)}.gps-pin.nofix,.gps-pin.waiting{color:var(--nofix)}
@@ -303,7 +303,95 @@ dialog.modal::backdrop{background:#0f1d3d66;backdrop-filter:blur(2px)}
 /* Google view: Google's own map with nearby places */
 .map-wrap .gwrap{position:absolute;inset:0;z-index:500;background:var(--soft)}
 .gwrap .gframe,.gmodal .gframe{width:100%;height:100%;border:0;display:block}
-.gwrap .gtag{position:absolute;left:12px;top:12px;z-index:1;background:var(--card);color:var(--ink);border-radius:10px;padding:4px 10px;font-size:12px;font-weight:600;box-shadow:var(--shadow)}
-.gmodal{height:min(70vh,520px);border-radius:14px;overflow:hidden;background:var(--soft)}
+.gmodal{position:relative;height:min(70vh,520px);border-radius:14px;overflow:hidden;background:var(--soft)}
 .map-tools .gtoggle{font:700 15px/1 'DM Sans',system-ui,sans-serif}
 .linkish{background:none;border:0;padding:0;color:var(--blue-600);font:inherit;text-decoration:underline;cursor:pointer}
+
+/* Google view with our trucks drawn over a locked Google frame */
+.gl{overflow:hidden}
+.gl-frames,.gl-marks{position:absolute;inset:0}
+.gl-frames iframe{position:absolute;inset:0;width:100%;height:100%;border:0;pointer-events:none;opacity:0;transition:opacity .3s}
+.gl-frames iframe.on{opacity:1}
+.gl svg.gl-trail{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+.gl-trail polyline{fill:none;stroke:#1990ff;stroke-width:5;stroke-linecap:round;stroke-linejoin:round;opacity:.85}
+.gl-marks{pointer-events:none}
+.gl-mark{position:absolute;left:0;top:0;width:40px;height:40px;pointer-events:auto;cursor:pointer;transition:transform 1.2s linear}
+.gl-label{position:absolute;left:50%;bottom:42px;transform:translateX(-50%);white-space:nowrap;background:var(--card);color:var(--ink);font-size:12px;font-weight:700;padding:3px 8px;border-radius:8px;box-shadow:var(--shadow)}
+.gl-zoom{position:absolute;left:12px;top:64px;display:flex;flex-direction:column;border-radius:12px;overflow:hidden;box-shadow:var(--shadow);z-index:3}
+.gl-zoom button{width:40px;height:40px;background:var(--card);color:var(--ink);font-size:20px;font-weight:600;border-bottom:1px solid var(--line)}
+.gl-zoom button:last-child{border-bottom:0}
+
+/* ---- Clean navigation: grouped sidebar, titled mobile header, menu tiles ---- */
+.customer .nav{gap:14px}
+.nav-group{display:flex;flex-direction:column;gap:2px}
+.nav-title{font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);padding:0 12px 4px;opacity:.8}
+.admin .nav-title{color:#7f8db0}
+.badge[hidden]{display:none!important}
+.who-foot{display:flex;align-items:center;gap:10px;padding:10px;border-radius:14px;background:var(--soft);border:1px solid var(--line)}
+.who-foot .who-text{flex:1;min-width:0}.who-foot strong{display:block;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.who-foot small{display:block;color:var(--muted);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.who-foot .icon-btn{width:34px;height:34px;flex:none}
+.avatar{flex:none;width:34px;height:34px;border-radius:11px;display:grid;place-items:center;background:var(--blue);color:#fff;font-weight:700}
+.avatar.lg{width:46px;height:46px;border-radius:14px;font-size:19px}
+.mh-back{display:flex;align-items:center;gap:4px;color:#fff;font-size:18px;font-weight:700;margin-left:-6px}
+.mh-back svg.lucide{width:24px;height:24px}
+.menu-page{gap:20px}
+.profile-card{display:flex;align-items:center;gap:12px;padding:14px}
+.profile-card div{flex:1;min-width:0}.profile-card strong{display:block}.profile-card small{color:var(--muted);font-size:12.5px}
+.menu-title{font-size:12px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);margin:0 0 8px 4px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.tile{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:14px;border-radius:16px;background:var(--card);border:1px solid var(--line);text-align:left;transition:border-color .15s,box-shadow .15s}
+.tile:hover{border-color:var(--line-strong);box-shadow:var(--shadow)}
+.tile-ico{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:var(--blue-50);color:var(--blue-600);margin-bottom:6px}
+.tile b{font-size:14.5px;display:flex;align-items:center;gap:6px}.tile small{color:var(--muted);font-size:12px;line-height:1.35}
+
+/* ---- Vehicle cards: status at a glance ---- */
+.vcard{display:grid;grid-template-columns:42px 1fr auto;align-items:center;gap:12px;padding:12px 14px}
+.vcard .vico{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;background:var(--soft);color:var(--muted)}
+.vcard.s-running .vico{background:var(--running-50);color:var(--running)}.vcard.s-idle .vico{background:var(--idle-50);color:var(--idle)}
+.vcard.s-stopped .vico{background:var(--stopped-50);color:var(--stopped)}.vcard.s-offline .vico{background:var(--offline-50);color:var(--offline)}
+.vcard .vmain{display:flex;flex-direction:column;gap:2px;min-width:0}
+.vcard .vtop{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.vcard .vago{font-size:11.5px;color:var(--muted);white-space:nowrap}
+.vcard .vstate{font-size:13px;font-weight:600;color:var(--muted)}
+.vcard.s-running .vstate{color:var(--running)}.vcard.s-idle .vstate{color:var(--idle)}.vcard.s-stopped .vstate{color:var(--stopped)}
+.vcard .where{display:block;font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vcard .vign{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:var(--soft);color:var(--offline)}
+.vcard .vign.on{background:var(--running-50);color:var(--running)}
+.vcard .vign svg.lucide{width:15px;height:15px}
+
+/* ---- Vehicle sheet: compact stats and one row of quick actions ---- */
+.stats.stats4{grid-template-columns:repeat(4,1fr)}
+.stats.stats4 div{padding:8px}.stats.stats4 b{font-size:13.5px}
+.qa{display:grid;grid-template-columns:repeat(auto-fit,minmax(64px,1fr));gap:6px}
+.qa button,.qa a{display:flex;flex-direction:column;align-items:center;gap:5px;padding:8px 4px;border-radius:12px;color:var(--ink);font-size:11.5px;font-weight:600;text-align:center;line-height:1.2}
+.qa button svg.lucide,.qa a svg.lucide{width:36px;height:36px;padding:9px;border-radius:12px;background:var(--blue-50);color:var(--blue-600)}
+.qa button:hover,.qa a:hover{background:var(--soft)}
+.qa button.on svg.lucide{background:var(--blue);color:#fff}
+#sheet-history svg.lucide{background:var(--navy);color:#fff}
+
+/* ---- Settings in tabs ---- */
+.settings-tabs{display:flex;width:100%;overflow-x:auto}
+.settings-tabs button{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap}
+.settings-tabs button svg.lucide{width:16px;height:16px}
+
+/* ---- Map labels thin out when zoomed out ---- */
+.z-far .fence-label,.z-mid .poi-name{display:none}
+.z-far .leaflet-marker-icon.poi{display:none}
+
+@media (max-width:900px){
+  .stats.stats4{grid-template-columns:repeat(4,1fr)}
+  .stats.stats4 span{font-size:10.5px}
+  .vsheet{padding:14px;gap:10px}
+  .tiles{grid-template-columns:1fr 1fr}
+  .settings-tabs button{padding:8px 10px;font-size:13px}
+}
+
+.kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.kpi-mini{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:10px 12px;border-radius:14px;background:var(--card);border:1px solid var(--line);text-align:left}
+.kpi-mini.on{border-color:var(--blue);box-shadow:0 0 0 3px #1990ff22}
+.kpi-mini strong{font-size:22px;line-height:1.1}
+.kpi-mini span{display:flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:var(--muted)}
+.kpi-mini .dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+@media (max-width:420px){.kpi-mini{padding:8px}.kpi-mini span{font-size:10.5px}.kpi-mini .dot{display:none}}
+.z-wide .truck-tooltip{display:none}

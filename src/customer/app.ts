@@ -2,7 +2,8 @@ import {$,$$,api,post,brand,chip,clock,closeModal,coords,esc,hm,i,icons,localInp
 import {bearing,createMap,drawRoute,playbackIcon,point,truckIcon,truckTag,L} from '../shared/map';
 import {placeSpan,places,placeKey} from '../shared/places';
 import {nearest,nearText,nearSaved,placeIcon,PLACE_KIND} from '../shared/poi';
-import {googleFrame,googleModal} from '../shared/google';
+import {googleModal} from '../shared/google';
+import {googleLive,type GoogleLive} from '../shared/gview';
 import {DEMO_MODE,workspaceStorage} from '../demo';
 import {showLogin} from '../auth';
 import {CATEGORIES,alertWords,announceNew,askBrowserPermission,browserState,browserSupported,categoryOf,mergeNotify,primeSeen,speak,unlockVoice,voiceSupported,type Category,type NotifyPrefs} from './notify';
@@ -18,9 +19,18 @@ type Prefs={name:string;workspace:string;follow:boolean;defaultView:View;notify?
 const notifyPrefs=():NotifyPrefs=>mergeNotify(prefs().notify);
 async function saveNotify(next:NotifyPrefs){await workspaceStorage.setItem('workspace-preferences',JSON.stringify({...prefs(),notify:next}))}
 
-const NAV:[View,string,string][]=[['map','Live map','map'],['vehicles','Vehicles','truck'],['history','History','route'],['reports','Reports','chart-column'],['alerts','Alerts','bell'],['geofences','Places','map-pin'],['documents','Documents','files'],['ebills','E-way bills','file-text'],['settings','Settings','settings']];
-const TABS:[View,string,string][]=[['map','Map','map'],['vehicles','Vehicles','truck'],['history','History','route'],['reports','Reports','chart-column'],['more','More','ellipsis']];
-const TITLES:Record<View,string>={map:'Live map',vehicles:'Vehicles',history:'Route history',reports:'Reports',alerts:'Alerts',geofences:'Places',documents:'Documents',ebills:'E-way bills',settings:'Settings',more:'More'};
+// Menu in plain groups: what you watch, what tells you something, what you look after, your account.
+const GROUPS:[string,[View,string,string][]][]=[
+  ['Tracking',[['map','Live map','map'],['vehicles','Vehicles','truck'],['history','Route history','route']]],
+  ['Alerts & reports',[['alerts','Alerts','bell'],['reports','Reports','chart-column']]],
+  ['Manage',[['geofences','Places','map-pin'],['documents','Documents','files'],['ebills','E-way bills','file-text']]],
+  ['Account',[['settings','Settings','settings']]],
+];
+const NAV=GROUPS.flatMap(([,items])=>items);
+const HINTS:Partial<Record<View,string>>={alerts:'Engine, SOS, overspeed, signal',reports:'Distance, running and idle time',geofences:'Petrol pumps, dhabas, depots',documents:'RC, insurance, permits',ebills:'E-way bills for your trips',settings:'Notifications, overspeed, password'};
+const TABS:[View,string,string][]=[['map','Map','map'],['vehicles','Vehicles','truck'],['history','History','route'],['alerts','Alerts','bell'],['more','Menu','menu']];
+const ROOT:View[]=['map','vehicles','history','alerts','more'];
+const TITLES:Record<View,string>={map:'Live map',vehicles:'Vehicles',history:'Route history',reports:'Reports',alerts:'Alerts',geofences:'Places',documents:'Documents',ebills:'E-way bills',settings:'Settings',more:'Menu'};
 
 let me:Identity,fleet:Fleet={devices:[],fences:[],alerts:[]},view:View='map',selected='',filter:StatusKey|'all'='all',search='',following=false,fitted=false;
 let poll:ReturnType<typeof setTimeout>|undefined,teardown:(()=>void)|undefined;
@@ -49,7 +59,7 @@ function stop(){clearTimeout(poll);teardown?.();teardown=undefined}
 // Short polls keep the map, alerts and voice close to real time (the gateway pushes within ~1 s).
 function schedule(){clearTimeout(poll);poll=setTimeout(refresh,document.hidden?5000:2000)}
 async function refresh(){
-  try{fleet=await api<Fleet>('/state');announceNew(fleet.alerts,notifyPrefs());updateBadges();if(view==='map')updateLive();else if(view==='vehicles')renderVehicles();else if(view==='alerts')renderAlerts()}
+  try{fleet=await api<Fleet>('/state');remember(fleet.devices);announceNew(fleet.alerts,notifyPrefs());updateBadges();if(view==='map')updateLive();else if(view==='vehicles')renderVehicles();else if(view==='alerts')renderAlerts()}
   catch{/* keep showing the last data; the next poll retries */}
   finally{schedule()}
 }
@@ -63,17 +73,16 @@ function shell(){
   const p=prefs(),badge=openAlerts();
   $('#app').innerHTML=`<div class="app customer">
     <aside class="sidebar">${brand()}
-      <div class="who"><strong>${esc(p.workspace)}</strong><small>${esc(me.email||p.name)}</small></div>
-      <nav class="nav">${NAV.map(([v,label,icon])=>`<button data-go="${v}" class="${view===v?'on':''}">${i(icon)}${label}${v==='alerts'&&badge?`<span class="badge" data-alert-badge>${badge}</span>`:''}</button>`).join('')}</nav>
-      <div class="foot"><button class="btn btn-ghost btn-block" data-logout>${i('log-out')}Sign out</button></div>
+      <nav class="nav">${GROUPS.map(([group,items])=>`<div class="nav-group"><span class="nav-title">${group}</span>${items.map(([v,label,icon])=>`<button data-go="${v}" class="${view===v?'on':''}">${i(icon)}${label}${v==='alerts'?`<span class="badge" data-alert-badge ${badge?'':'hidden'}>${badge}</span>`:''}</button>`).join('')}</div>`).join('')}</nav>
+      <div class="foot who-foot"><span class="avatar">${esc((p.workspace||'W').trim().charAt(0).toUpperCase())}</span><div class="who-text"><strong>${esc(p.workspace)}</strong><small>${esc(me.email||p.name)}</small></div><button class="icon-btn" data-logout title="Sign out" aria-label="Sign out">${i('log-out')}</button></div>
     </aside>
     <div class="main">
-      <header class="mobile-head">${brand()}<button class="icon-btn" data-go="alerts" aria-label="Alerts">${i('bell')}${badge?`<span class="badge" data-alert-badge>${badge}</span>`:''}</button></header>
+      <header class="mobile-head">${ROOT.includes(view)?brand():`<button class="mh-back" data-go="more" aria-label="Back to menu">${i('chevron-left')}<span>${TITLES[view]}</span></button>`}<button class="icon-btn" data-go="alerts" aria-label="Alerts">${i('bell')}<span class="badge" data-alert-badge ${badge?'':'hidden'}>${badge}</span></button></header>
       <header class="topbar"><div class="title"><h1>${TITLES[view]}</h1><small>${esc(p.workspace)} · ${fleet.devices.length} vehicle${fleet.devices.length===1?'':'s'}</small></div>
         <div class="toolbar">${view!=='map'?`<button class="btn btn-ghost" data-go="map">${i('map')}Live map</button>`:''}</div></header>
       <div id="view"></div>
     </div>
-    <nav class="tabbar">${TABS.map(([v,label,icon])=>`<button data-go="${v}" class="${view===v||(v==='more'&&['alerts','geofences','documents','ebills','settings','more'].includes(view))?'on':''}">${i(icon)}${label}</button>`).join('')}</nav>
+    <nav class="tabbar">${TABS.map(([v,label,icon])=>`<button data-go="${v}" class="${view===v||(v==='more'&&!ROOT.includes(view))?'on':''}">${i(icon)}${label}${v==='alerts'?`<span class="badge" data-alert-badge ${badge?'':'hidden'}>${badge}</span>`:''}</button>`).join('')}</nav>
   </div>`;
   on('[data-go]',el=>go(el.dataset.go as View));
   on('[data-logout]',logout);
@@ -89,7 +98,13 @@ const todayKm=new globalThis.Map<string,{at:number;km:number|null}>();
 // "Near Indian Oil petrol pump · 120 m" for each position shown in the vehicle sheet.
 const nearCache=new globalThis.Map<string,string>();
 // Google view: Google's own map (with all its places) around the selected vehicle, instead of ours.
-let googleView=false,gframe:ReturnType<typeof googleFrame>|undefined;
+let googleView=false,glive:GoogleLive|undefined;
+// Recent path of each vehicle while the app is open, drawn behind the selected truck in Google view.
+const trails=new globalThis.Map<string,{latitude:number;longitude:number;at:number}[]>();
+function remember(devices:Vehicle[]){
+  const cutoff=Date.now()-60*60000;
+  for(const d of devices){const p=d.position;if(!p||p.valid===0)continue;const t=trails.get(d.id)||[];if(!t.length||t.at(-1)!.at!==p.recordedAt)t.push({latitude:p.latitude,longitude:p.longitude,at:p.recordedAt});while(t.length&&(t[0].at<cutoff||t.length>400))t.shift();trails.set(d.id,t)}
+}
 try{googleView=localStorage.getItem('waypoint.googleView')==='1'}catch{/* private mode */}
 function renderLive(){
   $('#view').innerHTML=`<div class="live" id="live">
@@ -98,12 +113,12 @@ function renderLive(){
       <div class="vlist" id="vlist"></div></section>
     <div class="map-wrap"><div class="map" id="map"></div>
       <div class="map-tools"><button class="icon-btn" id="fit" title="Show all vehicles" aria-label="Show all vehicles">${i('scan')}</button><button class="icon-btn ${following?'on':''}" id="follow" title="Follow selected vehicle" aria-label="Follow selected vehicle">${i('locate-fixed')}</button><button class="icon-btn gtoggle ${googleView?'on':''}" id="gview" title="Google map with nearby places" aria-label="Google map with nearby places">G</button></div>
-      <div class="gwrap" id="gwrap" hidden><span class="gtag" id="gtag"></span></div>
+      <div class="gwrap" id="gwrap" hidden></div>
       <div class="vsheet card" id="vsheet" hidden></div></div></div>`;
   map=createMap($('#map'));markers=L.layerGroup().addTo(map);fences=L.layerGroup().addTo(map);fitted=false;
-  teardown=()=>{map?.remove();map=undefined;gframe=undefined};
-  gframe=googleFrame($('#gwrap'));
-  on('#gview',el=>{googleView=!googleView;el.classList.toggle('on',googleView);try{localStorage.setItem('waypoint.googleView',googleView?'1':'0')}catch{}updateLive();if(!googleView)map?.invalidateSize()});
+  teardown=()=>{map?.remove();map=undefined;glive?.destroy();glive=undefined};
+  glive=googleLive($('#gwrap'),{onSelect:id=>select(id),covered:()=>matchMedia('(max-width:900px)').matches?document.querySelector<HTMLElement>('#vsheet:not([hidden])')?.offsetHeight||0:0});
+  on('#gview',()=>setGoogleView(!googleView));
   $<HTMLInputElement>('#q').oninput=e=>{search=(e.target as HTMLInputElement).value;updateLive()};
   on('#fit',fit);on('#follow',el=>{following=!following;el.classList.toggle('on',following);const v=vehicle(selected);if(following&&v?.position)map?.panTo(point(v.position))});
   on('#grabber',()=>{$('#panel').classList.toggle('collapsed')});
@@ -129,6 +144,11 @@ function centre(p:{latitude:number;longitude:number},zoom=map?.getZoom()){
   map.setView(point(p),zoom,{animate:false});
   if(card)map.panBy([0,card/2],{animate:false});
 }
+function setGoogleView(on:boolean){
+  googleView=on;document.querySelector('#gview')?.classList.toggle('on',on);
+  try{localStorage.setItem('waypoint.googleView',on?'1':'0')}catch{/* private mode */}
+  updateLive();if(!on)map?.invalidateSize();
+}
 function updateLive(){
   if(!map||!markers)return;
   const c=counts(),list=visible();
@@ -140,7 +160,7 @@ function updateLive(){
   for(const d of list){
     if(!d.position)continue;
     L.marker(point(d.position),{icon:truckIcon(d,d.id===selected),title:d.name}).addTo(markers)
-      .bindTooltip(truckTag(d),{permanent:d.id===selected||list.length<=15,direction:'top',offset:[0,-20],className:'truck-tooltip'})
+      .bindTooltip(truckTag(d,d.id===selected),{permanent:d.id===selected||(!selected&&list.length<=8),direction:'top',offset:[0,-20],className:'truck-tooltip'})
       .on('click',()=>select(d.id));
   }
   fences!.clearLayers();
@@ -151,16 +171,18 @@ function updateLive(){
   renderSheet();icons();
   if(following&&v?.position)centre(v.position);
   // Google view follows the selected vehicle, or the first one with a position.
-  const g=v?.position?v:list.find(d=>d.position);
   $('#gwrap').hidden=!googleView;$('#map').style.visibility=googleView?'hidden':'';
-  if(googleView&&g?.position){gframe?.show(g.position.latitude,g.position.longitude);$('#gtag').textContent=`Google map · ${g.name}`}
+  if(googleView)glive?.update(list,selected,selected?trails.get(selected):[]);
 }
 function vehicleCard(d:Vehicle){
   const p=d.position,s=statusOf(d);
-  return `<button class="vcard ${d.id===selected?'on':''}" data-vehicle="${d.id}">
-    <div class="row"><span class="plate">${esc(d.name)}</span>${chip(d)}</div>
-    <div class="where">${i('map-pin')}${placeSpan(p,d.id)}</div>
-    <div class="meta"><span>${s==='running'&&p?`<b>${Math.round(p.speed)} km/h</b>`:(s==='stopped'||s==='idle')&&d.stoppedSince?`${s==='idle'?'Idle':'Parked'} <b>${since(d.stoppedSince)}</b>`:esc(STATUS_LABEL[s])}</span><span>Ignition <b>${d.ignition==null?'—':d.ignition?'On':'Off'}</b></span><span>${ago(p?.recordedAt??d.lastSeen)}</span></div>
+  const state=s==='running'&&p?`Running · ${Math.round(p.speed)} km/h`:(s==='stopped'||s==='idle')&&d.stoppedSince?`${s==='idle'?'Idle, engine on':'Parked'} · ${since(d.stoppedSince)}`:STATUS_LABEL[s];
+  return `<button class="vcard s-${s} ${d.id===selected?'on':''}" data-vehicle="${d.id}">
+    <span class="vico">${i('truck')}</span>
+    <span class="vmain"><span class="vtop"><span class="plate">${esc(d.name)}</span><span class="vago">${ago(p?.recordedAt??d.lastSeen)}</span></span>
+      <span class="vstate">${esc(state)}</span>
+      <span class="where">${placeSpan(p,d.id)}</span></span>
+    <span class="vign ${d.ignition?'on':''}" title="Ignition ${d.ignition==null?'unknown':d.ignition?'on':'off'}">${i('power')}</span>
   </button>`;
 }
 function renderSheet(){
@@ -173,14 +195,14 @@ function renderSheet(){
   el.hidden=false;
   el.innerHTML=`<div class="head"><div><h2>${esc(d.name)}</h2>${d.driver?`<span class="small muted">${i('user-round')} ${esc(d.driver)}</span>`:''}</div><div style="display:flex;gap:8px;align-items:center">${chip(d)}<button class="icon-btn" id="close-sheet" aria-label="Close">${i('x')}</button></div></div>
     <div><div class="place">${i('map-pin')}${placeSpan(p,d.id)}</div>${mine?`<div class="since near">${esc(mine)}</div>`:p&&nearCache.get(placeKey(p))?`<div class="since near">${i('landmark')}${esc(nearCache.get(placeKey(p))!)}</div>`:''}<div class="since">${esc(statusLine(d))}</div></div>
-    <div class="stats"><div><span>Speed</span><b${p&&d.fresh&&p.speed>d.speedLimit?' style="color:var(--stopped)"':''}>${p&&d.fresh?Math.round(p.speed):0} km/h</b></div><div><span>Ignition</span><b>${d.ignition==null?'—':d.ignition?'On':'Off'}</b></div><div><span>Today</span><b>${km?.km==null?'…':`${km.km} km`}</b></div><div><span>Updated</span><b>${ago(p?.recordedAt??d.lastSeen)}</b></div></div>
-    <div class="acts"><button class="btn btn-primary btn-sm" id="sheet-history">${i('route')}History</button>${p?`<a class="btn btn-ghost btn-sm" href="${mapsLink(p)}" target="_blank" rel="noopener">${i('external-link')}Google Maps</a><button class="btn btn-ghost btn-sm" id="sheet-share">${i('share-2')}Share</button><button class="btn btn-blue btn-sm" id="sheet-google">${i('landmark')}Nearby (Google)</button><button class="btn btn-ghost btn-sm" id="sheet-save">${i('map-pin')}Save this place</button>`:''}<button class="btn btn-ghost btn-sm" id="sheet-speed">${i('gauge')}Limit ${d.speedLimit} km/h${d.speedAlert===false?' · off':''}</button>${d.isMobile?`<button class="btn btn-ghost btn-sm" id="sheet-driver">${i('smartphone')}Driver link</button>`:''}</div>`;
+    <div class="stats stats4"><div><span>Speed</span><b${p&&d.fresh&&p.speed>d.speedLimit?' style="color:var(--stopped)"':''}>${p&&d.fresh?Math.round(p.speed):0} km/h</b></div><div><span>Ignition</span><b>${d.ignition==null?'—':d.ignition?'On':'Off'}</b></div><div><span>Today</span><b>${km?.km==null?'…':`${km.km} km`}</b></div><div><span>Updated</span><b>${ago(p?.recordedAt??d.lastSeen)}</b></div></div>
+    <div class="qa"><button id="sheet-history">${i('route')}<span>History</span></button>${p?`<button id="sheet-google" class="${googleView?'on':''}">${i('landmark')}<span>${googleView?'Our map':'Google view'}</span></button><button id="sheet-share">${i('share-2')}<span>Share</span></button><button id="sheet-save">${i('map-pin')}<span>Save place</span></button>`:''}<button id="sheet-speed">${i('gauge')}<span>${d.speedLimit} km/h${d.speedAlert===false?' off':''}</span></button>${d.isMobile?`<button id="sheet-driver">${i('smartphone')}<span>Driver link</span></button>`:''}${p?`<a href="${mapsLink(p)}" target="_blank" rel="noopener">${i('external-link')}<span>Directions</span></a>`:''}</div>`;
   on('#close-sheet',()=>{selected='';$('#live').classList.remove('sheet-open');updateLive()},el);
   on('#sheet-history',()=>{historyVehicle=d.id;go('history')},el);
   on('#sheet-share',async()=>{const text=`${d.name}: ${places.get(placeKey(p!))?.label||coords(p!)}\n${mapsLink(p!)}`;if(navigator.share)await navigator.share({title:d.name,text}).catch(()=>{});else{await navigator.clipboard.writeText(text);toast('Location copied.')}},el);
   on('#sheet-driver',()=>driverLink(d),el);
   on('#sheet-speed',()=>speedSettings(d),el);
-  on('#sheet-google',()=>googleModal(`${d.name} · Nearby (Google)`,p!.latitude,p!.longitude),el);
+  on('#sheet-google',()=>setGoogleView(!googleView),el);
   on('#sheet-save',()=>addFence({latitude:p!.latitude,longitude:p!.longitude,radius:150}),el);
   icons();
 }
@@ -199,7 +221,7 @@ function renderVehicles(){
   const host=$('#view');
   const focused=document.activeElement?.id==='vq';
   host.innerHTML=`<div class="page">
-    <div class="grid-kpi">${(['running','idle','stopped','offline'] as const).map(k=>`<button class="card kpi" data-filter="${k}" style="text-align:left;${filter===k?'border-color:var(--blue)':''}"><span>${STATUS_LABEL[k]}</span><strong style="color:var(--${k})">${c[k]||0}</strong></button>`).join('')}</div>
+    <div class="kpi-row">${(['running','idle','stopped','offline'] as const).map(k=>`<button class="kpi-mini ${filter===k?'on':''}" data-filter="${k}"><strong style="color:var(--${k})">${c[k]||0}</strong><span><i class="dot" style="background:var(--${k})"></i>${STATUS_LABEL[k]}</span></button>`).join('')}</div>
     <div class="toolbar"><label class="search">${i('search')}<input class="input" id="vq" placeholder="Search vehicle or driver" value="${esc(search)}"></label>${filter!=='all'?`<button class="btn btn-ghost" data-filter="all">${i('x')}${STATUS_LABEL[filter]}</button>`:''}</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">${list.map(d=>vehicleCard(d)).join('')||`<div class="card empty">${i('truck')}<h3>No vehicles</h3><p>Your fleet administrator adds GPS devices to your account.</p></div>`}</div></div>`;
   const input=$<HTMLInputElement>('#vq');input.oninput=()=>{search=input.value;renderVehicles()};
@@ -437,15 +459,18 @@ async function renderDocuments(section:'Documents'|'E-way bills'){
 }
 
 /* ---------- Settings and More ---------- */
+const SETTINGS_TABS:[string,string,string][]=[['profile','Profile','user-round'],['alerts','Alerts','bell'],['speed','Overspeed','gauge'],['security','Password','key-round']];
+let settingsTab='profile';
 function renderSettings(){
   const p=prefs();
   $('#view').innerHTML=`<div class="page" style="max-width:720px">
-    <form class="card card-pad form" id="prefs"><h2>Profile</h2>
+    <div class="seg settings-tabs" role="tablist">${SETTINGS_TABS.filter(([k])=>k!=='security'||!DEMO_MODE).map(([k,l,ic])=>`<button role="tab" data-stab="${k}">${i(ic)}${l}</button>`).join('')}</div>
+    <form class="card card-pad form" id="prefs" data-pane="profile"><h2>Profile</h2>
       <div class="form-row"><label class="field">Your name<input class="input" name="name" maxlength="100" value="${esc(p.name)}"></label><label class="field">Fleet name<input class="input" name="workspace" maxlength="100" required value="${esc(p.workspace)}"></label></div>
       <label class="field">Open the app on<select class="input" name="defaultView">${NAV.map(([v,l])=>`<option value="${v}" ${p.defaultView===v?'selected':''}>${l}</option>`).join('')}</select></label>
       <label class="check"><input type="checkbox" name="follow" ${p.follow?'checked':''}>Keep the map centred on the selected vehicle</label>
       <p class="error" id="prefs-error"></p><button class="btn btn-primary" type="submit" style="align-self:flex-start">${i('save')}Save</button></form>
-    <div class="card card-pad form" id="notify"><h2>Alert notifications</h2><p class="hint">Alerts are always saved in the Alerts page. These switches decide what pops up and speaks while the app is open.</p>
+    <div class="card card-pad form" id="notify" data-pane="alerts"><h2>Alert notifications</h2><p class="hint">Alerts are always saved in the Alerts page. These switches decide what pops up and speaks while the app is open.</p>
       <label class="check"><input type="checkbox" data-n="popup">Show a pop-up message</label>
       <label class="check"><input type="checkbox" data-n="voice">Speak alerts aloud${voiceSupported()?'':' (not supported in this browser)'}</label>
       <div class="toolbar"><button class="btn btn-ghost btn-sm" type="button" id="test-voice">${i('play')}Test voice</button></div>
@@ -454,13 +479,15 @@ function renderSettings(){
       <h3 style="margin-top:6px">Which alerts?</h3>
       ${CATEGORIES.map(c=>`<label class="check" style="align-items:flex-start"><input type="checkbox" data-cat-n="${c.key}" style="margin-top:3px"><span><b>${esc(c.label)}</b><br><span class="hint">${esc(c.hint)}</span></span></label>`).join('')}
       <p class="hint">Voice and notifications work while Waypoint is open in a browser tab, including a background tab. They stop when the tab or browser is closed or the phone suspends it.</p></div>
-    <div class="card card-pad form" id="speed-limits"><h2>Overspeed limits</h2><p class="hint">Set your own limit for each vehicle. When it is crossed you get an alert right away, with pop-up and voice if Overspeed is switched on above.</p>
+    <div class="card card-pad form" id="speed-limits" data-pane="speed"><h2>Overspeed limits</h2><p class="hint">Set your own limit for each vehicle. When it is crossed you get an alert right away, with pop-up and voice if Overspeed is switched on in the Alerts tab.</p>
       ${fleet.devices.length?fleet.devices.map(d=>speedForm(d,true)).join('<hr style="border:0;border-top:1px solid var(--line);margin:4px 0">'):'<p class="muted">No vehicles yet.</p>'}</div>
-    ${DEMO_MODE?'':`<form class="card card-pad form" id="password"><h2>Change password</h2><p class="hint">Signed in as ${esc(me.email)}. Your other devices will be signed out.</p>
+    ${DEMO_MODE?'':`<form class="card card-pad form" id="password" data-pane="security"><h2>Change password</h2><p class="hint">Signed in as ${esc(me.email)}. Your other devices will be signed out.</p>
       <label class="field">Current password<input class="input" type="password" name="currentPassword" required autocomplete="current-password"></label>
       <div class="form-row"><label class="field">New password<input class="input" type="password" name="newPassword" required minlength="12" maxlength="128" autocomplete="new-password"></label><label class="field">Confirm new password<input class="input" type="password" name="confirmPassword" required minlength="12" maxlength="128" autocomplete="new-password"></label></div>
       <p class="hint">At least 12 characters.</p><p class="error" id="password-error"></p><button class="btn btn-primary" type="submit" style="align-self:flex-start">${i('key-round')}Change password</button></form>`}
-    <button class="btn btn-ghost" data-logout style="align-self:flex-start">${i('log-out')}Sign out</button></div>`;
+    <button class="btn btn-ghost" data-logout data-pane="profile" style="align-self:flex-start">${i('log-out')}Sign out</button></div>`;
+  const pane=(k:string)=>{settingsTab=k;$$('[data-pane]').forEach(el=>el.hidden=el.dataset.pane!==k);$$('[data-stab]').forEach(b=>{b.classList.toggle('on',b.dataset.stab===k);b.setAttribute('aria-selected',String(b.dataset.stab===k))})};
+  on('[data-stab]',el=>pane(el.dataset.stab!));pane(document.querySelector(`[data-stab="${settingsTab}"]`)?settingsTab:'profile');
   $('#prefs').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target as HTMLFormElement);try{const next={...prefs(),name:String(f.get('name')).trim(),workspace:String(f.get('workspace')).trim()||'My fleet',defaultView:f.get('defaultView') as View,follow:f.has('follow')};await workspaceStorage.setItem('workspace-preferences',JSON.stringify(next));following=next.follow;toast('Saved.');shell()}catch(err){$('#prefs-error').textContent=(err as Error).message}});
   const np=notifyPrefs(),note=()=>{const st=browserState();$('#browser-note').textContent=!browserSupported()?'This browser cannot show notifications.':st==='denied'?'Notifications are blocked. Allow them from the lock icon in the address bar, then switch this on again.':st==='granted'?'Allowed.':'You will be asked to allow notifications.'};
   $$<HTMLInputElement>('[data-n]').forEach(box=>{const k=box.dataset.n as 'popup'|'voice'|'browser';box.checked=np[k];box.addEventListener('change',async()=>{
@@ -474,8 +501,10 @@ function renderSettings(){
   on('[data-logout]',logout);icons();
 }
 function renderMore(){
-  const items:[View,string,string,string][]=[['alerts','Alerts','bell',openAlerts()?`${openAlerts()} open`:''],['geofences','Places','map-pin',''],['documents','Documents','files',''],['ebills','E-way bills','file-text',''],['settings','Settings','settings','']];
-  $('#view').innerHTML=`<div class="page"><div class="card who" style="display:flex;gap:12px;align-items:center"><span class="ico" style="width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:var(--blue);color:#fff">${i('user-round')}</span><div><strong>${esc(prefs().workspace)}</strong><small>${esc(me.email||'')}</small></div></div>
-    <div class="card more-list">${items.map(([v,l,ic,note])=>`<button data-go="${v}"><span class="ico">${i(ic)}</span>${l}${note?`<span class="chip bad plain" style="margin-left:auto">${note}</span>`:''}${i('chevron-right')}</button>`).join('')}<button data-logout><span class="ico" style="background:var(--stopped-50);color:var(--stopped)">${i('log-out')}</span>Sign out${i('chevron-right')}</button></div></div>`;
+  const p=prefs(),n=openAlerts();
+  $('#view').innerHTML=`<div class="page menu-page">
+    <div class="card profile-card"><span class="avatar lg">${esc((p.workspace||'W').trim().charAt(0).toUpperCase())}</span><div><strong>${esc(p.workspace)}</strong><small>${esc(me.email||p.name)}</small></div><span class="chip plain ok">${fleet.devices.length} vehicle${fleet.devices.length===1?'':'s'}</span></div>
+    ${GROUPS.filter(([g])=>g!=='Tracking').map(([group,items])=>`<section><h3 class="menu-title">${group}</h3><div class="tiles">${items.map(([v,label,icon])=>`<button class="tile" data-go="${v}"><span class="tile-ico">${i(icon)}</span><b>${label}${v==='alerts'&&n?` <span class="chip bad plain">${n}</span>`:''}</b><small>${HINTS[v]||''}</small></button>`).join('')}</div></section>`).join('')}
+    <button class="btn btn-ghost btn-block" data-logout>${i('log-out')}Sign out</button></div>`;
   on('#view [data-go]',el=>go(el.dataset.go as View));on('#view [data-logout]',logout);icons();
 }
