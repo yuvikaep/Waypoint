@@ -44,3 +44,18 @@ test('GPS drift of a parked vehicle is not counted as distance', () => {
   assert.equal(day.distanceKm, 0);
   assert.equal(day.runningMinutes, 0);
 });
+
+test('silences with no packets at all are reported as gaps, not estimated', () => {
+  const pts = [];
+  // Heartbeats every 3 min 05:00-05:50, nothing until 07:53, then a fix 30 m away.
+  for (let m = 0; m <= 50; m += 3) pts.push(fix(at(5, m), 25.28, 82.79, 0, { receivedAt: at(5, m) }));
+  pts.push(fix(at(7, 53), 25.2803, 82.79, 0, { receivedAt: at(7, 53) }));
+  pts.push(fix(at(7, 54), 25.2803, 82.79, 0, { receivedAt: at(7, 54) }));
+  const [day] = summarize(pts, 0);
+  assert.equal(day.gaps.length, 1);
+  assert.equal(day.gaps[0].from, at(5, 48));
+  assert.equal(day.gaps[0].to, at(7, 53));
+  assert.equal(day.gaps[0].minutes, 125);
+  assert.equal(day.gaps[0].movedKm, 0);
+  assert.equal(day.distanceKm, 0, 'nothing is invented for the silent period');
+});

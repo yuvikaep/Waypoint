@@ -6,8 +6,11 @@ import {showLogin} from '../auth';
 
 type View='map'|'vehicles'|'history'|'reports'|'alerts'|'geofences'|'documents'|'ebills'|'settings'|'more';
 type Fleet={devices:Vehicle[];fences:Fence[];alerts:Alert[]};
-type DayReport={date:string;distanceKm:number;runningMinutes:number;idleMinutes:number;ignitionMinutes:number;maxSpeed:number;avgSpeed:number;firstMove:number|null;lastMove:number|null};
-type VehicleReport={id:string;name:string;total:{distanceKm:number;runningMinutes:number;idleMinutes:number;maxSpeed:number;avgSpeed:number};days:DayReport[]};
+type Gap={from:number;to:number;minutes:number;movedKm:number|null};
+type DayReport={date:string;distanceKm:number;runningMinutes:number;idleMinutes:number;ignitionMinutes:number;maxSpeed:number;avgSpeed:number;firstMove:number|null;lastMove:number|null;gaps:Gap[]};
+type VehicleReport={id:string;name:string;total:{distanceKm:number;runningMinutes:number;idleMinutes:number;maxSpeed:number;avgSpeed:number;gapMinutes:number};days:DayReport[]};
+// Distance is only what the tracker reported. When it went silent, say so instead of guessing.
+const gapNote=(g:Gap)=>`Tracker sent no data ${clock(g.from)} – ${clock(g.to)} (${hm(g.minutes)})${g.movedKm?` · moved ${g.movedKm} km in this time`:''} · km in this period is not recorded`;
 type Prefs={name:string;workspace:string;follow:boolean;defaultView:View};
 
 const NAV:[View,string,string][]=[['map','Live map','map'],['vehicles','Vehicles','truck'],['history','History','route'],['reports','Reports','chart-column'],['alerts','Alerts','bell'],['geofences','Geofences','map-pin'],['documents','Documents','files'],['ebills','E-way bills','file-text'],['settings','Settings','settings']];
@@ -240,7 +243,7 @@ function renderHistory(){
       $('#hplayer').hidden=false;$('#csv').hidden=false;showPoint(0);
       $('#hstatus').textContent=`${time(track[0].recordedAt)} – ${time(track.at(-1)!.recordedAt)}`;
       const r=(await reports(from,to,historyVehicle)).vehicles[0];
-      if(r){$('#hsum').innerHTML=`<div><span>Distance</span><b>${r.total.distanceKm} km</b></div><div><span>Running</span><b>${hm(r.total.runningMinutes)}</b></div><div><span>Idle</span><b>${hm(r.total.idleMinutes)}</b></div><div><span>Max speed</span><b>${r.total.maxSpeed} km/h</b></div>`;$('#hsum').hidden=false}
+      if(r){const gaps=r.days.flatMap(d=>d.gaps);$('#hsum').innerHTML=`<div><span>Distance</span><b>${r.total.distanceKm} km</b></div><div><span>Running</span><b>${hm(r.total.runningMinutes)}</b></div><div><span>Idle</span><b>${hm(r.total.idleMinutes)}</b></div><div><span>Max speed</span><b>${r.total.maxSpeed} km/h</b></div>${gaps.map(g=>`<p class="gap-note" style="grid-column:1/-1">${i('triangle-alert')}${esc(gapNote(g))}</p>`).join('')}`;$('#hsum').hidden=false;icons()}
     }catch(e){$('#hstatus').textContent=(e as Error).message}
   };
   on('#load',load);
@@ -272,8 +275,8 @@ function renderReports(){
       last=(await reports(from,to,$<HTMLSelectElement>('#rv').value||undefined)).vehicles;
       const sum=last.reduce((t,v)=>({km:t.km+v.total.distanceKm,run:t.run+v.total.runningMinutes,idle:t.idle+v.total.idleMinutes,max:Math.max(t.max,v.total.maxSpeed)}),{km:0,run:0,idle:0,max:0});
       $('#rkpi').innerHTML=`<div class="card kpi"><span>Total distance</span><strong>${Math.round(sum.km*10)/10} km</strong></div><div class="card kpi"><span>Running time</span><strong>${hm(sum.run)}</strong></div><div class="card kpi"><span>Idle time</span><strong style="color:var(--idle)">${hm(sum.idle)}</strong></div><div class="card kpi"><span>Top speed</span><strong>${sum.max} km/h</strong></div>`;
-      $('#rtable').innerHTML=`<div class="table-wrap"><table class="table"><thead><tr><th>Vehicle / day</th><th>Distance</th><th>Running</th><th>Idle</th><th>Max speed</th><th>Avg speed</th><th class="hide-sm">First / last move</th></tr></thead><tbody>${last.map(v=>`<tr><td><b>${esc(v.name)}</b></td><td><b>${v.total.distanceKm} km</b></td><td>${hm(v.total.runningMinutes)}</td><td>${hm(v.total.idleMinutes)}</td><td>${v.total.maxSpeed} km/h</td><td>${v.total.avgSpeed} km/h</td><td class="hide-sm"></td></tr>${v.days.map(d=>`<tr class="report-days"><td>&nbsp;&nbsp;${new Date(d.date+'T00:00').toLocaleDateString('en-IN',{weekday:'short',day:'2-digit',month:'short'})}</td><td>${d.distanceKm} km</td><td>${hm(d.runningMinutes)}</td><td>${hm(d.idleMinutes)}</td><td>${d.maxSpeed} km/h</td><td>${d.avgSpeed} km/h</td><td class="hide-sm">${d.firstMove?`${clock(d.firstMove)} – ${clock(d.lastMove)}`:'—'}</td></tr>`).join('')}`).join('')||'<tr><td colspan="7" class="muted">No vehicles.</td></tr>'}</tbody></table></div>`;
-      $('#rcsv').hidden=!last.length;
+      $('#rtable').innerHTML=`<div class="table-wrap"><table class="table"><thead><tr><th>Vehicle / day</th><th>Distance</th><th>Running</th><th>Idle</th><th>Max speed</th><th>Avg speed</th><th class="hide-sm">First / last move</th></tr></thead><tbody>${last.map(v=>`<tr><td><b>${esc(v.name)}</b></td><td><b>${v.total.distanceKm} km</b></td><td>${hm(v.total.runningMinutes)}</td><td>${hm(v.total.idleMinutes)}</td><td>${v.total.maxSpeed} km/h</td><td>${v.total.avgSpeed} km/h</td><td class="hide-sm"></td></tr>${v.days.map(d=>`<tr class="report-days"><td>&nbsp;&nbsp;${new Date(d.date+'T00:00').toLocaleDateString('en-IN',{weekday:'short',day:'2-digit',month:'short'})}</td><td>${d.distanceKm} km</td><td>${hm(d.runningMinutes)}</td><td>${hm(d.idleMinutes)}</td><td>${d.maxSpeed} km/h</td><td>${d.avgSpeed} km/h</td><td class="hide-sm">${d.firstMove?`${clock(d.firstMove)} – ${clock(d.lastMove)}`:'—'}</td></tr>${d.gaps.map(g=>`<tr class="report-days"><td colspan="7"><div class="gap-note">${i('triangle-alert')}${esc(gapNote(g))}</div></td></tr>`).join('')}`).join('')}`).join('')||'<tr><td colspan="7" class="muted">No vehicles.</td></tr>'}</tbody></table></div>`;
+      $('#rcsv').hidden=!last.length;icons();
     }catch(e){$('#rtable').innerHTML=`<div class="empty"><p class="error">${esc((e as Error).message)}</p></div>`}
   };
   on('#rload',load);

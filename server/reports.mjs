@@ -17,7 +17,7 @@ export function summarize(points, tzOffset = -330) {
   const days = new Map();
   const day = at => {
     const key = dayOf(at, tzOffset);
-    if (!days.has(key)) days.set(key, { date: key, distanceKm: 0, runningMinutes: 0, idleMinutes: 0, ignitionMinutes: 0, maxSpeed: 0, firstMove: null, lastMove: null, points: 0 });
+    if (!days.has(key)) days.set(key, { date: key, distanceKm: 0, runningMinutes: 0, idleMinutes: 0, ignitionMinutes: 0, maxSpeed: 0, firstMove: null, lastMove: null, points: 0, gaps: [] });
     return days.get(key);
   };
   // GT06 heartbeats are stored as copies of the last fix (same time and place); count each fix once.
@@ -46,6 +46,16 @@ export function summarize(points, tzOffset = -330) {
     const a = ignitions[i - 1], dt = ignitions[i].receivedAt - a.receivedAt;
     if (a.ignition === 1 && dt > 0 && dt <= GAP) day(a.receivedAt).ignitionMinutes += dt / 60000;
   }
+  // Times the tracker sent nothing at all (no fix, no heartbeat). Distance in these windows is
+  // unknown, so it is reported as a gap rather than estimated.
+  const received = points.filter(p => Number.isFinite(p.receivedAt)).sort((a, b) => a.receivedAt - b.receivedAt || a.id - b.id);
+  for (let i = 1; i < received.length; i++) {
+    const a = received[i - 1], b = received[i], dt = b.receivedAt - a.receivedAt;
+    if (dt <= GAP) continue;
+    const before = fixes.filter(f => f.recordedAt <= a.receivedAt).at(-1), after = fixes.find(f => f.recordedAt >= b.receivedAt);
+    day(a.receivedAt).gaps.push({ from: a.receivedAt, to: b.receivedAt, minutes: Math.round(dt / 60000),
+      movedKm: before && after ? Math.round(km(before, after) * 10) / 10 : null });
+  }
   return [...days.values()].sort((a, b) => a.date.localeCompare(b.date)).map(d => ({
     ...d,
     distanceKm: Math.round(d.distanceKm * 10) / 10,
@@ -71,8 +81,8 @@ export async function vehicleReport(store, devices, from, to, tzOffset) {
     const days = summarize(points, tzOffset);
     const total = days.reduce((t, d) => ({
       distanceKm: t.distanceKm + d.distanceKm, runningMinutes: t.runningMinutes + d.runningMinutes,
-      idleMinutes: t.idleMinutes + d.idleMinutes, maxSpeed: Math.max(t.maxSpeed, d.maxSpeed),
-    }), { distanceKm: 0, runningMinutes: 0, idleMinutes: 0, maxSpeed: 0 });
+      idleMinutes: t.idleMinutes + d.idleMinutes, maxSpeed: Math.max(t.maxSpeed, d.maxSpeed), gapMinutes: t.gapMinutes + d.gaps.reduce((m, g) => m + g.minutes, 0),
+    }), { distanceKm: 0, runningMinutes: 0, idleMinutes: 0, maxSpeed: 0, gapMinutes: 0 });
     total.distanceKm = Math.round(total.distanceKm * 10) / 10;
     total.avgSpeed = total.runningMinutes ? Math.round(total.distanceKm / (total.runningMinutes / 60)) : 0;
     vehicles.push({ id: device.id, name: device.name, total, days });

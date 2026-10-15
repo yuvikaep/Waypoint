@@ -211,6 +211,8 @@ dialog.modal::backdrop{background:#0f1d3d66;backdrop-filter:blur(2px)}
 /* Reports */
 .report-row{display:grid;grid-template-columns:1.4fr repeat(5,1fr);gap:8px;align-items:center}
 .report-days{background:var(--soft)}
+.gap-note{display:flex;gap:8px;align-items:flex-start;color:#8a5a00;background:var(--idle-50);border-radius:10px;padding:8px 10px;font-size:12.5px;margin:0}
+.gap-note svg.lucide{width:15px;height:15px;color:var(--idle);margin-top:1px}
 .report-days td{font-size:12.5px}
 
 /* Alerts */
