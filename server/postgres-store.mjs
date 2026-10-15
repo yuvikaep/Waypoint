@@ -167,6 +167,8 @@ export class PostgresTrackingStore {
       for(const s of steps)(await this.db.prepare("INSERT INTO provision_steps(id,deviceId,seq,command,label,status) VALUES (?,?,?,?,?,'pending')").run(randomUUID(),id,s.seq,s.command,s.label));
     });
   }
+  // Rows decoded with a time-zone offset applied twice sit a fixed amount behind their reception time.
+  async shiftClock(id,minutes,tolerance=10){(await this.raw(id));const m=minutes*60000,t=tolerance*60000;return Number((await this.db.prepare('UPDATE positions SET recordedAt=recordedAt+? WHERE deviceId=? AND receivedAt-recordedAt BETWEEN ? AND ?').run(m,id,m-t,m+t)).changes);}
   async provisionSteps(id){return (await this.db.prepare('SELECT * FROM provision_steps WHERE deviceId=? ORDER BY seq').all(id));}
   async pendingProvisioning(){return (await this.db.prepare("SELECT DISTINCT deviceId FROM provision_steps WHERE status IN ('pending','sent')").all()).map(r=>r.deviceId);}
   async provisionUpdate(stepId,patch){

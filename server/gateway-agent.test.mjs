@@ -63,3 +63,22 @@ test('fixes a tracker uploads late with their original time still reach the clou
   now+=61000;const before=reports.length;await agent.sync();
   assert.ok(!reports.slice(before).flatMap(r=>r.devices.flatMap(d=>d.positions.map(p=>p.id))).includes(50),'not resent once delivered');
 });
+
+test('GT06-family trackers are registered and kept with UTC decoding',async()=>{
+  const now=Date.now(),calls=[];
+  const devices=[{id:'a',uniqueId:'356218606437323',model:'PT06',name:'PT06',createdAt:now-1000},{id:'b',uniqueId:'111111111111111',model:'FMB920',name:'Tel',createdAt:now-1000},{id:'c',uniqueId:'222222222222222',model:'GT06',name:'New',createdAt:now-1000}];
+  const fetcher=async(url,options={})=>{
+    calls.push({url,method:options.method||'GET',body:options.body&&JSON.parse(options.body)});let value;
+    if(url.endsWith('/gateway/devices'))value={devices};
+    else if(url.endsWith('/api/devices')&&!options.method)value=[{id:3,uniqueId:'356218606437323',attributes:{}},{id:4,uniqueId:'111111111111111',attributes:{}}];
+    else if(url.endsWith('/api/devices')&&options.method==='POST')value={id:9,...JSON.parse(options.body)};
+    else if(/\/api\/devices\/\d+$/.test(url))value=JSON.parse(options.body);
+    else if(url.includes('/api/positions'))value=[];
+    else value={ok:true};
+    return {ok:true,status:200,json:async()=>value};
+  };
+  await new GatewayAgent({cloudUrl:'https://cloud.example',cloudSecret:'s',traccarUrl:'http://localhost:8082',traccarToken:'t',fetcher,now:()=>now}).sync();
+  const put=calls.find(c=>c.method==='PUT');assert.match(put.url,/\/api\/devices\/3$/);assert.equal(put.body.attributes['decoder.timezone'],'UTC');
+  assert.equal(calls.filter(c=>c.method==='PUT').length,1,'Teltonika is left alone');
+  assert.equal(calls.find(c=>c.method==='POST'&&c.url.endsWith('/api/devices')).body.attributes['decoder.timezone'],'UTC');
+});

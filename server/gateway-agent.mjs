@@ -31,7 +31,15 @@ export class GatewayAgent {
       const failures=[];
       for(const device of registered)try{
         let match=remote.find(item=>item.uniqueId===device.uniqueId);
-        if(!match){match=await this.tracker('/devices',{method:'POST',body:JSON.stringify({name:device.name,uniqueId:device.uniqueId,model:device.model})});remote.push(match);}
+        // PT06 and similar announce +5:30 at login and Traccar then subtracts it from times that are
+        // already UTC. Pin GT06-family trackers to UTC decoding so their fixes are not 5h30m old.
+        const utc=['GT06','GT06N','PT06'].includes(device.model)?{'decoder.timezone':'UTC'}:{};
+        if(!match){match=await this.tracker('/devices',{method:'POST',body:JSON.stringify({name:device.name,uniqueId:device.uniqueId,model:device.model,attributes:utc})});remote.push(match);}
+        else if(utc['decoder.timezone']&&match.attributes?.['decoder.timezone']!=='UTC'){
+          // Best effort: a failed settings update must never hold back the fixes.
+          try{const updated=await this.tracker(`/devices/${match.id}`,{method:'PUT',body:JSON.stringify({...match,attributes:{...(match.attributes||{}),...utc}})});if(updated?.id===match.id)match=updated;}
+          catch(error){console.error('Could not pin UTC decoding:',device.uniqueId,error.message);}
+        }
         const from=Math.max(device.createdAt-60000,(device.cursor??device.createdAt)-60000);
         const to=Math.min(from+15*60000,this.now());
         const history=await this.tracker(`/positions?${new URLSearchParams({deviceId:String(match.id),from:new Date(from).toISOString(),to:new Date(to).toISOString()})}`);

@@ -321,3 +321,15 @@ test('ignition changes and geofence crossings create alerts; repeated tracker al
   assert.equal(store.deviceAlerts(device.id).filter(a=>a.type==='alarm').length,1);
   void fence;
 });
+
+test('stored rows that are a time-zone offset behind can be moved forward, others are left',t=>{
+  const {store}=fixture(t);
+  const d=store.createDevice({name:'TEST shift',model:'PT06',uniqueId:'356218606437323'}).device;
+  const now=store.now(),iso=ms=>new Date(ms).toISOString();
+  store.ingest(d.id,{eventId:'late',recordedAt:iso(now-330*60000),latitude:25,longitude:82},{receivedAt:now});
+  store.ingest(d.id,{eventId:'fresh',recordedAt:iso(now-5000),latitude:25,longitude:82},{receivedAt:now});
+  store.ingest(d.id,{eventId:'buffered',recordedAt:iso(now-90*60000),latitude:25,longitude:82},{receivedAt:now});
+  assert.equal(store.shiftClock(d.id,330),1);
+  const rows=Object.fromEntries(store.db.prepare('SELECT eventId,recordedAt FROM positions').all().map(r=>[r.eventId,r.recordedAt]));
+  assert.equal(rows.late,now);assert.equal(rows.fresh,now-5000);assert.equal(rows.buffered,now-90*60000);
+});

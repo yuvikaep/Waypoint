@@ -196,6 +196,8 @@ export class TrackingStore {
     this.raw(id);this.db.prepare('DELETE FROM provision_steps WHERE deviceId=?').run(id);
     for(const s of steps)this.db.prepare("INSERT INTO provision_steps(id,deviceId,seq,command,label,status) VALUES (?,?,?,?,?,'pending')").run(randomUUID(),id,s.seq,s.command,s.label);
   }
+  // Rows decoded with a time-zone offset applied twice sit a fixed amount behind their reception time.
+  shiftClock(id,minutes,tolerance=10){this.raw(id);const m=minutes*60000,t=tolerance*60000;return Number(this.db.prepare('UPDATE positions SET recordedAt=recordedAt+? WHERE deviceId=? AND receivedAt-recordedAt BETWEEN ? AND ?').run(m,id,m-t,m+t).changes);}
   provisionSteps(id){return this.db.prepare('SELECT * FROM provision_steps WHERE deviceId=? ORDER BY seq').all(id);}
   pendingProvisioning(){return this.db.prepare("SELECT DISTINCT deviceId FROM provision_steps WHERE status IN ('pending','sent')").all().map(r=>r.deviceId);}
   provisionUpdate(stepId,patch){

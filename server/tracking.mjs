@@ -246,6 +246,12 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
           const today=(await vehicleReport(store,[device],from,Date.now(),Number.isInteger(tz)?tz:-330)).vehicles[0]?.days.at(-1)||null;
           return json(res,200,{device:{...device,customerId:customer?.id||null,customerName:customer?.name||null},packets:await store.recentPackets(id,100),alerts:await store.deviceAlerts(id,20),commands:await store.deviceCommands(id,20),provisioning:{steps:await store.provisionSteps(id),sms:bootstrapSms(await store.raw(id),bridge.state),operators:Object.fromEntries(Object.entries(OPERATORS).map(([k,v])=>[k,{label:v.label,apn:v.apn}]))},power:powerTimeline(await store.powerRows(id,Date.now()-3*86400000)),sim:{iccid:await store.latestIccid(id)},today,gateway:bridge.state});
         }
+        const clockMatch=path.match(/^\/api\/gps\/admin\/devices\/([\w-]+)\/clock-fix$/);
+        if(clockMatch&&method==='POST'){
+          const minutes=Number((await body(req)).minutes);
+          if(!Number.isInteger(minutes)||minutes<30||minutes>840||minutes%15)fail(400,'Shift must be a time-zone offset of 30 to 840 minutes.');
+          return json(res,200,{shifted:await store.shiftClock(clockMatch[1],minutes)});
+        }
         const provisionMatch=path.match(/^\/api\/gps\/admin\/devices\/([\w-]+)\/provision$/);
         if(provisionMatch&&method==='POST'){
           const id=provisionMatch[1],input=await body(req);let raw=await store.raw(id);
