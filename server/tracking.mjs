@@ -11,6 +11,7 @@ import { landmarks } from './landmarks.mjs';
 import { suggestedStops } from './stops.mjs';
 import { dieselPrices } from './fuel.mjs';
 import { commandAllowed } from './command-channel.mjs';
+import { signalBars } from './extra.mjs';
 import { powerTimeline } from './extra.mjs';
 import { apnFor, bootstrapSms, buildPlan, cleanIntervals, OPERATORS } from './provision.mjs';
 
@@ -35,7 +36,7 @@ export function commandText(model,action,input={}){
 }
 // Customers see their vehicles, never tracker identifiers, receiver state or command plumbing.
 const customerPosition=p=>p&&{id:p.id,recordedAt:p.recordedAt,latitude:p.latitude,longitude:p.longitude,speed:p.speed,heading:p.heading,ignition:p.ignition,battery:p.battery,satellites:p.satellites,valid:p.valid};
-export const customerDevice=d=>({id:d.id,name:d.name,driver:d.driver,status:d.status,online:d.online,fresh:d.fresh,lastSeen:d.lastSeen,speedLimit:d.speedLimit,speedAlert:Number(d.speedAlert??1)!==0,ignition:d.ignition,stoppedSince:d.stoppedSince,isMobile:d.model==='Mobile',position:customerPosition(d.position)});
+export const customerDevice=d=>({id:d.id,name:d.name,driver:d.driver,status:d.status,online:d.online,fresh:d.fresh,lastSeen:d.lastSeen,speedLimit:d.speedLimit,speedAlert:Number(d.speedAlert??1)!==0,driverPhone:d.driverPhone||'',parkLock:Number(d.parkLock||0)!==0,parkAlerted:Number(d.parkAlerted||0)!==0,signal:d.online?signalBars(d.rssi):0,ignition:d.ignition,stoppedSince:d.stoppedSince,isMobile:d.model==='Mobile',position:customerPosition(d.position)});
 async function body(req,maxBytes=16384) {
   if (!req.headers['content-type']?.startsWith('application/json')) fail(415,'Send application/json.');
   if(req.body!==undefined){
@@ -324,6 +325,13 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
         if(input.speedAlert!==undefined){if(typeof input.speedAlert!=='boolean')fail(400,'Overspeed alert must be on or off.');change.speedAlert=input.speedAlert;}
         const d=await store.updateDevice(speedMatch[1],change);
         return json(res,200,{speedLimit:d.speedLimit,speedAlert:Number(d.speedAlert??1)!==0});
+      }
+      // Owners lock a parked vehicle (alert if it starts or moves) and keep the driver's number for calls.
+      const ownerMatch=path.match(/^\/api\/gps\/devices\/([\w-]+)\/(park|driver-phone)$/);
+      if(ownerMatch&&method==='PUT'){
+        const [,id,what]=ownerMatch;await ownsDevice(id);const input=await body(req);
+        const d=what==='park'?await store.setParkLock(id,input.on):await store.setDriverPhone(id,input.phone);
+        return json(res,200,customerDevice(d));
       }
       const deviceMatch=path.match(/^\/api\/gps\/devices\/([\w-]+)\/(history|ping|token|driver-link|relay)$/);
       if (deviceMatch) {

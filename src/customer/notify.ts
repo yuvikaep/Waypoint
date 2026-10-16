@@ -4,7 +4,7 @@ import {t,tIn,getLang,type Lang} from '../shared/i18n';
 // Alert categories shown separately in the Alerts page and switchable in Settings.
 export type Category='driver'|'sos'|'ignition'|'geofence'|'speed'|'driving'|'connection'|'tracker';
 export const CATEGORIES:{key:Category;label:string;hint:string;icon:string;color:string}[]=[
-  {key:'sos',label:'SOS',hint:'Emergency button pressed in the vehicle',icon:'siren',color:'var(--stopped)'},
+  {key:'sos',label:'SOS',hint:'Emergency button pressed, or a locked vehicle started or moved',icon:'siren',color:'var(--stopped)'},
   {key:'ignition',label:'Ignition',hint:'Engine started / engine off',icon:'power',color:'var(--running)'},
   {key:'geofence',label:'Geofence',hint:'Vehicle entered or left a place',icon:'map-pin',color:'var(--blue-600)'},
   {key:'speed',label:'Overspeed',hint:'Vehicle crossed its speed limit',icon:'gauge',color:'var(--stopped)'},
@@ -13,7 +13,7 @@ export const CATEGORIES:{key:Category;label:string;hint:string;icon:string;color
   {key:'connection',label:'Signal',hint:'Tracker signal lost or restored',icon:'wifi-off',color:'var(--offline)'},
   {key:'tracker',label:'Vehicle alarms',hint:'Power cut, tampering, vibration',icon:'triangle-alert',color:'var(--idle)'},
 ];
-export const categoryOf=(type:string):Category=>type.startsWith('share_')?'driver':type==='sos'?'sos':type==='harsh_brake'||type==='harsh'?'driving':type==='ignition_on'||type==='ignition_off'?'ignition':type==='enter'||type==='exit'?'geofence':type==='speed'?'speed':type==='offline'||type==='online'?'connection':'tracker';
+export const categoryOf=(type:string):Category=>type.startsWith('share_')?'driver':type==='sos'||type==='parking_lock'?'sos':type==='harsh_brake'||type==='harsh'?'driving':type==='ignition_on'||type==='ignition_off'?'ignition':type==='enter'||type==='exit'?'geofence':type==='speed'?'speed':type==='offline'||type==='online'?'connection':'tracker';
 
 export type NotifyPrefs={popup:boolean;voice:boolean;browser:boolean;categories:Record<Category,boolean>};
 export const defaultNotify=():NotifyPrefs=>({popup:true,voice:true,browser:false,categories:{driver:true,sos:true,ignition:true,geofence:true,speed:true,driving:true,connection:true,tracker:true}});
@@ -37,6 +37,7 @@ function words(a:Alert,l:Lang):Words{
     case 'share_stopped':return {title:T('Driver location off'),text:T('Driver location for vehicle {n} has stopped',{n})};
     case 'share_expired':return {title:T('Driver link expired'),text:T('Driver link for vehicle {n} has expired',{n})};
     case 'share_resumed':return {title:T('Driver sharing again'),text:T('Driver location for vehicle {n} is back',{n})};
+    case 'parking_lock':return {title:T('Parking lock alert'),text:/engine/.test(m)?T('Locked vehicle {n} engine started',{n}):T('Locked vehicle {n} is moving',{n})};
     case 'sos':return {title:T('SOS emergency'),text:T('Emergency! SOS from vehicle {n}',{n})};
     case 'harsh_brake':return {title:T('Hard braking'),text:T('Vehicle {n} hard braking',{n})};
     case 'harsh':return {title:T('Harsh driving'),text:`${n}. ${T(m)}`};
@@ -56,6 +57,7 @@ export function alertText(a:Alert){
     case 'online':return t('Signal restored');
     case 'speed':return nums.length>=2?t('Speed {s} km/h, limit {l} km/h',{s:nums[0],l:nums[1]}):t(m);
     case 'harsh_brake':return nums.length>=3?t('Hard braking: {a} → {b} km/h in {s} s',{a:nums[0],b:nums[1],s:nums[2]}):t(m);
+    case 'parking_lock':return /engine/.test(m)?t('Parking lock: engine started'):nums.length?t('Parking lock: vehicle moved {m} m from where it was parked',{m:nums[0]}):t(m);
     case 'enter':return t('Entered {p}',{p:m.replace(/^Entered /,'')});
     case 'exit':return t('Left {p}',{p:m.replace(/^Left /,'')});
     case 'share_stopped':return `${/no update for/.test(m)?t("Driver's phone stopped sending location"):t(m)}. ${t('Send the link again or create a new one.')}`;
@@ -105,7 +107,7 @@ export function announceNew(alerts:Alert[],prefs:NotifyPrefs){
   for(const a of alerts)seen.add(a.id);
   for(const a of fresh){
     if(!prefs.categories[categoryOf(a.type)])continue;
-    const {title,text}=alertWords(a),sos=a.type==='sos';
+    const {title,text}=alertWords(a),sos=a.type==='sos'||a.type==='parking_lock';
     if(prefs.popup)toast(`${title}: ${text}`,sos);
     // An SOS is said twice so it is not missed.
     if(prefs.voice)say({hi:words(a,'hi').text,hg:words(a,'hg').text,en:words(a,'en').text},sos);

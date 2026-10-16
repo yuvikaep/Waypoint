@@ -72,7 +72,7 @@ function seed(){
   const devices=names.map((name,index)=>{
     const id=`demo-vehicle-${index+1}`,at=now()-(index===4?7200000:5000);
     routes[id]=Array.from({length:36},(_,n)=>({id:index*100+n+1,deviceId:id,recordedAt:at-(35-n)*60000,receivedAt:at-(35-n)*60000,latitude:points[index][0]-(35-n)*.001,longitude:points[index][1]+(35-n)*.0012,speed:states[index]==='Moving'?45+index*4:0,heading:310,accuracy:7,ignition:states[index]==='Moving'?1:0,battery:86-index*3,satellites:10}));
-    return {id,name,uniqueId:`86000000000000${index+1}`,model:index===2?'Mobile':index%2?'FMB920':'GT06',driver:drivers[index],lastSeen:at,offlineSeconds:180,speedLimit:80,bridgeStatus:'Demo gateway',traccarId:index+1,status:states[index],online:index!==4,fresh:index!==4,position:routes[id].at(-1),command:null};
+    return {id,name,uniqueId:`86000000000000${index+1}`,model:index===2?'Mobile':index%2?'FMB920':'GT06',driver:drivers[index],lastSeen:at,offlineSeconds:180,speedLimit:80,signal:index===4?0:index===2?null:[4,3,1,2][index%4],driverPhone:index===0?'9876543210':'',parkLock:false,bridgeStatus:'Demo gateway',traccarId:index+1,status:states[index],online:index!==4,fresh:index!==4,position:routes[id].at(-1),command:null};
   });
   return {devices,routes,fences:[{id:'demo-depot',name:'Pune depot',latitude:18.52,longitude:73.88,radius:1500}],alerts:[{id:'demo-alert-1',deviceId:devices[4].id,deviceName:names[4],type:'offline',message:'Demo: tracker has not reported for two hours.',createdAt:now()-7200000,acknowledged:0},{id:'demo-alert-2',deviceId:devices[0].id,deviceName:names[0],type:'speed',message:'Demo: recorded 84 km/h against an 80 km/h limit.',createdAt:now()-240000,acknowledged:0},{id:'demo-alert-3',deviceId:devices[2].id,deviceName:names[2],type:'enter',message:'Demo: vehicle entered Pune depot.',createdAt:now()-60000,acknowledged:0}]};
 }
@@ -102,6 +102,8 @@ export async function demoRequest(path:string,options:RequestInit={}):Promise<an
     else if(action==='ping'){
       d.command={status:'answered',detail:'Demo response received. No real tracker was contacted.',createdAt:now()};d.lastSeen=now();d.online=true;d.fresh=true;if(d.position)d.position.recordedAt=now();d.status=d.position?.speed?'Moving':'Stopped';result=d.command;
     }else if(action==='speed'){if(body.speedLimit!==undefined)d.speedLimit=Number(body.speedLimit);if(body.speedAlert!==undefined)d.speedAlert=body.speedAlert;result={speedLimit:d.speedLimit,speedAlert:d.speedAlert!==false};
+    }else if(action==='park'){if(body.on&&d.status==='Moving')throw new Error('The vehicle is moving. Lock it once it is parked.');d.parkLock=!!body.on;d.parkAlerted=false;result=d;
+    }else if(action==='driver-phone'){const ph=String(body.phone||'').replace(/[\s()-]/g,'');if(ph&&!/^\+?\d{10,13}$/.test(ph))throw new Error('Enter a 10 digit mobile number.');d.driverPhone=ph;result=d;
     }else if(action==='driver-link'){result=method==='DELETE'?{ok:true}:{code:`demo:${d.id}`,expiresAt:now()+(Number(body.hours)||168)*3600000};}
     else throw new Error('Not available in the demo.');
   }else if(url.pathname==='/buy'){

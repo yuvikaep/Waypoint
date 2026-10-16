@@ -242,21 +242,44 @@ function vehicleCard(d:Vehicle){
     <div class="we-addr"><p>${mine?`<b>${esc(mine)}</b><br>`:''}${placeSpan(p,d.id)}</p>${p?`<button class="we-link" data-save="${d.id}">${t('Save location')}</button>`:''}</div>
     ${line?`<p class="we-line">${esc(line)}</p>`:''}
     <div class="we-acts">
-      <button data-play="${d.id}"><span class="we-act-ico">${i('circle-play')}</span>${t('Play route')}</button>
-      <button data-history="${d.id}"><span class="we-act-ico">${i('route')}</span>${t('Route history')}</button>
+      ${d.driverPhone?`<a href="tel:${esc(d.driverPhone)}"><span class="we-act-ico">${i('phone')}</span>${t('Call driver')}</a>`:`<button data-phone="${d.id}"><span class="we-act-ico">${i('phone')}</span>${t('Call driver')}</button>`}
+      <button data-signal="${d.id}"><span class="we-act-ico">${bars(d.signal)}</span>${signalLabel(d)}</button>
       <button data-share="${d.id}"><span class="we-act-ico wa">${i('share-2')}</span>${t('Share')}</button>
-      <button data-gview="${d.id}"><span class="we-act-ico">${i('layers')}</span>${t('Find nearby')}</button>
+      <button data-park="${d.id}" class="${d.parkLock?d.parkAlerted?'park alarm':'park on':''}"><span class="we-act-ico">${i(d.parkLock?'lock':'lock-open')}</span>${t(d.parkLock?'Locked':'Parking lock')}</button>
     </div>
   </article>`;
 }
 function bindCards(root:HTMLElement){
   on('[data-open]',el=>openVehicle(el.dataset.open!),root);
-  on('[data-play]',el=>{historyVehicle=el.dataset.play!;playOnOpen=true;go('history',historyVehicle)},root);
-  on('[data-history]',el=>{historyVehicle=el.dataset.history!;go('history',historyVehicle)},root);
+  on('[data-phone]',el=>driverPhone(vehicle(el.dataset.phone!)!),root);
+  on('[data-signal]',el=>signalInfo(vehicle(el.dataset.signal!)!),root);
   on('[data-share]',el=>shareVehicle(vehicle(el.dataset.share!)!),root);
-  on('[data-gview]',el=>{setGoogle(true);openVehicle(el.dataset.gview!)},root);
+  on('[data-park]',el=>parkLock(vehicle(el.dataset.park!)!),root);
   on('[data-save]',el=>{const p=vehicle(el.dataset.save!)?.position;if(p)addFence({latitude:p.latitude,longitude:p.longitude,radius:150})},root);
   on('[data-menu]',el=>vehicleMenu(vehicle(el.dataset.menu!)!),root);
+}
+// Mobile network of the tracker's SIM as 4 bars; an offline tracker has none.
+function bars(n?:number|null){return `<span class="we-bars ${n==null?'none':n<=1?'weak':''}">${[1,2,3,4].map(b=>`<i class="${n!=null&&b<=n?'on':''}"></i>`).join('')}</span>`}
+function signalLabel(d:Vehicle){return d.signal==null?t('Network'):d.signal===0?t('No network'):`${t('Network')} ${d.signal}/4`}
+function signalInfo(d:Vehicle){
+  const n=d.signal,word=n==null?t('This tracker does not report its network.'):n===0?t('No network right now. The tracker sends the saved data once it is back in range.'):n<=1?t('Weak network. Updates may come late.'):n===2?t('Average network.'):t('Good network.');
+  modal(`${d.name} · ${t('Network')}`,`<div class="we-signal">${bars(n)}<b>${n==null?'—':`${n}/4`}</b></div><p class="hint">${word}</p><p class="hint">${t('Last signal: {t}',{t:when(d.lastSeen)})}</p>`);
+}
+// The driver's number lives with the vehicle so "Call driver" is one tap.
+function driverPhone(d:Vehicle,done?:()=>void){
+  modal(`${d.name} · ${t('Driver number')}`,`<form class="form" id="dphone"><label class="field">${t('Driver mobile number')}<input class="input" name="phone" type="tel" inputmode="tel" maxlength="16" placeholder="98765 43210" value="${esc(d.driverPhone||'')}"></label><p class="error"></p><button class="btn btn-primary" type="submit">${t('Save')}</button></form>`);
+  const form=$<HTMLFormElement>('#dphone');
+  form.onsubmit=async e=>{e.preventDefault();const err=form.querySelector('.error')!;err.textContent='';
+    try{const r=await post<Vehicle>(`/devices/${d.id}/driver-phone`,{phone:String(new FormData(form).get('phone')||'').trim()},'PUT');d.driverPhone=r.driverPhone;closeModal();toast(r.driverPhone?t('Driver number saved.'):t('Driver number removed.'));done?.();onRefresh?.()}
+    catch(x){err.textContent=t((x as Error).message)}};
+}
+// Parking lock: alert (pop-up, voice twice, notification) if a parked vehicle starts or moves.
+function parkLock(d:Vehicle,done?:()=>void){
+  const set=async(on:boolean)=>{
+    try{const r=await post<Vehicle>(`/devices/${d.id}/park`,{on},'PUT');Object.assign(d,{parkLock:r.parkLock,parkAlerted:r.parkAlerted});unlockVoice();closeModal();toast(on?t('Parking lock on for {n}.',{n:d.name}):t('Parking lock off for {n}.',{n:d.name}));done?.();onRefresh?.()}
+    catch(x){toast(t((x as Error).message),true)}};
+  if(d.parkLock){modal(`${d.name} · ${t('Parking lock')}`,`${d.parkAlerted?`<p class="cx-note sos">${t('This vehicle started or moved while it was locked. Check the alerts.')}</p>`:''}<p class="hint">${t('The vehicle is locked. Unlock it before the driver starts the trip.')}</p><button class="btn btn-primary" id="punlock">${i('lock-open')} ${t('Unlock')}</button>`);on('#punlock',()=>void set(false));icons();return}
+  modal(`${d.name} · ${t('Parking lock')}`,`<p class="hint">${t('Lock a parked vehicle. If the engine starts or the vehicle moves more than 100 m, you get a loud alert at once.')}</p><p class="hint">${t('This only alerts you. It does not switch the engine off.')}</p><button class="btn btn-primary" id="plock">${i('lock')} ${t('Lock vehicle')}</button>`);on('#plock',()=>void set(true));icons();
 }
 // WhatsApp first (most drivers and owners use it), the phone's share sheet otherwise.
 function shareVehicle(d:Vehicle){
@@ -268,6 +291,7 @@ function vehicleMenu(d:Vehicle){
   modal(d.name,`<div class="cx-group">
     <button class="cx-item" data-m="open"><span class="cx-ico">${i('map')}</span><span class="cx-item-text"><b>${t('Open on map')}</b></span>${i('chevron-right')}</button>
     <button class="cx-item" data-m="speed"><span class="cx-ico">${i('gauge')}</span><span class="cx-item-text"><b>${t('Overspeed alert')}</b><small>${d.speedAlert===false?t('Off'):t('Speed limit: {n} km/h',{n:d.speedLimit})}</small></span>${i('chevron-right')}</button>
+    <button class="cx-item" data-m="phone"><span class="cx-ico">${i('phone')}</span><span class="cx-item-text"><b>${t('Driver number')}</b><small>${esc(d.driverPhone||t('Not added'))}</small></span>${i('chevron-right')}</button>
     ${d.isMobile?`<button class="cx-item" data-m="driver"><span class="cx-ico">${i('smartphone')}</span><span class="cx-item-text"><b>${t('Driver link')}</b></span>${i('chevron-right')}</button>`:''}
     ${d.position?`<a class="cx-item" href="${mapsLink(d.position)}" target="_blank" rel="noopener"><span class="cx-ico">${i('navigation')}</span><span class="cx-item-text"><b>${t('Navigate')}</b><small>${t('Open in Google Maps')}</small></span>${i('external-link')}</a>`:''}
   </div>`);
@@ -275,6 +299,7 @@ function vehicleMenu(d:Vehicle){
   on('[data-m="open"]',()=>{closeModal();openVehicle(d.id)},dlg);
   on('[data-m="speed"]',()=>speedSettings(d,()=>onRefresh?.()),dlg);
   on('[data-m="driver"]',()=>driverLink(d),dlg);
+  on('[data-m="phone"]',()=>driverPhone(d),dlg);
 }
 
 /* ---------- Map ---------- */
@@ -381,7 +406,7 @@ function renderVehicle(){
         <button id="vinfo"><span class="we-grid-ico r">${i('truck')}</span>${t('Information')}</button>
         <button data-go="documents"><span class="we-grid-ico y">${i('files')}</span>${t('Documents')}</button>
         ${d.isMobile?`<button id="vdriver"><span class="we-grid-ico b">${i('smartphone')}</span>${t('Driver link')}</button>`:`<button data-go="alerts"><span class="we-grid-ico b">${i('bell')}</span>${t('Alerts')}</button>`}
-        <span></span>
+        <button id="vpark"><span class="we-grid-ico ${d.parkLock?'r':'g'}">${i(d.parkLock?'lock':'lock-open')}</span>${t(d.parkLock?'Locked':'Parking lock')}</button>
       </div>`;
     const sh=$('#vsheet');
     on('#vsave',()=>addFence({latitude:p!.latitude,longitude:p!.longitude,radius:150}),sh);
@@ -393,6 +418,7 @@ function renderVehicle(){
     on('#vspeed',()=>speedSettings(d,drawSheet),sh);
     on('#vinfo',()=>vehicleInfo(d),sh);
     on('#vdriver',()=>driverLink(d),sh);
+    on('#vpark',()=>parkLock(d,drawSheet),sh);
     on('[data-go]',b=>go(b.dataset.go as View),sh);
     icons();
   };
@@ -413,7 +439,7 @@ function renderAlerts(){
     const cats=CATEGORIES.filter(c=>fleet.alerts.some(a=>categoryOf(a.type)===c.key));
     const list=fleet.alerts.filter(a=>alertsCat==='all'||categoryOf(a.type)===alertsCat).sort((a,b)=>b.createdAt-a.createdAt);
     const days=new globalThis.Map<string,Alert[]>();for(const a of list){const k=new Date(a.createdAt).toLocaleDateString(locale(),{day:'numeric',month:'short',year:'numeric'});if(!days.has(k))days.set(k,[]);days.get(k)!.push(a)}
-    const tone=(type:string)=>type==='sos'||type==='speed'||type==='offline'||type==='harsh_brake'?'sos':type==='ignition_on'||type==='online'||type==='share_resumed'?'good':'neutral';
+    const tone=(type:string)=>type==='sos'||type==='speed'||type==='offline'||type==='harsh_brake'||type==='parking_lock'?'sos':type==='ignition_on'||type==='online'||type==='share_resumed'?'good':'neutral';
     $('#view').innerHTML=`<div class="we-page">${topBar(t('Notifications'),`<button class="we-toplink" data-go="settings">${i('settings')}${t('Settings')}</button>`)}
       <div class="we-chips">${['all',...cats.map(c=>c.key)].map(k=>`<button data-cat="${k}" class="${alertsCat===k?'on':''}">${k==='all'?t('All'):esc(t(CATEGORIES.find(c=>c.key===k)!.label))}</button>`).join('')}${unseen?`<button class="we-chip-action" id="ack-all">${i('check-check')}${t('Mark all seen')}</button>`:''}</div>
       ${list.length?[...days].map(([day,items])=>`<h3 class="we-date">${esc(day)}</h3>${items.map(a=>{const c=CATEGORIES.find(x=>x.key===categoryOf(a.type))!,w=alertWords(a);return `<button class="we-note ${a.acknowledged?'':'new'}" data-alert="${a.id}"><span class="we-note-ico ${tone(a.type)}">${i(a.type==='ignition_on'||a.type==='ignition_off'?'power':c.icon)}</span><span class="we-note-body"><span class="we-note-head"><em>${esc(t(c.label))}</em><time>${clock(a.createdAt)}</time></span><b>${esc(w.title)}</b><span>${esc(a.deviceName)} · ${esc(alertText(a))}</span></span></button>`}).join('')}`).join(''):`<div class="cx-empty">${i('bell')}<h3>${t('All clear')}</h3><p>${t('SOS, engine, geofence, overspeed, hard braking and signal alerts appear here.')}</p></div>`}

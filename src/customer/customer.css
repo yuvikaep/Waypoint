@@ -488,10 +488,20 @@
 .we-addr.big{border:0;padding:0;margin:0 0 6px}.we-addr.big p{font-size:16px}
 .we-link{margin-top:6px;color:var(--c-accent);font-weight:600;font-size:15.5px}
 .we-line{margin:12px 2px 0;font-size:15px;color:var(--c-muted);padding-bottom:12px;border-bottom:1.5px dashed var(--c-line)}
-.we-acts{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:10px 0 8px}
-.we-acts button{display:flex;flex-direction:column;align-items:center;gap:4px;color:var(--c-accent);font-size:14px;font-weight:500;text-align:center;line-height:1.2;padding:4px 2px}
-.we-act-ico{width:36px;height:36px;display:grid;place-items:center;color:var(--c-accent)}
-.we-act-ico svg.lucide{width:26px;height:26px}
+.we-acts{display:grid;grid-template-columns:repeat(4,1fr);gap:2px;padding:6px 0 4px;border-top:1px solid var(--c-line);margin-top:10px}
+.we-acts>button,.we-acts>a{display:flex;flex-direction:column;align-items:center;gap:1px;color:var(--c-accent);font-size:12.5px;font-weight:500;text-align:center;line-height:1.2;padding:6px 2px;border-radius:10px;text-decoration:none}
+.we-acts>button:active,.we-acts>a:active{background:var(--c-accent-soft)}
+.we-act-ico{width:28px;height:26px;display:grid;place-items:center;color:var(--c-accent)}
+.we-act-ico svg.lucide{width:20px;height:20px}
+.we-acts .park.on{color:#b45309}.we-acts .park.on .we-act-ico{color:#b45309}
+.we-acts .park.alarm{color:var(--c-sos);font-weight:700}.we-acts .park.alarm .we-act-ico{color:var(--c-sos);animation:cx-pulse 1.4s infinite;border-radius:50%}
+.we-bars{display:inline-flex;align-items:flex-end;gap:2px;height:17px}
+.we-bars i{width:4px;border-radius:1.5px;background:#d5dae6}
+.we-bars i:nth-child(1){height:5px}.we-bars i:nth-child(2){height:9px}.we-bars i:nth-child(3){height:13px}.we-bars i:nth-child(4){height:17px}
+.we-bars i.on{background:var(--c-run)}.we-bars.weak i.on{background:var(--c-sos)}
+.we-signal{display:flex;align-items:center;gap:12px;margin-bottom:8px}.we-signal .we-bars{height:34px;gap:4px}.we-signal .we-bars i{width:8px}
+.we-signal .we-bars i:nth-child(1){height:10px}.we-signal .we-bars i:nth-child(2){height:18px}.we-signal .we-bars i:nth-child(3){height:26px}.we-signal .we-bars i:nth-child(4){height:34px}
+.we-signal b{font-size:24px}
 .we-act-ico.wa{color:#16a34a}
 .we-mapfab{position:fixed;right:18px;bottom:96px;z-index:800;width:60px;height:60px;border-radius:50%;display:grid;place-items:center;background:#2b2f36;color:#fff;box-shadow:0 8px 20px rgba(0,0,0,.25)}
 .we-mapfab svg.lucide{width:26px;height:26px}

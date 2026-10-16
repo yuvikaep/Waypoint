@@ -79,3 +79,31 @@ export const shareSilent = seconds => `Driver's phone stopped sending location (
 
 // Types of place a customer can save (the map shows an icon for each).
 export const PLACE_KINDS = ['fuel', 'food', 'depot', 'loading', 'unloading', 'parking', 'other'];
+
+// Mobile network bars (0–4) from the tracker's rssi. GT06 sends a 0–4 level, Teltonika 0–5,
+// and modems that send the raw CSQ use 0–31 (99 = unknown).
+export function signalBars(rssi) {
+  const v = Number(rssi);
+  if (rssi == null || !Number.isFinite(v) || v < 0 || v === 99) return null;
+  if (v <= 5) return Math.min(4, Math.round(v * (v > 4 ? 0.8 : 1)));
+  return v > 31 ? null : Math.min(4, Math.ceil(v / 31 * 4));
+}
+
+// Parking lock: once the owner locks a parked vehicle, the engine starting or the vehicle moving
+// more than PARK_RADIUS metres from where it was locked raises one alert.
+export const PARK_RADIUS = 100;
+export function parkBreach(device, { ignition, valid, latitude, longitude }, metres) {
+  if (!Number(device.parkLock) || Number(device.parkAlerted)) return null;
+  if (ignition === 1) return 'Parking lock: engine started.';
+  if (valid && device.parkLat != null) {
+    const m = metres({ latitude, longitude }, { latitude: Number(device.parkLat), longitude: Number(device.parkLon) });
+    if (m > PARK_RADIUS) return `Parking lock: vehicle moved ${Math.round(m)} m from where it was parked.`;
+  }
+  return null;
+}
+export const cleanPhone = value => {
+  if (value === '' || value == null) return '';
+  const digits = String(value).replace(/[\s()-]/g, '');
+  if (!/^\+?\d{10,13}$/.test(digits)) { const e = new Error('Enter a 10 digit mobile number.'); e.status = 400; throw e; }
+  return digits;
+};

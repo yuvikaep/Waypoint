@@ -404,3 +404,23 @@ test('buy GPS enquiries are checked, saved for the admin and can be marked conta
   store.setGpsRequestStatus(r.id,'contacted');assert.equal(store.gpsRequests()[0].status,'contacted');
   assert.throws(()=>store.setGpsRequestStatus(r.id,'paid'),/Unknown status/);
 });
+
+test('parking lock alerts once when a locked vehicle starts or moves; network and driver number are kept',async t=>{
+  const {store,device,position,advance}=fixture(t);
+  let n=0;const fix=(o={})=>{advance(5000);store.ingest(device.id,position({eventId:`p${n++}`,recordedAt:new Date(store.now()).toISOString(),speed:0,...o}))};
+  const locks=()=>store.alerts().filter(a=>a.type==='parking_lock').sort((a,b)=>a.createdAt-b.createdAt);
+  assert.throws(()=>store.setParkLock(device.id,true),/not sent a location/);
+  fix({ignition:false,extra:{rssi:3}});
+  assert.equal(store.device(device.id).rssi,3);
+  store.setParkLock(device.id,true);
+  fix({latitude:18.5203,ignition:false});assert.equal(locks().length,0,'GPS drift of ~30 m is not movement');
+  fix({ignition:true});assert.equal(locks().length,1);assert.match(locks()[0].message,/engine started/);
+  fix({latitude:18.53,speed:30});assert.equal(locks().length,1,'one alert until the owner locks again');
+  store.setParkLock(device.id,false);fix({latitude:18.53});assert.equal(locks().length,1);
+  fix({latitude:18.53,speed:0,ignition:false});store.setParkLock(device.id,true);
+  fix({latitude:18.532,ignition:false});assert.equal(locks().length,2);assert.match(locks()[1].message,/moved 222 m/);
+  assert.equal(store.setDriverPhone(device.id,'98765 43210').driverPhone,'9876543210');
+  assert.throws(()=>store.setDriverPhone(device.id,'12345'),/10 digit/);
+  const {signalBars}=await import('./extra.mjs');
+  assert.deepEqual([signalBars(0),signalBars(3),signalBars(5),signalBars(20),signalBars(99),signalBars(null)],[0,3,4,3,null,null]);
+});

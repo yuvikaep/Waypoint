@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { PgAdapter } from './pg-adapter.mjs';
-import { cleanExtra, alarmAlerts, hardBrake, overspeed, REPEAT, SPEED_REPEAT, shareHours, SHARE_STOPPED, shareSilent, PLACE_KINDS } from './extra.mjs';
+import { cleanExtra, alarmAlerts, hardBrake, overspeed, REPEAT, SPEED_REPEAT, shareHours, SHARE_STOPPED, shareSilent, PLACE_KINDS, parkBreach, cleanPhone } from './extra.mjs';
 import { cleanSetup } from './provision.mjs';
 import { cleanGpsRequest, REQUEST_STATUS } from './buy.mjs';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
@@ -254,6 +254,16 @@ export class PostgresTrackingStore {
     }
     return { ...device, position, online, fresh: !!fresh, status, command, ignition, stoppedSince };
   }
+  async setParkLock(id,on) {
+    if(typeof on!=='boolean')fail(400,'Parking lock must be on or off.');
+    if(!on){(await this.db.prepare('UPDATE devices SET parkLock=0,parkAlerted=0 WHERE id=?').run(id));return (await this.device(id));}
+    const d=(await this.device(id)),p=d.position;
+    if(!p)fail(409,'This vehicle has not sent a location yet.');
+    if(d.status==='Moving')fail(409,'The vehicle is moving. Lock it once it is parked.');
+    (await this.db.prepare('UPDATE devices SET parkLock=1,parkLat=?,parkLon=?,parkAt=?,parkAlerted=0 WHERE id=?').run(p.latitude,p.longitude,this.now(),id));
+    return (await this.device(id));
+  }
+  async setDriverPhone(id,phone) {(await this.db.prepare('UPDATE devices SET driverPhone=? WHERE id=?').run(cleanPhone(phone),id));return (await this.device(id));}
   async devices(tenantId) { const ids = tenantId ? (await this.db.prepare('SELECT id FROM devices WHERE tenantId=? ORDER BY createdAt').all(tenantId)) : (await this.db.prepare('SELECT id FROM devices ORDER BY createdAt').all()); const result = []; for (const d of ids) result.push((await this.device(d.id))); return result; }
   async seen(id, at = this.now()) {
     const previous = (await this.raw(id));
@@ -299,6 +309,9 @@ export class PostgresTrackingStore {
         (await this.db.prepare("UPDATE commands SET status='location received',detail='A new GPS fix arrived after the request.',updatedAt=? WHERE deviceId=? AND status IN ('queued','dispatching','sent') AND detail NOT LIKE 'CMD %' AND createdAt<=? AND createdAt>=?")
           .run(this.now(),id,recordedAt,this.now()-120000));
       }
+      if (inserted && typeof info.rssi === 'number') (await this.db.prepare('UPDATE devices SET rssi=? WHERE id=?').run(Math.round(info.rssi),id));
+      const breach = inserted && recordedAt >= Number(device.parkAt || 0) ? parkBreach(device, { ignition: values[2], valid, latitude, longitude }, distance) : null;
+      if (breach) { (await this.alert(id,'parking_lock',breach,Math.min(receivedAt,this.now()))); (await this.db.prepare('UPDATE devices SET parkAlerted=1 WHERE id=?').run(id)); }
       if (body.commandId && inserted && recordedAt >= this.now()-60000) (await this.db.prepare("UPDATE commands SET status='answered',detail='Mobile sender answered with a fresh GPS fix.',updatedAt=? WHERE id=? AND status IN ('queued','sent','location received')").run(this.now(),body.commandId));
       if (inserted && lastIgnition && receivedAt >= Number(lastIgnition.receivedAt) && Number(lastIgnition.ignition) !== values[2])
         (await this.alert(id, values[2] ? 'ignition_on' : 'ignition_off', values[2] ? 'Engine started.' : 'Engine stopped.', Math.min(receivedAt, this.now())));

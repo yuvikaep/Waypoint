@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
-import { cleanExtra, alarmAlerts, hardBrake, overspeed, REPEAT, SPEED_REPEAT, shareHours, SHARE_STOPPED, shareSilent, PLACE_KINDS } from './extra.mjs';
+import { cleanExtra, alarmAlerts, hardBrake, overspeed, REPEAT, SPEED_REPEAT, shareHours, SHARE_STOPPED, shareSilent, PLACE_KINDS, parkBreach, cleanPhone } from './extra.mjs';
 import { cleanSetup } from './provision.mjs';
 import { cleanGpsRequest, REQUEST_STATUS } from './buy.mjs';
 
@@ -57,6 +57,8 @@ export class TrackingStore {
     if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name==='speedAlert'))this.db.exec('ALTER TABLE devices ADD COLUMN speedAlert INTEGER NOT NULL DEFAULT 1');
     for(const column of ['simOperator','simType','simNumber','apn','apnUser','apnPass'])
       if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name===column))this.db.exec(`ALTER TABLE devices ADD COLUMN ${column} TEXT`);
+    for(const [column,type] of [['driverPhone','TEXT'],['rssi','INTEGER'],['parkLock','INTEGER NOT NULL DEFAULT 0'],['parkLat','REAL'],['parkLon','REAL'],['parkAt','INTEGER'],['parkAlerted','INTEGER NOT NULL DEFAULT 0']])
+      if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name===column))this.db.exec(`ALTER TABLE devices ADD COLUMN ${column} ${type}`);
     if(!this.db.prepare('PRAGMA table_info(fences)').all().some(c=>c.name==='kind'))this.db.exec("ALTER TABLE fences ADD COLUMN kind TEXT NOT NULL DEFAULT 'other'");
     this.db.exec('CREATE TABLE IF NOT EXISTS gps_requests (id TEXT PRIMARY KEY,tenantId TEXT NOT NULL,name TEXT NOT NULL,phone TEXT NOT NULL,vehicles INTEGER NOT NULL,product TEXT NOT NULL,note TEXT,status TEXT NOT NULL,createdAt INTEGER NOT NULL)');
     this.db.exec('CREATE TABLE IF NOT EXISTS landmark_tiles (key TEXT PRIMARY KEY,value TEXT NOT NULL,fetchedAt INTEGER NOT NULL)');
@@ -289,6 +291,17 @@ export class TrackingStore {
     }
     return { ...device, position, online, fresh: !!fresh, status, command, ignition, stoppedSince };
   }
+  // Parking lock is armed at the vehicle's last known point; switching it off clears any alert state.
+  setParkLock(id,on) {
+    if(typeof on!=='boolean')fail(400,'Parking lock must be on or off.');
+    if(!on){this.db.prepare('UPDATE devices SET parkLock=0,parkAlerted=0 WHERE id=?').run(id);return this.device(id);}
+    const d=this.device(id),p=d.position;
+    if(!p)fail(409,'This vehicle has not sent a location yet.');
+    if(d.status==='Moving')fail(409,'The vehicle is moving. Lock it once it is parked.');
+    this.db.prepare('UPDATE devices SET parkLock=1,parkLat=?,parkLon=?,parkAt=?,parkAlerted=0 WHERE id=?').run(p.latitude,p.longitude,this.now(),id);
+    return this.device(id);
+  }
+  setDriverPhone(id,phone) {this.db.prepare('UPDATE devices SET driverPhone=? WHERE id=?').run(cleanPhone(phone),id);return this.device(id);}
   devices(tenantId) {return (tenantId?this.db.prepare('SELECT id FROM devices WHERE tenantId=? ORDER BY createdAt').all(tenantId):this.db.prepare('SELECT id FROM devices ORDER BY createdAt').all()).map(d=>this.device(d.id));}
   seen(id, at = this.now()) {
     const previous = this.raw(id);
@@ -334,6 +347,9 @@ export class TrackingStore {
         this.db.prepare("UPDATE commands SET status='location received',detail='A new GPS fix arrived after the request.',updatedAt=? WHERE deviceId=? AND status IN ('queued','dispatching','sent') AND detail NOT LIKE 'CMD %' AND createdAt<=? AND createdAt>=?")
           .run(this.now(),id,recordedAt,this.now()-120000);
       }
+      if (inserted && typeof info.rssi === 'number') this.db.prepare('UPDATE devices SET rssi=? WHERE id=?').run(Math.round(info.rssi),id);
+      const breach = inserted && recordedAt >= Number(device.parkAt || 0) ? parkBreach(device, { ignition: values[2], valid, latitude, longitude }, distance) : null;
+      if (breach) { this.alert(id,'parking_lock',breach,Math.min(receivedAt,this.now())); this.db.prepare('UPDATE devices SET parkAlerted=1 WHERE id=?').run(id); }
       if (body.commandId && inserted && recordedAt >= this.now()-60000) this.db.prepare("UPDATE commands SET status='answered',detail='Mobile sender answered with a fresh GPS fix.',updatedAt=? WHERE id=? AND status IN ('queued','sent','location received')").run(this.now(),body.commandId);
       if (inserted && lastIgnition && receivedAt >= lastIgnition.receivedAt && lastIgnition.ignition !== values[2])
         this.alert(id, values[2] ? 'ignition_on' : 'ignition_off', values[2] ? 'Engine started.' : 'Engine stopped.', Math.min(receivedAt, this.now()));
