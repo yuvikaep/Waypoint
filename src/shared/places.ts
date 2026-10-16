@@ -11,7 +11,9 @@ export const places=new globalThis.Map<string,Place>();
 const placeWaiters=new globalThis.Map<string,Promise<Place|null>>(),placeFailedAt=new globalThis.Map<string,number>();
 let placeChain=Promise.resolve(),nominatimPausedUntil=0;
 export const placeKey=(p:Point)=>`${p.latitude.toFixed(4)},${p.longitude.toFixed(4)}`;
-const PLACE_STORE='waypoint.places.v1';
+// v2: unnamed roads are described from the nearest named place, so v1 labels are looked up again.
+const PLACE_STORE='waypoint.places.v2';
+try{localStorage.removeItem('waypoint.places.v1')}catch{}
 try{for(const [k,v] of Object.entries(JSON.parse(localStorage.getItem(PLACE_STORE)||'{}') as Record<string,Place>))places.set(k,v)}catch{}
 function rememberPlace(key:string,value:Place){try{const saved=JSON.parse(localStorage.getItem(PLACE_STORE)||'{}') as Record<string,Place>;saved[key]=value;const keys=Object.keys(saved);for(const old of keys.slice(0,Math.max(0,keys.length-500)))delete saved[old];localStorage.setItem(PLACE_STORE,JSON.stringify(saved))}catch{}}
 function paced<T>(task:()=>Promise<T>):Promise<T>{const run=placeChain.then(task);placeChain=run.then(()=>new Promise(r=>setTimeout(r,1100)),()=>new Promise(r=>setTimeout(r,1100)));return run}
@@ -26,12 +28,39 @@ async function nominatim(lat:number,lon:number,zoom:number){
     return response.json() as Promise<{name?:string;category?:string;address?:Record<string,string>}>;
   });
 }
+// Many village roads in India have no name in OpenStreetMap. Instead of "Unnamed road", say where
+// the vehicle is from the nearest named place: a landmark close by, otherwise the village centre.
+const DIRS=['north','north-east','east','south-east','south','south-west','west','north-west'];
+function fromHere(lat:number,lon:number,pLat:number,pLon:number){
+  const R=6371000,toR=Math.PI/180,dLat=(pLat-lat)*toR,dLon=(pLon-lon)*toR;
+  const h=Math.sin(dLat/2)**2+Math.cos(lat*toR)*Math.cos(pLat*toR)*Math.sin(dLon/2)**2,m=2*R*Math.asin(Math.sqrt(h));
+  const y=Math.sin(-dLon)*Math.cos(lat*toR),x=Math.cos(pLat*toR)*Math.sin(lat*toR)-Math.sin(pLat*toR)*Math.cos(lat*toR)*Math.cos(-dLon);
+  const bearing=(Math.atan2(y,x)/toR+360)%360;
+  return {m,dir:DIRS[Math.round(bearing/45)%8]};
+}
+const AREA=new Set(['village','hamlet','suburb','town','city','neighbourhood','locality','quarter','isolated_dwelling']);
+async function nearbyName(lat:number,lon:number):Promise<string|null>{
+  const response=await paced(()=>fetch(`https://photon.komoot.io/reverse?${query(lat,lon,{lang:'en',limit:'10',radius:'3'})}`));
+  if(!response.ok)return null;
+  const features=((await response.json()) as {features?:{properties:Record<string,string>;geometry:{coordinates:[number,number]}}[]}).features||[];
+  const named=features.filter(f=>f.properties.name&&f.properties.osm_value!=='postcode'&&!/^\d{6}$/.test(f.properties.name)&&f.properties.osm_key!=='highway')
+    .map(f=>({name:f.properties.name,area:f.properties.osm_key==='place'&&AREA.has(f.properties.osm_value),...fromHere(lat,lon,f.geometry.coordinates[1],f.geometry.coordinates[0])}))
+    .filter(f=>f.m<=3000).sort((a,b)=>a.m-b.m);
+  const pick=named.find(f=>!f.area&&f.m<=300)||named.find(f=>f.area)||named[0];
+  if(!pick)return null;
+  if(pick.m<60)return t('At {p}',{p:pick.name});
+  const d=pick.m<1000?`${Math.round(pick.m/10)*10} m`:`${(pick.m/1000).toFixed(1)} km`;
+  return t('{d} {dir} of {p}',{d,dir:t(pick.dir),p:pick.name});
+}
 async function fromNominatim(lat:number,lon:number):Promise<Place|null>{
   const near=await nominatim(lat,lon,18),a=near.address||{};
-  const road=a.road||(near.category==='highway'?(near.name||'Unnamed road'):null);
+  const unnamed=!a.road&&near.category==='highway'&&!near.name;
+  const road=a.road||(near.category==='highway'&&near.name?near.name:null)||(unnamed?await nearbyName(lat,lon).catch(()=>null)||t('Unnamed road'):null);
   let locality=a.neighbourhood||a.suburb||a.quarter||a.village||a.hamlet||a.town||a.city_district||a.city||null;
   // Rural roads often carry no village; ask once more at locality scale.
   if(!locality){const wide=(await nominatim(lat,lon,14)).address||{};locality=wide.village||wide.suburb||wide.town||wide.hamlet||wide.city||null}
+  // "780 m west of Rajatalab" already names the village, so it is not repeated after it.
+  if(unnamed&&locality&&road?.includes(locality))locality=null;
   const parts=[road,near.category!=='highway'&&near.name?near.name:null,locality,a.town||a.city||a.state_district||a.county,a.state,a.postcode].filter((v,i,all):v is string=>!!v&&all.indexOf(v)===i);
   return parts.length?{label:parts.join(', '),road}:null;
 }
