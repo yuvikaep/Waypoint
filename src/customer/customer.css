@@ -390,3 +390,29 @@
 .cx .documents-workspace .stats .stat>div:first-child{background:none;padding:0;border-radius:0}
 .cx .documents-workspace .stats .stat-icon{width:40px;height:40px;padding:0;display:grid;place-items:center;border-radius:12px}
 .cx .documents-workspace .document-actions{justify-content:flex-end}
+
+/* Diesel prices ticker across the top of every page */
+.cx{--fuel:36px}
+.cx-fuel{position:sticky;top:0;z-index:60;display:flex;align-items:center;height:var(--fuel);background:#0f172a;color:#e2e8f0;font-size:12.5px;cursor:pointer;overflow:hidden}
+.cx-fuel:empty{display:none}
+.cx-fuel-label{flex:none;height:100%;display:flex;align-items:center;padding:0 12px;background:#1e293b;color:#fff;font-weight:700;white-space:nowrap;z-index:1;box-shadow:6px 0 10px #0f172a}
+.cx-fuel-track{flex:1;overflow:hidden;mask-image:linear-gradient(90deg,transparent,#000 4%,#000 96%,transparent)}
+.cx-fuel-run{display:inline-flex;white-space:nowrap;animation:cx-ticker linear infinite}
+.cx-fuel:hover .cx-fuel-run{animation-play-state:paused}
+.cx-fuel-run span{padding:0 16px;border-right:1px solid #334155}
+.cx-fuel-run span b{color:#fff;font-family:'Inter',sans-serif;margin-left:4px}
+.cx-fuel-run span.mine{color:#fde68a}.cx-fuel-run span.mine b{color:#fde68a}
+.cx-fuel-run i,.cx-fuel-list i{font-style:normal;font-family:'Inter',sans-serif;font-size:11.5px;margin-left:6px}
+.cx-fuel-run i.up,.cx-fuel-list i.up{color:#f87171}.cx-fuel-run i.down,.cx-fuel-list i.down{color:#4ade80}
+@keyframes cx-ticker{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+@media (prefers-reduced-motion:reduce){.cx-fuel-run{animation:none}.cx-fuel-track{overflow-x:auto}}
+.cx-fuel-list{display:flex;flex-direction:column;border-radius:16px;overflow:hidden;border:1px solid #e6e9f2}
+.cx-fuel-list div{display:grid;grid-template-columns:1fr auto 70px;gap:10px;align-items:center;padding:11px 14px;font-size:14px}
+.cx-fuel-list div+div{border-top:1px solid #e6e9f2}
+.cx-fuel-list div.mine{background:#fffbeb}.cx-fuel-list small{color:#b45309;font-weight:600}
+.cx-fuel-list b{font-family:'Inter',sans-serif}.cx-fuel-list i{text-align:right;color:#94a3b8}
+.cx-fuel-list i.up{color:#dc2626}.cx-fuel-list i.down{color:#16a34a}
+.cx-top{top:var(--fuel)}
+.cx-fullmap{height:calc(100dvh - var(--fuel))}
+@media (min-width:901px){.cx-home,.cx-home-map,.cx-vpage{height:calc(100dvh - var(--fuel))}.cx-history{height:calc(100dvh - 68px - var(--fuel))}}
+@media (max-width:900px){.cx-fullmap{height:calc(100dvh - var(--tabs) - env(safe-area-inset-bottom) - var(--fuel))}}

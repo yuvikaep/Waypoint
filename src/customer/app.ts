@@ -59,7 +59,7 @@ export async function startCustomer(identity:Identity){
   me=identity;following=prefs().follow;
   whenUnauthorized(()=>{stop();showLogin(t('Your session ended. Please sign in again.'))});
   try{fleet=await api<Fleet>('/state')}catch(e){$('#app').innerHTML=`<div class="cx-empty">${i('wifi-off')}<h3>${t('Could not load your fleet')}</h3><p>${esc((e as Error).message)}</p><button class="cx-btn primary" id="retry">${t('Retry')}</button></div>`;on('#retry',()=>location.reload());icons();return}
-  readUrl();
+  readUrl();void loadFuel();setInterval(()=>void loadFuel(),10*60000);
   primeSeen(fleet.alerts);remember(fleet.devices);document.addEventListener('click',unlockVoice,{once:true});
   // Back (phone button or browser) simply steps back through the pages that were opened.
   window.addEventListener('popstate',()=>{readUrl();render()});
@@ -101,11 +101,12 @@ function render(){
       <nav>${SIDE.map(([g,items])=>`<div class="cx-side-group"><span>${t(g)}</span>${items.map(([v,l,ic])=>`<button data-go="${v}" class="${(view===v||(v==='home'&&view==='vehicle'))?'on':''}">${i(ic)}<em>${t(l)}</em>${v==='alerts'?badgeHtml:''}</button>`).join('')}</div>`).join('')}</nav>
       <button class="cx-me" data-go="settings"><span class="cx-avatar">${initial(p.workspace)}</span><span><b>${esc(p.workspace)}</b><small>${esc(me.email||p.name)}</small></span>${i('chevron-right')}</button>
     </aside>
-    <main class="cx-main">${['home','map','more','vehicle'].includes(view)?'':`<header class="cx-top">${ROOT.includes(view)?'':`<button class="cx-back" data-back aria-label="${t('Back')}">${i('chevron-left')}</button>`}<h1>${t(TITLES[view])}</h1></header>`}<div id="view"></div></main>
+    <main class="cx-main"><div class="cx-fuel" id="fuel">${fuelBar()}</div>${['home','map','more','vehicle'].includes(view)?'':`<header class="cx-top">${ROOT.includes(view)?'':`<button class="cx-back" data-back aria-label="${t('Back')}">${i('chevron-left')}</button>`}<h1>${t(TITLES[view])}</h1></header>`}<div id="view"></div></main>
     <nav class="cx-tabs">${TABS.map(([v,l,ic])=>`<button data-go="${v}" class="${active===v?'on':''}"><span class="cx-tab-ico">${i(ic)}${v==='alerts'?badgeHtml:''}</span>${t(l)}</button>`).join('')}</nav>
   </div>`;
   on('[data-go]',el=>go(el.dataset.go as View));
   on('[data-back]',back);
+  on('#fuel',showFuel);
   ({home:renderHome,map:renderMap,vehicle:renderVehicle,history:renderHistory,reports:renderReports,alerts:renderAlerts,geofences:renderGeofences,documents:()=>renderDocuments('Documents'),ebills:()=>renderDocuments('E-way bills'),settings:renderSettings,more:renderMore} as Record<View,()=>void>)[view]();
   icons();
 }
@@ -119,6 +120,31 @@ function remember(devices:Vehicle[]){
 let googleView=false;
 try{googleView=localStorage.getItem('waypoint.googleView')==='1'}catch{/* private mode */}
 function setGoogle(on:boolean){googleView=on;try{localStorage.setItem('waypoint.googleView',on?'1':'0')}catch{/* private mode */}}
+
+/* ---------- Diesel prices ticker ---------- */
+type Fuel={date:number|null;states:{state:string;price:number;change:number;dir:number}[];source:string;fetchedAt:number;stale?:boolean};
+let fuel:Fuel|null=null;
+async function loadFuel(){try{fuel=await api<Fuel>('/fuel');const el=document.querySelector('#fuel');if(el){el.innerHTML=fuelBar();icons()}}catch{/* the bar stays empty */}}
+// States the fleet is in right now (from the place names), shown first in the ticker.
+function fleetStates(){
+  const names=new Set<string>();
+  for(const d of fleet.devices){const label=d.position?places.get(placeKey(d.position))?.label:'';if(!label||!fuel)continue;for(const s of fuel.states)if(label.includes(s.state))names.add(s.state)}
+  return names;
+}
+const fuelDay=(f:Fuel)=>f.date?new Date(f.date).toLocaleDateString(locale(),{day:'numeric',month:'short',timeZone:'UTC'}):'';
+function fuelBar(){
+  if(!fuel?.states.length)return '';
+  const mine=fleetStates(),list=[...fuel.states].sort((a,b)=>Number(mine.has(b.state))-Number(mine.has(a.state))||a.state.localeCompare(b.state));
+  const item=(s:Fuel['states'][number])=>`<span class="${mine.has(s.state)?'mine':''}">${esc(s.state)} <b>₹${s.price.toFixed(2)}</b>${s.dir?`<i class="${s.dir>0?'up':'down'}">${s.dir>0?'▲':'▼'}${s.change.toFixed(2)}</i>`:''}</span>`;
+  const run=list.map(item).join('');
+  return `<span class="cx-fuel-label">⛽ ${t('Diesel today')}${fuel.date?` · ${fuelDay(fuel)}`:''}</span><div class="cx-fuel-track"><div class="cx-fuel-run" style="animation-duration:${Math.max(40,list.length*4)}s">${run}${run}</div></div>`;
+}
+function showFuel(){
+  if(!fuel)return;
+  const mine=fleetStates();
+  modal(`⛽ ${t('Diesel price today')}${fuel.date?` · ${fuelDay(fuel)}`:''}`,`<p class="hint">${t('Per litre, by state. Prices change at 6 am every day.')} ${t('Source: {s}',{s:fuel.source})}${fuel.stale?` · ${t('could not refresh, showing the last figures')}`:''}</p>
+    <div class="cx-fuel-list">${[...fuel.states].sort((a,b)=>Number(mine.has(b.state))-Number(mine.has(a.state))||a.state.localeCompare(b.state)).map(s=>`<div class="${mine.has(s.state)?'mine':''}"><span>${esc(s.state)}${mine.has(s.state)?` <small>${t('your vehicles')}</small>`:''}</span><b>₹${s.price.toFixed(2)}</b><i class="${s.dir>0?'up':s.dir<0?'down':''}">${s.dir?`${s.dir>0?'▲':'▼'} ${s.change.toFixed(2)}`:'—'}</i></div>`).join('')}</div>`);
+}
 
 /* ---------- Shared pieces ---------- */
 // What a vehicle is doing, in one short phrase for its row.

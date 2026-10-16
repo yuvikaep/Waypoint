@@ -104,6 +104,9 @@ export async function demoRequest(path:string,options:RequestInit={}):Promise<an
     }else if(action==='speed'){if(body.speedLimit!==undefined)d.speedLimit=Number(body.speedLimit);if(body.speedAlert!==undefined)d.speedAlert=body.speedAlert;result={speedLimit:d.speedLimit,speedAlert:d.speedAlert!==false};
     }else if(action==='driver-link'){result=method==='DELETE'?{ok:true}:{code:`demo:${d.id}`,expiresAt:now()+(Number(body.hours)||168)*3600000};}
     else throw new Error('Not available in the demo.');
+  }else if(url.pathname==='/fuel'){
+    // Demo: a few sample prices; the live app reads today's prices for every state.
+    result={date:Date.UTC(2026,9,16),source:'goodreturns.in (demo sample)',fetchedAt:now(),states:[['Maharashtra',97.83,0.2,-1],['Delhi',87.67,0,0],['Gujarat',92.38,0,0],['Karnataka',91.02,0.12,1],['Uttar Pradesh',95.36,0,0],['Rajasthan',93.41,0.05,-1],['Haryana',89.88,0,0],['Madhya Pradesh',99.64,0,0],['Punjab',88.46,0,0],['Tamil Nadu',94.24,0.1,1]].map(([state,price,change,dir])=>({state,price,change,dir}))};
   }else if(url.pathname==='/stops'){
     // Demo: two regular stops near the demo routes.
     result={stops:[{latitude:18.5089,longitude:73.9260,visits:6,totalMinutes:260,lastVisit:now()-3600000,vehicles:[data.devices[0]?.name||'Demo']},{latitude:18.5420,longitude:73.8710,visits:3,totalMinutes:75,lastVisit:now()-86400000,vehicles:[data.devices[1]?.name||'Demo']}]};

@@ -9,6 +9,7 @@ import { RelayService } from './relay.mjs';
 import { vehicleReport } from './reports.mjs';
 import { landmarks } from './landmarks.mjs';
 import { suggestedStops } from './stops.mjs';
+import { dieselPrices } from './fuel.mjs';
 import { commandAllowed } from './command-channel.mjs';
 import { powerTimeline } from './extra.mjs';
 import { apnFor, bootstrapSms, buildPlan, cleanIntervals, OPERATORS } from './provision.mjs';
@@ -216,6 +217,7 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
         try{return json(res,200,await landmarks(store,url.searchParams.get('tile')))}
         catch(e){if(e.status)throw e;fail(503,'Nearby places are unavailable right now.')}
       }
+      if(path==='/api/gps/fuel'&&method==='GET'){await limited(`fuel:${session.tenantId}`,60);return json(res,200,await dieselPrices(store))}
       if(path==='/api/gps/stops'&&method==='GET'){
         const days=Number(url.searchParams.get('days')??14);
         if(!Number.isInteger(days)||days<1||days>31)fail(400,'Choose 1-31 days.');
