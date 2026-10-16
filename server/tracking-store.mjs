@@ -393,6 +393,16 @@ export class TrackingStore {
     for (const device of this.devices(tenantId)) if (device.position) this.db.prepare('INSERT INTO fence_state VALUES (?,?,?)').run(device.id,id,Number(distance(device.position,{latitude,longitude}) <= radius));
     return {id,name,latitude,longitude,radius,kind};
   }
+  // Owners rename a place or fix its type (places saved before the type defaulted to "Other" became petrol pumps).
+  updateFence(id,tenantId,body){
+    const f=tenantId?this.db.prepare('SELECT * FROM fences WHERE id=? AND tenantId=?').get(id,tenantId):this.db.prepare('SELECT * FROM fences WHERE id=?').get(id);
+    if(!f)fail(404,'Geofence not found.');
+    const name=body.name===undefined?f.name:text(body.name,'Geofence name'),kind=body.kind===undefined?f.kind:String(body.kind);
+    if(!PLACE_KINDS.includes(kind))fail(400,'Choose a place type from the list.');
+    const radius=body.radius===undefined?f.radius:number(body.radius,'Radius (m)',50,100000);
+    this.db.prepare('UPDATE fences SET name=?,kind=?,radius=? WHERE id=?').run(name,kind,radius,id);
+    return {...f,name,kind,radius};
+  }
   deleteFence(id,tenantId){
     const result=tenantId?this.db.prepare('DELETE FROM fences WHERE id=? AND tenantId=?').run(id,tenantId):this.db.prepare('DELETE FROM fences WHERE id=?').run(id);
     if (!result.changes) fail(404,'Geofence not found.');

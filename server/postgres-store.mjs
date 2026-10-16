@@ -355,6 +355,15 @@ export class PostgresTrackingStore {
     for (const device of (await this.devices(tenantId))) if (device.position) (await this.db.prepare('INSERT INTO fence_state VALUES (?,?,?)').run(device.id,id,Number(distance(device.position,{latitude,longitude}) <= radius)));
     return {id,name,latitude,longitude,radius,kind};
   }
+  async updateFence(id,tenantId,body){
+    const f=tenantId?(await this.db.prepare('SELECT * FROM fences WHERE id=? AND tenantId=?').get(id,tenantId)):(await this.db.prepare('SELECT * FROM fences WHERE id=?').get(id));
+    if(!f)fail(404,'Geofence not found.');
+    const name=body.name===undefined?f.name:text(body.name,'Geofence name'),kind=body.kind===undefined?f.kind:String(body.kind);
+    if(!PLACE_KINDS.includes(kind))fail(400,'Choose a place type from the list.');
+    const radius=body.radius===undefined?Number(f.radius):number(body.radius,'Radius (m)',50,100000);
+    (await this.db.prepare('UPDATE fences SET name=?,kind=?,radius=? WHERE id=?').run(name,kind,radius,id));
+    return {...f,name,kind,radius};
+  }
   async deleteFence(id,tenantId){
     const result=tenantId?(await this.db.prepare('DELETE FROM fences WHERE id=? AND tenantId=?').run(id,tenantId)):(await this.db.prepare('DELETE FROM fences WHERE id=?').run(id));
     if (!result.changes) fail(404,'Geofence not found.');

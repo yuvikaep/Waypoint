@@ -376,6 +376,7 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
       }
       if (path==='/api/gps/fences' && method==='POST') return json(res,201,await store.addFence(await body(req),session.tenantId));
       const fenceMatch=path.match(/^\/api\/gps\/fences\/([\w-]+)$/);
+      if (fenceMatch && method==='PUT') return json(res,200,await store.updateFence(fenceMatch[1],session.tenantId,await body(req)));
       if (fenceMatch && method==='DELETE') {await store.deleteFence(fenceMatch[1],session.tenantId);return json(res,200,{ok:true});}
       const alertMatch=path.match(/^\/api\/gps\/alerts\/([\w-]+)\/ack$/);
       if (alertMatch && method==='POST') {await body(req);await store.acknowledge(alertMatch[1],session.tenantId);return json(res,200,{ok:true});}

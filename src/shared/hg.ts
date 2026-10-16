@@ -362,4 +362,6 @@ export const HG:Record<string,string>={
   "Wait 60 seconds between relay operations.":"Do command ke beech 60 second rukein.",
   "Live relay control is disabled on this server.":"Relay control abhi server par band hai.",
   "Incorrect password.":"Password galat hai.",
+  "Edit place":"Jagah badlein",
+  "Edit":"Badlein",
 };

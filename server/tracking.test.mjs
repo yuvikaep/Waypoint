@@ -424,3 +424,12 @@ test('parking lock alerts once when a locked vehicle starts or moves; network an
   const {signalBars}=await import('./extra.mjs');
   assert.deepEqual([signalBars(0),signalBars(3),signalBars(5),signalBars(20),signalBars(99),signalBars(null)],[0,3,4,3,null,null]);
 });
+
+test('owners rename a place and fix its type, only in their own fleet',t=>{
+  const {store}=fixture(t);
+  const f=store.addFence({name:'Mayank Room',latitude:25.3,longitude:82.9,radius:150,kind:'fuel'},'tenant-a');
+  assert.throws(()=>store.updateFence(f.id,'tenant-b',{kind:'other'}),/not found/);
+  assert.throws(()=>store.updateFence(f.id,'tenant-a',{kind:'castle'}),/place type/);
+  const r=store.updateFence(f.id,'tenant-a',{kind:'other',name:'Mayank home'});
+  assert.equal(r.kind,'other');assert.equal(store.fences('tenant-a')[0].name,'Mayank home');assert.equal(store.fences('tenant-a')[0].radius,150);
+});

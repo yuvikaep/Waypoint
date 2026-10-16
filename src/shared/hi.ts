@@ -362,4 +362,6 @@ export const HI:Record<string,string>={
   "Wait 60 seconds between relay operations.":"दो कमांड के बीच 60 सेकंड रुकें।",
   "Live relay control is disabled on this server.":"रिले कंट्रोल अभी सर्वर पर बंद है।",
   "Incorrect password.":"पासवर्ड गलत है।",
+  "Edit place":"जगह बदलें",
+  "Edit":"बदलें",
 };

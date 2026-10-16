@@ -127,6 +127,7 @@ export async function demoRequest(path:string,options:RequestInit={}):Promise<an
   }else if(url.pathname==='/fences'&&method==='POST'){
     if(!body.name||body.radius<50||body.radius>100000||Math.abs(body.latitude)>90||Math.abs(body.longitude)>180)throw new Error('Enter a valid geofence name, coordinates and radius.');
     result={...body,id:crypto.randomUUID()};data.fences.push(result);
+  }else if(url.pathname.startsWith('/fences/')&&method==='PUT'){const f:any=data.fences.find(f=>f.id===url.pathname.split('/')[2]);if(!f)throw new Error('Geofence not found.');Object.assign(f,{name:body.name??f.name,kind:body.kind??f.kind,radius:body.radius??f.radius});result=f;
   }else if(url.pathname.startsWith('/fences/')&&method==='DELETE'){data.fences=data.fences.filter(f=>f.id!==url.pathname.split('/')[2]);result={ok:true};}
   else if(url.pathname.startsWith('/alerts/')){const alert=data.alerts.find(a=>a.id===url.pathname.split('/')[2]);if(alert)alert.acknowledged=1;result={ok:true};}
   else if(url.pathname==='/sender/join'||url.pathname==='/sender/me'){

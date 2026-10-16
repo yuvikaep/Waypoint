@@ -710,3 +710,6 @@
 .we-relay.on{background:var(--c-sos-soft);color:var(--c-sos)}
 .we-relay svg.lucide{width:30px;height:30px}.we-relay b{display:block;font-size:18px}.we-relay small{display:block;color:var(--c-ink-2);font-size:13px}
 .we-relay-btns{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+.we-mine{display:inline-flex;align-items:center;gap:6px;font-weight:700;color:var(--c-ink);text-align:left;padding:0}
+.we-mine svg.lucide{width:15px;height:15px;color:var(--c-accent)}

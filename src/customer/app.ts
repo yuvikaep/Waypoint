@@ -239,7 +239,7 @@ function vehicleCard(d:Vehicle){
       <span class="we-ign ${d.ignition?'on':''}"><b>${d.ignition==null?'—':d.ignition?'ON':'OFF'}</b><small>${t('Ignition')}</small></span>
     </button>
     <button class="we-kebab" data-menu="${d.id}" aria-label="${t('More options')}">${i('ellipsis-vertical')}</button>
-    <div class="we-addr"><p>${mine?`<b>${esc(mine)}</b><br>`:''}${placeSpan(p,d.id)}</p>${p?`<button class="we-link" data-save="${d.id}">${t('Save location')}</button>`:''}</div>
+    <div class="we-addr"><p>${mine?`<button class="we-mine" data-efence="${mineFence(p!)?.id}">${esc(mine)} ${i('pencil')}</button><br>`:''}${placeSpan(p,d.id)}</p>${p?`<button class="we-link" data-save="${d.id}">${t('Save location')}</button>`:''}</div>
     ${line?`<p class="we-line">${esc(line)}</p>`:''}
     <div class="we-acts">
       ${d.driverPhone?`<a href="tel:${esc(d.driverPhone)}"><span class="we-act-ico">${i('phone')}</span>${t('Call driver')}</a>`:`<button data-phone="${d.id}"><span class="we-act-ico">${i('phone')}</span>${t('Call driver')}</button>`}
@@ -255,6 +255,7 @@ function bindCards(root:HTMLElement){
   on('[data-signal]',el=>signalInfo(vehicle(el.dataset.signal!)!),root);
   on('[data-share]',el=>shareVehicle(vehicle(el.dataset.share!)!),root);
   on('[data-park]',el=>parkLock(vehicle(el.dataset.park!)!),root);
+  on('[data-efence]',el=>editFence(el.dataset.efence!),root);
   on('[data-save]',el=>{const p=vehicle(el.dataset.save!)?.position;if(p)addFence({latitude:p.latitude,longitude:p.longitude,radius:150})},root);
   on('[data-menu]',el=>vehicleMenu(vehicle(el.dataset.menu!)!),root);
 }
@@ -428,7 +429,7 @@ function renderVehicle(){
     if(p&&!mine&&!nearCache.has(placeKey(p))){const key=placeKey(p);nearCache.set(key,'');void nearest(p.latitude,p.longitude).then(n=>{if(n){nearCache.set(key,nearText(n));if(vehicleId===d.id)drawSheet()}})}
     const near=mine||(p?nearCache.get(placeKey(p)):'');
     $('#vsheet').innerHTML=`<div class="cx-grab"></div>
-      <div class="we-addr big"><p>${near?`<b>${esc(near)}</b><br>`:''}${placeSpan(p,d.id)}</p>${p?`<button class="we-link" id="vsave">${t('Save location')}</button>`:''}</div>
+      <div class="we-addr big"><p>${near?mine?`<button class="we-mine" data-efence="${mineFence(p!)?.id}">${esc(near)} ${i('pencil')}</button><br>`:`<b>${esc(near)}</b><br>`:''}${placeSpan(p,d.id)}</p>${p?`<button class="we-link" id="vsave">${t('Save location')}</button>`:''}</div>
       <h3 class="we-h">${t('Features')}</h3>
       <div class="we-feat2"><button id="vhistory"><span class="we-feat-ico">${i('route')}</span>${t('Route history')}</button><button id="vnearby"><span class="we-feat-ico">${i('search')}</span>${t('Find nearby')}</button></div>
       <div class="we-grid">
@@ -447,6 +448,7 @@ function renderVehicle(){
         ${d.isMobile?'':`<button id="vengine"><span class="we-grid-ico r">${i('power')}</span>${t('Engine lock')}</button>`}
       </div>`;
     const sh=$('#vsheet');
+    on('[data-efence]',el=>editFence(el.dataset.efence!),sh);
     on('#vsave',()=>addFence({latitude:p!.latitude,longitude:p!.longitude,radius:150}),sh);
     on('#vhistory',()=>{historyVehicle=d.id;go('history',d.id)},sh);
     on('#vnearby',()=>{setGoogle(!googleView);$('#vgtoggle').classList.toggle('on',googleView);drawMap();window.scrollTo({top:0,behavior:'smooth'})},sh);
@@ -713,12 +715,13 @@ function renderGeofences(){
   $('#view').innerHTML=`<div class="cx-page">
     <p class="cx-hint">${t('Your own places: petrol pumps, dhabas, depots, loading points. They show on the map with their name, and you get an alert when a vehicle enters or leaves one.')}</p>
     <button class="cx-btn primary" id="add-fence">${i('plus')}${t('Add place')}</button>
-    ${fleet.fences.length?`<div class="cx-group">${fleet.fences.map(f=>`<div class="cx-item static"><span class="cx-ico emoji">${placeIcon(f.kind)}</span><span class="cx-item-text"><b>${esc(f.name)}</b><small>${esc(kindLabel(f.kind))} · ${f.radius} m · ${placeSpan(f,'fence-'+f.id,{short:true})}</small></span><button class="cx-icon" data-gfence="${f.id}" aria-label="${t('Google view')}">${i('layers')}</button><button class="cx-icon danger" data-del="${f.id}" aria-label="${t('Delete')}">${i('trash-2')}</button></div>`).join('')}</div>`:`<div class="cx-empty">${i('map-pin')}<h3>${t('No places yet')}</h3><p>${t("Save a vehicle's current place, or name one of the suggested stops below.")}</p></div>`}
+    ${fleet.fences.length?`<div class="cx-group">${fleet.fences.map(f=>`<div class="cx-item static"><span class="cx-ico emoji">${placeIcon(f.kind)}</span><span class="cx-item-text"><b>${esc(f.name)}</b><small>${esc(kindLabel(f.kind))} · ${f.radius} m · ${placeSpan(f,'fence-'+f.id,{short:true})}</small></span><button class="cx-icon" data-efence="${f.id}" aria-label="${t('Edit')}">${i('pencil')}</button><button class="cx-icon" data-gfence="${f.id}" aria-label="${t('Google view')}">${i('layers')}</button><button class="cx-icon danger" data-del="${f.id}" aria-label="${t('Delete')}">${i('trash-2')}</button></div>`).join('')}</div>`:`<div class="cx-empty">${i('map-pin')}<h3>${t('No places yet')}</h3><p>${t("Save a vehicle's current place, or name one of the suggested stops below.")}</p></div>`}
     <h3 class="cx-section">${t('Suggested stops')}</h3>
     <p class="cx-hint">${t('Places where your vehicles stopped 10 minutes or more, at least 3 times in the last 14 days. Check what is there on Google and give it a name.')}</p>
     <div id="stops"><p class="cx-hint">${t('Looking at the last 14 days…')}</p></div></div>`;
   on('#add-fence',()=>addFence());
   on('[data-gfence]',el=>{const f=fleet.fences.find(x=>x.id===el.dataset.gfence)!;googleModal(f.name,f.latitude,f.longitude)});
+  on('[data-efence]',el=>editFence(el.dataset.efence!));
   on('[data-del]',async el=>{const f=fleet.fences.find(x=>x.id===el.dataset.del)!;if(!confirm(t('Delete place {n}?',{n:f.name})))return;await api(`/fences/${f.id}`,{method:'DELETE'});fleet=await api<Fleet>('/state');stopsCache=null;renderGeofences()});
   icons();void showStops();
 }
@@ -732,6 +735,23 @@ async function showStops(){
     on('[data-sname]',el=>{const s=stops[Number(el.dataset.sname)];addFence({latitude:s.latitude,longitude:s.longitude,radius:150})},host);
     icons();
   }catch(e){const host=document.querySelector('#stops');if(host)host.innerHTML=`<p class="cx-error">${esc((e as Error).message)}</p>`}
+}
+// The saved place the vehicle is at or nearest to (same rule as nearSaved).
+function mineFence(p:{latitude:number;longitude:number}){
+  let best:{f:Fence;m:number;inside:boolean}|null=null;
+  for(const f of fleet.fences){const m=L.latLng(p.latitude,p.longitude).distanceTo([f.latitude,f.longitude]),inside=m<=f.radius;if((inside||m<=1500)&&(!best||(inside&&!best.inside)||(inside===best.inside&&m<best.m)))best={f,m,inside}}
+  return best?.f;
+}
+function editFence(id:string){
+  const f=fleet.fences.find(x=>x.id===id);if(!f)return;
+  modal(t('Edit place'),`<form class="form" id="efence"><label class="field">${t('Name')}<input class="input" name="name" required maxlength="100" value="${esc(f.name)}"></label>
+    <label class="field">${t('Type')}<select class="input" name="kind">${Object.entries(PLACE_KIND).map(([k,[ic,l]])=>`<option value="${k}" ${k===(f.kind||'other')?'selected':''}>${ic} ${esc(t(l))}</option>`).join('')}</select></label>
+    <label class="field">${t('Radius (metres)')}<input class="input" type="number" name="radius" min="50" max="100000" value="${f.radius}" required></label>
+    <p class="error"></p><button class="btn btn-primary" type="submit">${t('Save')}</button></form>`);
+  const form=$<HTMLFormElement>('#efence');
+  form.onsubmit=async e=>{e.preventDefault();const v=Object.fromEntries(new FormData(form));
+    try{const r=await post<Fence>(`/fences/${id}`,{name:v.name,kind:v.kind,radius:Number(v.radius)},'PUT');Object.assign(f,{name:r.name,kind:r.kind,radius:Number(r.radius)});closeModal();toast(t('Place saved.'));if(view==='geofences')renderGeofences();else onRefresh?.()}
+    catch(x){form.querySelector('.error')!.textContent=t((x as Error).message)}};
 }
 function addFence(at?:{latitude:number;longitude:number;radius:number}){
   const withPos=fleet.devices.filter(d=>d.position);
