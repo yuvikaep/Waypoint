@@ -1,5 +1,5 @@
 import {$,$$,api,post,clock,closeModal,coords,esc,hm,i,icons,localInput,mapsLink,modal,on,since,statusLabel,statusOf,time,ago,toast,whenUnauthorized,type Alert,type Fence,type Fix,type Identity,type StatusKey,type Vehicle} from '../shared/core';
-import {bearing,createMap,drawRoute,fleetIcon,playbackIcon,point,L} from '../shared/map';
+import {bearing,createMap,drawRoute,fleetIcon,glide,markerHtml,playbackIcon,point,L} from '../shared/map';
 import {placeSpan,placeText,places,placeKey,placeFallback} from '../shared/places';
 import {nearest,nearText,nearSaved,placeIcon,PLACE_KIND} from '../shared/poi';
 import {googleModal} from '../shared/google';
@@ -152,6 +152,10 @@ function remember(devices:Vehicle[]){
 let googleView=false;
 try{googleView=localStorage.getItem('waypoint.googleView')==='1'}catch{/* private mode */}
 function setGoogle(on:boolean){googleView=on;try{localStorage.setItem('waypoint.googleView',on?'1':'0')}catch{/* private mode */}}
+// A single vehicle opens in Google view unless the owner switched it off; the fleet map keeps its own choice.
+let vehicleGoogle=true;
+try{vehicleGoogle=localStorage.getItem('waypoint.vehicleGoogle')!=='0'}catch{/* private mode */}
+function setVehicleGoogle(on:boolean){vehicleGoogle=on;try{localStorage.setItem('waypoint.vehicleGoogle',on?'1':'0')}catch{/* private mode */}}
 
 // Today's km for every vehicle in one request, refreshed at most once a minute.
 const kmToday=new globalThis.Map<string,number>();let kmAt=0;
@@ -362,6 +366,8 @@ function fleetMap(host:HTMLElement){
   const el=host.querySelector<HTMLElement>('[data-fm-map]')!,gHost=host.querySelector<HTMLElement>('[data-fm-google]')!;
   const map=createMap(el),layer=L.layerGroup().addTo(map),saved=L.layerGroup().addTo(map);
   let picked='',fitted=false;
+  const markers=new globalThis.Map<string,L.Marker>(),iconKeys=new globalThis.Map<string,string>();
+  const fleetIconKey=(d:Vehicle,sel:boolean,labels:boolean)=>markerHtml(d,sel,labels);
   const gl=googleLive(gHost,{onSelect:id=>pick(id),covered:()=>host.querySelector<HTMLElement>('[data-fm-peek]:not([hidden])')?.offsetHeight||0});
   const resize=new ResizeObserver(()=>map.invalidateSize());resize.observe(el);
   const fit=()=>{const pts=fleet.devices.flatMap(d=>d.position?[point(d.position)]:[]);if(pts.length)map.fitBounds(pts,{padding:[70,70],maxZoom:15})};
@@ -369,8 +375,16 @@ function fleetMap(host:HTMLElement){
   function update(){
     const list=fleet.devices;
     host.querySelector('[data-fm-count]')!.innerHTML=`<i></i>${t('{n} live',{n:list.filter(d=>d.online).length})} · ${t('{n} vehicles',{n:list.length})}`;
-    layer.clearLayers();
-    for(const d of list)if(d.position)L.marker(point(d.position),{icon:fleetIcon(d,d.id===picked,d.id===picked||list.length<=3),title:d.name,zIndexOffset:d.id===picked?1000:overspeeding(d)?500:0}).addTo(layer).on('click',e=>{L.DomEvent.stopPropagation(e);pick(d.id)});
+    // Markers stay in place between refreshes and slide to the new point, so the fleet does not flicker.
+    const live=new Set<string>();
+    for(const d of list){
+      if(!d.position)continue;live.add(d.id);
+      const html=fleetIconKey(d,d.id===picked,d.id===picked||list.length<=3),z=d.id===picked?1000:overspeeding(d)?500:0;
+      let m=markers.get(d.id);
+      if(!m){m=L.marker(point(d.position),{icon:fleetIcon(d,d.id===picked,d.id===picked||list.length<=3),title:d.name,zIndexOffset:z}).addTo(layer).on('click',e=>{L.DomEvent.stopPropagation(e);pick(d.id)});markers.set(d.id,m);iconKeys.set(d.id,html);glide(m,point(d.position),d.position.recordedAt)}
+      else{glide(m,point(d.position),d.position.recordedAt);m.setZIndexOffset(z);if(iconKeys.get(d.id)!==html){m.setIcon(fleetIcon(d,d.id===picked,d.id===picked||list.length<=3));iconKeys.set(d.id,html)}}
+    }
+    for(const [id,m] of markers)if(!live.has(id)){layer.removeLayer(m);markers.delete(id);iconKeys.delete(id)}
     saved.clearLayers();
     for(const f of fleet.fences)L.circle(point(f),{radius:f.radius,color:'#1463ff',weight:2,fillOpacity:.06}).bindTooltip(`${placeIcon(f.kind)} ${esc(f.name)}`,{permanent:true,direction:'center',className:'fence-label'}).addTo(saved);
     if(!fitted&&list.some(d=>d.position)){fitted=true;requestAnimationFrame(fit)}
@@ -400,7 +414,7 @@ function renderVehicle(){
   $('#view').innerHTML=`<div class="we-vpage">
     <section class="we-vmap"><div class="cx-map" id="vmap"></div><div class="gwrap" id="vgoogle" hidden></div>
       <div class="we-vcard" id="vcard"></div>
-      <div class="cx-fabs we-vfabs"><button class="cx-fab ${googleView?'on':''}" id="vgtoggle" title="${t('Google view with nearby places')}" aria-label="${t('Google view with nearby places')}">${i('layers')}</button><button class="cx-fab ${following?'on':''}" id="vfollow" title="${t('Follow selected vehicle')}" aria-label="${t('Follow selected vehicle')}">${i('locate-fixed')}</button></div>
+      <div class="cx-fabs we-vfabs"><button class="cx-fab ${vehicleGoogle?'on':''}" id="vgtoggle" title="${t('Google view with nearby places')}" aria-label="${t('Google view with nearby places')}">${i('layers')}</button><button class="cx-fab ${following?'on':''}" id="vfollow" title="${t('Follow selected vehicle')}" aria-label="${t('Follow selected vehicle')}">${i('locate-fixed')}</button></div>
       <div class="we-pills"><button id="vplay">${i('play')}${t('Play route')}</button><button id="vshare">${i('share-2')}${t('Share')}</button>${d0.position?`<a href="${mapsLink(d0.position)}" target="_blank" rel="noopener">${i('navigation')}${t('Navigate')}</a>`:''}</div>
     </section>
     <section class="we-sheet" id="vsheet"></section></div>`;
@@ -413,7 +427,7 @@ function renderVehicle(){
   teardown=()=>{resize.disconnect();gl.destroy();map.remove()};
   on('#vplay',()=>{historyVehicle=vehicleId;playOnOpen=true;go('history',vehicleId)});
   on('#vshare',()=>shareVehicle(vehicle(vehicleId)!));
-  on('#vgtoggle',b=>{setGoogle(!googleView);b.classList.toggle('on',googleView);drawMap();if(!googleView)map.invalidateSize()});
+  on('#vgtoggle',b=>{setVehicleGoogle(!vehicleGoogle);b.classList.toggle('on',vehicleGoogle);drawMap();if(!vehicleGoogle)map.invalidateSize()});
   on('#vfollow',b=>{following=!following;b.classList.toggle('on',following);const p=vehicle(vehicleId)?.position;if(following&&p)map.panTo(point(p))});
   const drawMap=()=>{
     const d=vehicle(vehicleId);if(!d)return;
@@ -423,11 +437,11 @@ function renderVehicle(){
       const {text}=placeText(p,d.id),speed=d.fresh&&statusOf(d)==='running'?Math.round(p.speed):0;
       const tip=`<span class="we-tip-speed ${speed?'run':''}">${speed}</span><span>${esc(text||placeFallback(p))}</span>`;
       if(!marker){marker=L.marker(point(p),{icon:fleetIcon(d,true,false),zIndexOffset:1000}).addTo(map);marker.bindTooltip(tip,{permanent:true,direction:'top',offset:[0,-24],className:'we-tip'})}
-      else{marker.setLatLng(point(p));marker.setIcon(fleetIcon(d,true,false));marker.setTooltipContent(tip)}
+      else{glide(marker,point(p),p.recordedAt);marker.setIcon(fleetIcon(d,true,false));marker.setTooltipContent(tip)}
       if(following&&!map.getBounds().pad(-0.25).contains(point(p)))map.panTo(point(p));
     }
-    $('#vgoogle').hidden=!googleView;el.style.visibility=googleView?'hidden':'';
-    if(googleView)gl.update([d],d.id,tr);
+    $('#vgoogle').hidden=!vehicleGoogle;el.style.visibility=vehicleGoogle?'hidden':'';
+    if(vehicleGoogle)gl.update([d],d.id,tr);
   };
   const drawCard=()=>{
     const d=vehicle(vehicleId);if(!d)return;
@@ -466,7 +480,7 @@ function renderVehicle(){
     on('[data-efence]',el=>editFence(el.dataset.efence!),sh);
     on('#vsave',()=>addFence({latitude:p!.latitude,longitude:p!.longitude,radius:150}),sh);
     on('#vhistory',()=>{historyVehicle=d.id;go('history',d.id)},sh);
-    on('#vnearby',()=>{setGoogle(!googleView);$('#vgtoggle').classList.toggle('on',googleView);drawMap();window.scrollTo({top:0,behavior:'smooth'})},sh);
+    on('#vnearby',()=>{setVehicleGoogle(!vehicleGoogle);$('#vgtoggle').classList.toggle('on',vehicleGoogle);drawMap();window.scrollTo({top:0,behavior:'smooth'})},sh);
     on('#vplaces',()=>go('geofences'),sh);
     on('#vreports',()=>go('reports'),sh);
     on('#vshare2',()=>shareVehicle(d),sh);

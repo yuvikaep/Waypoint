@@ -35,7 +35,7 @@ export function googleLive(host:HTMLElement,{onSelect,zoom=17,covered=()=>0}:{on
     const back=frames[1-front],ask=c,zoomAsked=z;lastLoad=Date.now();loading=true;
     back.onload=()=>setTimeout(()=>{
       if(back.src!==googleLiveUrl(ask,zoomAsked))return;   // a newer request replaced this one
-      back.classList.add('on');frames[front].classList.remove('on');front=1-front;center=ask;shown=zoomAsked;loading=false;draw();
+      host.classList.add('gl-snap');back.classList.add('on');frames[front].classList.remove('on');front=1-front;center=ask;shown=zoomAsked;loading=false;draw();requestAnimationFrame(()=>requestAnimationFrame(()=>host.classList.remove('gl-snap')));
     },600);
     back.src=googleLiveUrl(ask,zoomAsked);
     if(!center){frames[front].src=back.src;center=ask;shown=zoomAsked}

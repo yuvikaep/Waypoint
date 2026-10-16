@@ -10,7 +10,8 @@ export const point=(p:Point):L.LatLngTuple=>[p.latitude,p.longitude];
 
 export function createMap(el:HTMLElement,center:L.LatLngTuple=[22.5,79],zoom=5){
   const map=L.map(el,{zoomControl:false,attributionControl:true}).setView(center,zoom);
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',maxZoom:19}).addTo(map);
+  const raster=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',maxZoom:19}).addTo(map);
+  void cleanStyle(map,raster);
   L.control.zoom({position:'bottomright'}).addTo(map);
   // Petrol pumps, dhabas, temples and other landmarks with their names, once zoomed in.
   landmarkLayer(map);
@@ -18,6 +19,61 @@ export function createMap(el:HTMLElement,center:L.LatLngTuple=[22.5,79],zoom=5){
   const depth=()=>{const z=map.getZoom(),c=map.getContainer().classList;c.toggle('z-wide',z<10);c.toggle('z-far',z<12);c.toggle('z-mid',z<16)};
   map.on('zoomend',depth);depth();
   return map;
+}
+
+// The clean, Google-like OpenFreeMap style (free, no key, no limits). The plain OSM tiles show
+// first; the vector style replaces them once MapLibre has loaded, and stays off without WebGL.
+const STYLE='https://tiles.openfreemap.org/styles/liberty';
+let styleBroken=false;
+function webgl(){try{const c=document.createElement('canvas');return !!(c.getContext('webgl2')||c.getContext('webgl'))}catch{return false}}
+async function cleanStyle(map:L.Map,raster:L.TileLayer){
+  if(styleBroken||!webgl())return;
+  try{
+    const [{default:maplibregl}]=await Promise.all([import('maplibre-gl'),import('maplibre-gl/dist/maplibre-gl.css')]);
+    (globalThis as unknown as {maplibregl:unknown}).maplibregl=maplibregl;
+    await import('@maplibre/maplibre-gl-leaflet');
+    if(!(map as unknown as {_loaded?:boolean})._loaded&&!map.getContainer().isConnected)return;
+    const gl=(L as unknown as {maplibreGL:(o:object)=>L.Layer&{getMaplibreMap():import('maplibre-gl').Map}}).maplibreGL({style:STYLE,attribution:'<a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'});
+    gl.addTo(map);
+    const m=gl.getMaplibreMap();
+    const fail=()=>{styleBroken=true;if(map.hasLayer(gl))map.removeLayer(gl);if(!map.hasLayer(raster))raster.addTo(map)};
+    const timer=setTimeout(fail,12000);
+    m.once('error',()=>{if(!m.isStyleLoaded()){clearTimeout(timer);fail()}});
+    m.once('load',()=>{
+      clearTimeout(timer);
+      // Indian place names are often only in Devanagari; prefer the English / Latin name.
+      for(const layer of m.getStyle().layers||[])if(layer.type==='symbol'&&m.getLayoutProperty(layer.id,'text-field')!=null)
+        try{m.setLayoutProperty(layer.id,'text-field',['coalesce',['get','name:en'],['get','name:latin'],['get','name']])}catch{/* keep the style's own label */}
+      map.removeLayer(raster);
+    });
+  }catch{styleBroken=true}
+}
+
+// Smooth truck movement: slide a marker to its new point over about two seconds instead of jumping.
+// Big steps (late or backlog fixes), old fixes and a hidden page snap straight to the point.
+type Glide={frame:number;at:number};
+const glides=new WeakMap<L.Marker,Glide>();
+export function glide(marker:L.Marker,to:L.LatLngTuple,recordedAt:number,{ms=1800,onStep}:{ms?:number;onStep?:(p:L.LatLng)=>void}={}){
+  const last=glides.get(marker),from=marker.getLatLng(),target=L.latLng(to);
+  if(last&&recordedAt<last.at)return;
+  if(last)cancelAnimationFrame(last.frame);
+  const far=from.distanceTo(target)>2000||(last&&recordedAt-last.at>120000)||document.hidden||!last;
+  if(far||from.equals(target)){marker.setLatLng(target);onStep?.(target);glides.set(marker,{frame:0,at:recordedAt});return}
+  const start=performance.now();
+  const step=(now:number)=>{
+    const k=Math.min(1,(now-start)/ms),e=1-(1-k)**3;
+    const p=L.latLng(from.lat+(target.lat-from.lat)*e,from.lng+(target.lng-from.lng)*e);
+    marker.setLatLng(p);onStep?.(p);
+    if(k<1)glides.set(marker,{frame:requestAnimationFrame(step),at:recordedAt});
+  };
+  glides.set(marker,{frame:requestAnimationFrame(step),at:recordedAt});
+}
+// Heading that turns the short way round (350° → 10° turns 20°, not 340°), for CSS transitions.
+const headings=new Map<string,number>();
+export function smoothHeading(id:string,deg:number){
+  const prev=headings.get(id);let next=deg;
+  if(prev!=null){next=prev+((((deg-prev)%360)+540)%360-180)}
+  headings.set(id,next);return next;
 }
 
 // Top-down truck, cab at the top so rotating by GPS course points it the way it is driving.
@@ -31,7 +87,7 @@ const TRUCK_GLYPH='<svg class="mk-svg" viewBox="0 0 24 24" fill="none" stroke="c
 export function markerHtml(v:Vehicle,selected:boolean,labels:boolean){
   const s=statusOf(v),p=v.position,over=s==='running'&&!!p&&p.speed>v.speedLimit;
   const bubble=!labels?'':s==='running'&&p?`<span class="mk-bubble ${over?'over':'running'}">${over?'⚠ ':'● '}${Math.round(p.speed)} km/h</span>`:(s==='stopped'||s==='idle')&&v.stoppedSince?`<span class="mk-bubble ${s}">${esc(t(s==='idle'?'Idle':'Engine off'))} · ${esc(since(v.stoppedSince))}</span>`:'';
-  const arrow=s==='running'&&p?.heading!=null?`<span class="mk-arrow" style="transform:rotate(${p.heading}deg)"></span>`:'';
+  const arrow=s==='running'&&p?.heading!=null?`<span class="mk-arrow" style="transform:rotate(${smoothHeading(v.id,p.heading)}deg)"></span>`:'';
   return `<div class="mk ${s} ${selected?'on':''} ${over?'over':''}">${bubble}<span class="mk-dot">${arrow}${TRUCK_GLYPH}</span>${labels?`<span class="mk-plate">${esc(v.name)}</span>`:''}</div>`;
 }
 export const fleetIcon=(v:Vehicle,selected:boolean,labels:boolean)=>L.divIcon({className:'gps-marker',html:markerHtml(v,selected,labels),iconSize:[40,40],iconAnchor:[20,20]});
