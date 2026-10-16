@@ -725,3 +725,6 @@
 .leaflet-control-zoom{border:0!important;box-shadow:0 2px 10px rgba(15,23,42,.18)!important;border-radius:14px!important;overflow:hidden}
 .leaflet-control-zoom a{width:40px!important;height:40px!important;line-height:40px!important;color:#1f2937!important;font-size:20px!important}
 .leaflet-gl-layer{z-index:0}
+
+.we-stale{display:flex;align-items:flex-start;gap:8px;margin:2px 0 6px;padding:8px 10px;border-radius:10px;background:#fff4e5;color:#92400e;font-size:13px;line-height:1.35}
+.we-stale svg.lucide{width:16px;height:16px;flex:none;margin-top:1px}

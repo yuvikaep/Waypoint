@@ -245,6 +245,7 @@ function vehicleCard(d:Vehicle){
     <button class="we-kebab" data-menu="${d.id}" aria-label="${t('More options')}">${i('ellipsis-vertical')}</button>
     <div class="we-addr"><p>${mine?`<button class="we-mine" data-efence="${mineFence(p!)?.id}">${esc(mine)} ${i('pencil')}</button><br>`:''}${placeSpan(p,d.id)}</p>${p?`<button class="we-link" data-save="${d.id}">${t('Save location')}</button>`:''}</div>
     ${line?`<p class="we-line">${esc(line)}</p>`:''}
+    ${!d.isMobile&&p&&d.online&&Date.now()-p.recordedAt>10*60000?`<p class="we-stale">${i('satellite')} ${t('Last GPS fix {t}. The tracker has no satellite signal, so this place may be a little off.',{t:ago(p.recordedAt)})}</p>`:''}
     <div class="we-acts">
       ${d.driverPhone?`<a href="tel:${esc(d.driverPhone)}"><span class="we-act-ico">${i('phone')}</span>${t('Call driver')}</a>`:`<button data-phone="${d.id}"><span class="we-act-ico">${i('phone')}</span>${t('Call driver')}</button>`}
       <button data-signal="${d.id}"><span class="we-act-ico">${bars(d.signal)}</span>${signalLabel(d)}</button>
