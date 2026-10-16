@@ -343,6 +343,15 @@ export class PostgresTrackingStore {
   async powerRows(id,since){return (await this.db.prepare("SELECT receivedAt,battery,extra FROM positions WHERE deviceId=? AND receivedAt>=? AND extra LIKE '%\"charge\"%' ORDER BY receivedAt,id").all(id,since));}
   async latestIccid(id){const row=(await this.db.prepare("SELECT extra FROM positions WHERE deviceId=? AND extra LIKE '%iccid%' ORDER BY receivedAt DESC,id DESC LIMIT 1").get(id));try{return row?JSON.parse(row.extra).iccid||null:null}catch{return null}}
   async deviceAlerts(id,limit=20){return (await this.db.prepare('SELECT * FROM alerts WHERE deviceId=? ORDER BY createdAt DESC LIMIT ?').all(id,limit));}
+  async setting(key){return (await this.db.prepare('SELECT value FROM app_settings WHERE key=?').get(key))?.value??null;}
+  async setSettingOnce(key,value){(await this.db.prepare('INSERT INTO app_settings(key,value) VALUES (?,?) ON CONFLICT(key) DO NOTHING').run(key,value));}
+  async savePushSub(tenantId,sub){(await this.db.prepare('INSERT INTO push_subs(endpoint,tenantId,p256dh,auth,lang,categories,createdAt) VALUES (?,?,?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET tenantId=excluded.tenantId,p256dh=excluded.p256dh,auth=excluded.auth,lang=excluded.lang,categories=excluded.categories').run(sub.endpoint,tenantId,sub.p256dh,sub.auth,sub.lang,sub.categories,this.now()));return {ok:true};}
+  async deletePushSub(endpoint,tenantId){tenantId?(await this.db.prepare('DELETE FROM push_subs WHERE endpoint=? AND tenantId=?').run(endpoint,tenantId)):(await this.db.prepare('DELETE FROM push_subs WHERE endpoint=?').run(endpoint));}
+  async pushSubs(tenantId){return (await this.db.prepare('SELECT * FROM push_subs WHERE tenantId=?').all(tenantId));}
+  async claimUnpushed(limit=50){
+    (await this.db.prepare('UPDATE alerts SET pushed=1 WHERE pushed=0 AND createdAt<?').run(this.now()-1800000));
+    return (await this.db.prepare('UPDATE alerts SET pushed=1 FROM devices WHERE devices.id=alerts.deviceId AND alerts.id IN (SELECT id FROM alerts WHERE pushed=0 ORDER BY createdAt LIMIT ?) RETURNING alerts.*,devices.name AS deviceName,devices.tenantId AS tenantId').all(limit));
+  }
   async alerts(tenantId){return tenantId?(await this.db.prepare('SELECT alerts.*,devices.name AS deviceName FROM alerts JOIN devices ON devices.id=alerts.deviceId WHERE devices.tenantId=? ORDER BY alerts.createdAt DESC LIMIT 200').all(tenantId)):(await this.db.prepare('SELECT alerts.*,devices.name AS deviceName FROM alerts JOIN devices ON devices.id=alerts.deviceId ORDER BY alerts.createdAt DESC LIMIT 200').all());}
   async acknowledge(id,tenantId){const result=tenantId?(await this.db.prepare('UPDATE alerts SET acknowledged=1 WHERE id=? AND deviceId IN (SELECT id FROM devices WHERE tenantId=?)').run(id,tenantId)):(await this.db.prepare('UPDATE alerts SET acknowledged=1 WHERE id=?').run(id));if(!result.changes)fail(404,'Alert not found.');}
   async fences(tenantId){return tenantId?(await this.db.prepare('SELECT * FROM fences WHERE tenantId=? ORDER BY name').all(tenantId)):(await this.db.prepare('SELECT * FROM fences ORDER BY name').all());}

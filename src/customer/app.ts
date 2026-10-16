@@ -7,7 +7,7 @@ import {googleLive} from '../shared/gview';
 import {t,getLang,setLang,locale,LANGS,type Lang} from '../shared/i18n';
 import {DEMO_MODE,workspaceStorage} from '../demo';
 import {showLogin} from '../auth';
-import {CATEGORIES,alertText,alertWords,announceNew,askBrowserPermission,browserState,browserSupported,categoryOf,mergeNotify,primeSeen,speakAlert,unlockVoice,voiceSupported,type Category,type NotifyPrefs} from './notify';
+import {CATEGORIES,alertText,alertWords,announceNew,browserState,categoryOf,enablePush,disablePush,pushActive,syncPush,pushSupported,isIOS,isInstalled,mergeNotify,primeSeen,speakAlert,unlockVoice,voiceSupported,type Category,type NotifyPrefs} from './notify';
 import './customer.css';
 
 // Layout follows the familiar Indian fleet-app pattern: a vehicle list home with a diesel strip,
@@ -274,10 +274,25 @@ function driverPhone(d:Vehicle,done?:()=>void){
     try{const r=await post<Vehicle>(`/devices/${d.id}/driver-phone`,{phone:String(new FormData(form).get('phone')||'').trim()},'PUT');d.driverPhone=r.driverPhone;closeModal();toast(r.driverPhone?t('Driver number saved.'):t('Driver number removed.'));done?.();onRefresh?.()}
     catch(x){err.textContent=t((x as Error).message)}};
 }
+// Switches phone push on after a tap and explains what to do when the phone cannot.
+async function turnOnPush(){
+  try{
+    const r=await enablePush(notifyPrefs());
+    if(r==='ok'){toast(t('Phone notifications on.'));return true}
+    toast(r==='install'?t('iPhone: tap Share, then "Add to Home Screen", open Waypoint from there and switch this on.'):r==='denied'?t('Notifications are blocked. Allow them for this site in the phone settings.'):t('This browser cannot show notifications.'),true);
+  }catch(x){toast(t((x as Error).message),true)}
+  return false;
+}
+// After a lock, make sure the alert can reach the phone with the app closed.
+async function offerPush(){
+  if(await pushActive())return;
+  modal(t('Get the alert with the app closed'),`<p class="hint">${t('Right now alerts only show while Waypoint is open on screen. Switch on phone notifications so a lock alert reaches you even when the phone is locked.')}</p>${isIOS()&&!isInstalled()?`<p class="cx-note">${t('iPhone: tap Share, then "Add to Home Screen", open Waypoint from there and switch this on.')}</p>`:''}<button class="btn btn-primary" id="push-on">${i('bell-ring')} ${t('Switch on phone notifications')}</button>`);
+  on('#push-on',async()=>{if(await turnOnPush())closeModal()});icons();
+}
 // Parking lock: alert (pop-up, voice twice, notification) if a parked vehicle starts or moves.
 function parkLock(d:Vehicle,done?:()=>void){
   const set=async(on:boolean)=>{
-    try{const r=await post<Vehicle>(`/devices/${d.id}/park`,{on},'PUT');Object.assign(d,{parkLock:r.parkLock,parkAlerted:r.parkAlerted});unlockVoice();closeModal();toast(on?t('Parking lock on for {n}.',{n:d.name}):t('Parking lock off for {n}.',{n:d.name}));done?.();onRefresh?.()}
+    try{const r=await post<Vehicle>(`/devices/${d.id}/park`,{on},'PUT');Object.assign(d,{parkLock:r.parkLock,parkAlerted:r.parkAlerted});unlockVoice();closeModal();toast(on?t('Parking lock on for {n}.',{n:d.name}):t('Parking lock off for {n}.',{n:d.name}));done?.();onRefresh?.();if(on)void offerPush()}
     catch(x){toast(t((x as Error).message),true)}};
   if(d.parkLock){modal(`${d.name} · ${t('Parking lock')}`,`${d.parkAlerted?`<p class="cx-note sos">${t('This vehicle started or moved while it was locked. Check the alerts.')}</p>`:''}<p class="hint">${t('The vehicle is locked. Unlock it before the driver starts the trip.')}</p><button class="btn btn-primary" id="punlock">${i('lock-open')} ${t('Unlock')}</button>`);on('#punlock',()=>void set(false));icons();return}
   modal(`${d.name} · ${t('Parking lock')}`,`<p class="hint">${t('Lock a parked vehicle. If the engine starts or the vehicle moves more than 100 m, you get a loud alert at once.')}</p><p class="hint">${t('This only alerts you. It does not switch the engine off.')}</p><button class="btn btn-primary" id="plock">${i('lock')} ${t('Lock vehicle')}</button>`);on('#plock',()=>void set(true));icons();
@@ -482,11 +497,15 @@ function renderAlerts(){
     const days=new globalThis.Map<string,Alert[]>();for(const a of list){const k=new Date(a.createdAt).toLocaleDateString(locale(),{day:'numeric',month:'short',year:'numeric'});if(!days.has(k))days.set(k,[]);days.get(k)!.push(a)}
     const tone=(type:string)=>type==='sos'||type==='speed'||type==='offline'||type==='harsh_brake'||type==='parking_lock'?'sos':type==='ignition_on'||type==='online'||type==='share_resumed'?'good':'neutral';
     $('#view').innerHTML=`<div class="we-page">${topBar(t('Notifications'),`<button class="we-toplink" data-go="settings">${i('settings')}${t('Settings')}</button>`)}
+      <div id="push-banner"></div>
       <div class="we-chips">${['all',...cats.map(c=>c.key)].map(k=>`<button data-cat="${k}" class="${alertsCat===k?'on':''}">${k==='all'?t('All'):esc(t(CATEGORIES.find(c=>c.key===k)!.label))}</button>`).join('')}${unseen?`<button class="we-chip-action" id="ack-all">${i('check-check')}${t('Mark all seen')}</button>`:''}</div>
       ${list.length?[...days].map(([day,items])=>`<h3 class="we-date">${esc(day)}</h3>${items.map(a=>{const c=CATEGORIES.find(x=>x.key===categoryOf(a.type))!,w=alertWords(a);return `<button class="we-note ${a.acknowledged?'':'new'}" data-alert="${a.id}"><span class="we-note-ico ${tone(a.type)}">${i(a.type==='ignition_on'||a.type==='ignition_off'?'power':c.icon)}</span><span class="we-note-body"><span class="we-note-head"><em>${esc(t(c.label))}</em><time>${clock(a.createdAt)}</time></span><b>${esc(w.title)}</b><span>${esc(a.deviceName)} · ${esc(alertText(a))}</span></span></button>`}).join('')}`).join(''):`<div class="cx-empty">${i('bell')}<h3>${t('All clear')}</h3><p>${t('SOS, engine, geofence, overspeed, hard braking and signal alerts appear here.')}</p></div>`}
     </div>`;
     on('[data-back]',back);on('[data-go]',el=>go(el.dataset.go as View),$('#view'));
     on('[data-cat]',el=>{alertsCat=el.dataset.cat as Category|'all';draw()});
+    void pushActive().then(active=>{const b=document.querySelector<HTMLElement>('#push-banner');if(active||!b||DEMO_MODE)return;
+      b.innerHTML=`<button class="we-push-banner" id="push-ask">${i('bell-ring')}<span><b>${t('Alerts reach you only while the app is open.')}</b><small>${t('Switch on phone notifications')}</small></span>${i('chevron-right')}</button>`;icons();
+      on('#push-ask',async()=>{if(await turnOnPush())b.innerHTML=''})});
     // Opening a notification marks it seen and goes where it points: the driver link or the vehicle.
     on('[data-alert]',async el=>{
       const a=fleet.alerts.find(x=>x.id===el.dataset.alert)!;
@@ -844,7 +863,7 @@ function renderSettings(){
     <div class="cx-group">
       ${item('message-square',t('Show a pop-up message'),'',sw('data-n="popup"'))}
       ${item('volume-2',t('Speak alerts aloud'),voiceSupported()?t('Vehicle started, engine off, SOS, overspeed…'):t('Not supported in this browser'),sw('data-n="voice"'))}
-      ${item('bell-ring',t('Browser notifications'),'<span id="browser-note"></span>',sw('data-n="browser"'))}
+      ${item('bell-ring',t('Phone notifications'),'<span id="browser-note"></span>',sw('id="push-sw"'))}
       <button class="cx-item" id="test-voice"><span class="cx-ico">${i('play')}</span><span class="cx-item-text"><b>${t('Test voice')}</b></span>${i('chevron-right')}</button>
     </div>
 
@@ -863,14 +882,15 @@ function renderSettings(){
     <div class="cx-group spaced"><button class="cx-item danger" data-logout><span class="cx-ico">${i('log-out')}</span><span class="cx-item-text"><b>${t('Sign out securely')}</b></span></button></div>
     <p class="cx-foot">${t('App version: {v}',{v:APP_VERSION})} · <span class="ok">● ${t('Server online')}</span></p>
   </div>`;
-  const note=()=>{const st=browserState();$('#browser-note').textContent=!browserSupported()?t('This browser cannot show notifications.'):st==='denied'?t('Blocked. Allow them from the lock icon in the address bar.'):st==='granted'?t('Allowed. Shown when this tab is in the background.'):t('Shown when this tab is in the background.')};
-  $$<HTMLInputElement>('[data-n]').forEach(box=>{const k=box.dataset.n as 'popup'|'voice'|'browser';box.checked=np[k];box.addEventListener('change',async()=>{
-    if(k==='browser'&&box.checked){const r=await askBrowserPermission();if(r!=='granted'){box.checked=false;note();toast(t('Browser notifications were not allowed.'),true);return}}
+  const pushBox=$<HTMLInputElement>('#push-sw');
+  const note=async()=>{const on=await pushActive();pushBox.checked=on;$('#browser-note').textContent=on?t('On. Alerts come to this phone even when the app is closed.'):isIOS()&&!isInstalled()?t('iPhone: tap Share, then "Add to Home Screen", open Waypoint from there and switch this on.'):!pushSupported()?t('This browser cannot show notifications.'):browserState()==='denied'?t('Blocked. Allow notifications for this site in the phone settings.'):t('Off. Switch on to get alerts with the app closed.')};
+  pushBox.addEventListener('change',async()=>{if(pushBox.checked)await turnOnPush();else{await disablePush();toast(t('Phone notifications off.'))}void note()});
+  $$<HTMLInputElement>('[data-n]').forEach(box=>{const k=box.dataset.n as 'popup'|'voice';box.checked=np[k];box.addEventListener('change',async()=>{
     if(k==='voice')unlockVoice();
-    np[k]=box.checked;await saveNotify(np);note();toast(t('Saved.'))})});
-  $$<HTMLInputElement>('[data-cat-n]').forEach(box=>{const k=box.dataset.catN as Category;box.checked=np.categories[k];box.addEventListener('change',async()=>{np.categories[k]=box.checked;await saveNotify(np);toast(t('Saved.'))})});
-  on('[data-lang]',el=>{setLang(el.dataset.lang as Lang);render();toast(t('Language changed.'))});
-  on('#test-voice',()=>{unlockVoice();speakAlert('Vehicle {n} started',{n:fleet.devices[0]?.name||'MH 12 AB 1234'})});note();
+    np[k]=box.checked;await saveNotify(np);toast(t('Saved.'))})});
+  $$<HTMLInputElement>('[data-cat-n]').forEach(box=>{const k=box.dataset.catN as Category;box.checked=np.categories[k];box.addEventListener('change',async()=>{np.categories[k]=box.checked;await saveNotify(np);void syncPush(np);toast(t('Saved.'))})});
+  on('[data-lang]',el=>{setLang(el.dataset.lang as Lang);void syncPush(notifyPrefs());render();toast(t('Language changed.'))});
+  on('#test-voice',()=>{unlockVoice();speakAlert('Vehicle {n} started',{n:fleet.devices[0]?.name||'MH 12 AB 1234'})});void note();
   on('#edit-speed',()=>speedSettings(undefined,renderSettings));
   on('#edit-profile',editProfile);
   on('#change-password',changePassword);

@@ -12,6 +12,7 @@ import { suggestedStops } from './stops.mjs';
 import { dieselPrices } from './fuel.mjs';
 import { commandAllowed } from './command-channel.mjs';
 import { signalBars } from './extra.mjs';
+import { cleanSubscription, deliverPushes, vapidKeys } from './push.mjs';
 import { powerTimeline } from './extra.mjs';
 import { apnFor, bootstrapSms, buildPlan, cleanIntervals, OPERATORS } from './provision.mjs';
 
@@ -59,6 +60,8 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
     await sessions.set(key,value);
   };
   const relay=new RelayService(store,bridge,{enabled:relayEnabled});
+  // Phone push never delays or breaks the request that created the alert.
+  const push=async()=>{try{await deliverPushes(store,{origin:publicOrigin})}catch(e){console.warn('Push delivery failed:',e.message)}};
   const limited=async(key,max,ms=60000)=>{
     if(rateLimit)return await rateLimit(key,max,ms);
     const now=Date.now(); let slot=limits.get(key);
@@ -147,13 +150,13 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
         if ((path==='/api/gps/sender/position'||path==='/api/gps/sender/heartbeat') && method==='POST') {
           const payload=await body(req);
           if(session && payload.deviceId!==device.id)fail(409,'This browser is connected to a different vehicle. Reopen your driver link.');
-          if(path.endsWith('/position'))return json(res,200,await store.ingest(device.id,payload));
-          await store.seen(device.id);return json(res,200,{ok:true,commands:await store.commands(device.id)});
+          if(path.endsWith('/position')){const result=await store.ingest(device.id,payload);await push();return json(res,200,result);}
+          await store.seen(device.id);const commands=await store.commands(device.id);await push();return json(res,200,{ok:true,commands});
         }
         if (path==='/api/gps/sender/stopped' && method==='POST') {
           const payload=await body(req);
           if(session && payload.deviceId!==device.id)fail(409,'This browser is connected to a different vehicle. Reopen your driver link.');
-          await store.sharingStopped(device.id,typeof payload.reason==='string'?payload.reason:'stopped');return json(res,200,{ok:true});
+          await store.sharingStopped(device.id,typeof payload.reason==='string'?payload.reason:'stopped');await push();return json(res,200,{ok:true});
         }
         if (path==='/api/gps/sender/commands' && method==='GET') return json(res,200,{commands:await store.commands(device.id)});
         fail(404,'Sender endpoint not found.');
@@ -208,8 +211,12 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
           return json(res,200,result);
         }
       }
+      // Phones subscribe for push alerts of their own fleet.
+      if(path==='/api/gps/push'&&method==='GET')return json(res,200,{key:(await vapidKeys(store)).publicKey});
+      if(path==='/api/gps/push'&&method==='POST'){await limited(`push:${session.tenantId}`,30);return json(res,200,await store.savePushSub(session.tenantId,cleanSubscription(await body(req))));}
+      if(path==='/api/gps/push'&&method==='DELETE'){const input=await body(req);await store.deletePushSub(String(input.endpoint||''),session.tenantId);return json(res,200,{ok:true});}
       if (path==='/api/gps/state' && method==='GET') {
-        await store.tick();const devices=await store.devices(session.tenantId);
+        await store.tick();await push();const devices=await store.devices(session.tenantId);
         if(session.role==='customer')return json(res,200,{devices:devices.map(customerDevice),fences:await store.fences(session.tenantId),alerts:await store.alerts(session.tenantId),serverTime:Date.now()});
         return json(res,200,{devices,fences:await store.fences(session.tenantId),alerts:await store.alerts(session.tenantId),gateway:bridge.state,serverTime:Date.now()});
       }
@@ -390,7 +397,7 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
       if(working)return;
       working=true;
       try{
-        await store.tick();await bridge.sync();
+        await store.tick();await bridge.sync();await push();
         if(sessions instanceof Map)for(const [key,session] of sessions)if(session?.expiresAt<=Date.now())await sessions.delete(key);
         for(const [key,slot] of limits)if(slot.reset<=Date.now())limits.delete(key);
       }catch(e){console.error('Tracking background task failed:',e.message);}

@@ -59,6 +59,9 @@ export class TrackingStore {
       if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name===column))this.db.exec(`ALTER TABLE devices ADD COLUMN ${column} TEXT`);
     for(const [column,type] of [['driverPhone','TEXT'],['rssi','INTEGER'],['parkLock','INTEGER NOT NULL DEFAULT 0'],['parkLat','REAL'],['parkLon','REAL'],['parkAt','INTEGER'],['parkAlerted','INTEGER NOT NULL DEFAULT 0']])
       if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name===column))this.db.exec(`ALTER TABLE devices ADD COLUMN ${column} ${type}`);
+    // Alerts already stored when phone push arrived count as sent, so phones never get old history.
+    if(!this.db.prepare('PRAGMA table_info(alerts)').all().some(c=>c.name==='pushed')){this.db.exec('ALTER TABLE alerts ADD COLUMN pushed INTEGER NOT NULL DEFAULT 0');this.db.exec('UPDATE alerts SET pushed=1');}
+    this.db.exec('CREATE TABLE IF NOT EXISTS push_subs (endpoint TEXT PRIMARY KEY,tenantId TEXT NOT NULL,p256dh TEXT NOT NULL,auth TEXT NOT NULL,lang TEXT NOT NULL,categories TEXT NOT NULL,createdAt INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE INDEX IF NOT EXISTS alerts_unpushed ON alerts(createdAt) WHERE pushed=0;');
     if(!this.db.prepare('PRAGMA table_info(fences)').all().some(c=>c.name==='kind'))this.db.exec("ALTER TABLE fences ADD COLUMN kind TEXT NOT NULL DEFAULT 'other'");
     this.db.exec('CREATE TABLE IF NOT EXISTS gps_requests (id TEXT PRIMARY KEY,tenantId TEXT NOT NULL,name TEXT NOT NULL,phone TEXT NOT NULL,vehicles INTEGER NOT NULL,product TEXT NOT NULL,note TEXT,status TEXT NOT NULL,createdAt INTEGER NOT NULL)');
     this.db.exec('CREATE TABLE IF NOT EXISTS landmark_tiles (key TEXT PRIMARY KEY,value TEXT NOT NULL,fetchedAt INTEGER NOT NULL)');
@@ -381,6 +384,18 @@ export class TrackingStore {
   powerRows(id,since){return this.db.prepare("SELECT receivedAt,battery,extra FROM positions WHERE deviceId=? AND receivedAt>=? AND extra LIKE '%\"charge\"%' ORDER BY receivedAt,id").all(id,since);}
   latestIccid(id){const row=this.db.prepare("SELECT extra FROM positions WHERE deviceId=? AND extra LIKE '%iccid%' ORDER BY receivedAt DESC,id DESC LIMIT 1").get(id);try{return row?JSON.parse(row.extra).iccid||null:null}catch{return null}}
   deviceAlerts(id,limit=20){return this.db.prepare('SELECT * FROM alerts WHERE deviceId=? ORDER BY createdAt DESC LIMIT ?').all(id,limit);}
+  setting(key){return this.db.prepare('SELECT value FROM app_settings WHERE key=?').get(key)?.value??null;}
+  setSettingOnce(key,value){this.db.prepare('INSERT OR IGNORE INTO app_settings(key,value) VALUES (?,?)').run(key,value);}
+  savePushSub(tenantId,sub){this.db.prepare('INSERT INTO push_subs(endpoint,tenantId,p256dh,auth,lang,categories,createdAt) VALUES (?,?,?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET tenantId=excluded.tenantId,p256dh=excluded.p256dh,auth=excluded.auth,lang=excluded.lang,categories=excluded.categories').run(sub.endpoint,tenantId,sub.p256dh,sub.auth,sub.lang,sub.categories,this.now());return {ok:true};}
+  deletePushSub(endpoint,tenantId){tenantId?this.db.prepare('DELETE FROM push_subs WHERE endpoint=? AND tenantId=?').run(endpoint,tenantId):this.db.prepare('DELETE FROM push_subs WHERE endpoint=?').run(endpoint);}
+  pushSubs(tenantId){return this.db.prepare('SELECT * FROM push_subs WHERE tenantId=?').all(tenantId);}
+  // Takes the alerts of the last half hour that no phone has been sent yet, and marks them sent.
+  claimUnpushed(limit=50){
+    this.db.prepare('UPDATE alerts SET pushed=1 WHERE pushed=0 AND createdAt<?').run(this.now()-1800000);
+    const rows=this.db.prepare('SELECT alerts.*,devices.name AS deviceName,devices.tenantId AS tenantId FROM alerts JOIN devices ON devices.id=alerts.deviceId WHERE alerts.pushed=0 ORDER BY alerts.createdAt LIMIT ?').all(limit);
+    for(const r of rows)this.db.prepare('UPDATE alerts SET pushed=1 WHERE id=?').run(r.id);
+    return rows;
+  }
   alerts(tenantId){return tenantId?this.db.prepare('SELECT alerts.*,devices.name AS deviceName FROM alerts JOIN devices ON devices.id=alerts.deviceId WHERE devices.tenantId=? ORDER BY alerts.createdAt DESC LIMIT 200').all(tenantId):this.db.prepare('SELECT alerts.*,devices.name AS deviceName FROM alerts JOIN devices ON devices.id=alerts.deviceId ORDER BY alerts.createdAt DESC LIMIT 200').all();}
   acknowledge(id,tenantId){const result=tenantId?this.db.prepare('UPDATE alerts SET acknowledged=1 WHERE id=? AND deviceId IN (SELECT id FROM devices WHERE tenantId=?)').run(id,tenantId):this.db.prepare('UPDATE alerts SET acknowledged=1 WHERE id=?').run(id);if(!result.changes)fail(404,'Alert not found.');}
   fences(tenantId){return tenantId?this.db.prepare('SELECT * FROM fences WHERE tenantId=? ORDER BY name').all(tenantId):this.db.prepare('SELECT * FROM fences ORDER BY name').all();}

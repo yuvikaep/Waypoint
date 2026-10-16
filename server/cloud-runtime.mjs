@@ -1,3 +1,4 @@
+import { deliverPushes } from './push.mjs';
 import pg from 'pg';
 import { randomBytes, scryptSync } from 'node:crypto';
 import { PostgresTrackingStore } from './postgres-store.mjs';
@@ -101,6 +102,8 @@ export async function gatewayRequest(req,res,store,client,bridge){
       try{const fresh=await store.raw(incoming.id);if(fresh.model!=='Mobile')await provisionTick(store,bridge,fresh)}
       catch(e){console.error('Provisioning step failed:',e.message)}
     }
+    // Alerts from these positions (and silent trackers) reach phones even when no app is open.
+    try{await store.tick();await deliverPushes(store,{origin:`https://${req.headers.host}`});}catch(e){console.warn('Push delivery failed:',e.message);}
     await client.query('INSERT INTO gateway_state(id,connected,lastSync,error) VALUES (1,$1,$2,$3) ON CONFLICT(id) DO UPDATE SET connected=excluded.connected,lastSync=excluded.lastSync,error=excluded.error',[data.connected,Date.now(),typeof data.error==='string'?data.error.slice(0,300):null]);
     res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end('{"ok":true}');return true;
   }

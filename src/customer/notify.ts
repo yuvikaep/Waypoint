@@ -1,4 +1,5 @@
-import {toast,type Alert} from '../shared/core';
+import {toast,api,post,type Alert} from '../shared/core';
+import {DEMO_MODE} from '../demo';
 import {t,tIn,getLang,type Lang} from '../shared/i18n';
 
 // Alert categories shown separately in the Alerts page and switchable in Settings.
@@ -100,6 +101,40 @@ export const browserSupported=()=>'Notification' in window;
 export const browserState=():'unsupported'|'granted'|'denied'|'default'=>browserSupported()?Notification.permission:'unsupported';
 export async function askBrowserPermission(){return browserSupported()?Notification.requestPermission():'denied'}
 
+// Phone notifications that arrive with the app closed (Web Push through the browser's own service).
+// iPhone allows this only once Waypoint is added to the Home Screen.
+let pushOn=false;
+export const pushSupported=()=>'serviceWorker' in navigator&&'PushManager' in window&&'Notification' in window;
+export const isIOS=()=>/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+export const isInstalled=()=>matchMedia('(display-mode: standalone)').matches||(navigator as unknown as {standalone?:boolean}).standalone===true;
+const b64=(s:string)=>{const p='='.repeat((4-s.length%4)%4),raw=atob((s+p).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from(raw,c=>c.charCodeAt(0))};
+async function registration(){return navigator.serviceWorker.register('/sw.js')}
+export async function pushActive(){
+  if(!pushSupported()||DEMO_MODE)return false;
+  try{const r=await navigator.serviceWorker.getRegistration('/');pushOn=!!(await r?.pushManager.getSubscription())&&Notification.permission==='granted';return pushOn}catch{return false}
+}
+const enabledCats=(prefs:NotifyPrefs)=>(Object.keys(prefs.categories) as Category[]).filter(k=>prefs.categories[k]);
+// Asks permission (must follow a tap), subscribes this phone and tells the server what it wants.
+export async function enablePush(prefs:NotifyPrefs):Promise<'ok'|'denied'|'unsupported'|'install'>{
+  if(DEMO_MODE)return 'ok';
+  if(!pushSupported())return isIOS()&&!isInstalled()?'install':'unsupported';
+  if(await Notification.requestPermission()!=='granted')return 'denied';
+  const reg=await registration();await navigator.serviceWorker.ready;
+  const {key}=await api<{key:string}>('/push');
+  const sub=await reg.pushManager.getSubscription()||await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64(key)});
+  await post('/push',{subscription:sub.toJSON(),lang:getLang(),categories:enabledCats(prefs)});
+  pushOn=true;return 'ok';
+}
+// Keeps language and alert types on the server in step with Settings.
+export async function syncPush(prefs:NotifyPrefs){
+  if(!await pushActive())return;
+  try{const reg=await navigator.serviceWorker.getRegistration('/'),sub=await reg!.pushManager.getSubscription();if(sub)await post('/push',{subscription:sub.toJSON(),lang:getLang(),categories:enabledCats(prefs)})}catch{/* next change retries */}
+}
+export async function disablePush(){
+  try{const reg=await navigator.serviceWorker.getRegistration('/'),sub=await reg?.pushManager.getSubscription();if(sub){await post('/push',{endpoint:sub.endpoint},'DELETE');await sub.unsubscribe()}}catch{/* already gone */}
+  pushOn=false;
+}
+
 // Announces alerts that arrived after the app opened and are switched on in Settings.
 const seen=new Set<string>();let primed=false;
 export function primeSeen(alerts:Alert[]){for(const a of alerts)seen.add(a.id);primed=true}
@@ -114,7 +149,8 @@ export function announceNew(alerts:Alert[],prefs:NotifyPrefs){
     // An SOS is said twice so it is not missed.
     if(prefs.voice)say({hi:words(a,'hi').text,hg:words(a,'hg').text,en:words(a,'en').text},sos);
     // SOS also notifies while the app is in front, and stays until it is dismissed.
-    if(prefs.browser&&browserState()==='granted'&&(document.hidden||sos)){
+    // With phone push on, the service worker already shows it; a second copy would only repeat it.
+    if(!pushOn&&prefs.browser&&browserState()==='granted'&&(document.hidden||sos)){
       try{new Notification(title,{body:text,tag:a.id,icon:'/favicon.ico',requireInteraction:sos})}catch{/* some mobile browsers need a service worker */}
     }
   }
