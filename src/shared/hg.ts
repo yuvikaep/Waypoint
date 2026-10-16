@@ -387,4 +387,7 @@ export const HG:Record<string,string>={
   "west":"paschim",
   "north-west":"uttar-paschim",
   "Unnamed road":"Bina naam ki sadak",
+  "Near {p}":"{p} ke paas",
+  "Finding place name…":"Jagah ka naam dhoondh rahe hain…",
+  "Place name not available yet":"Jagah ka naam abhi nahi mila",
 };

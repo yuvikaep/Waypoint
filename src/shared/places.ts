@@ -1,4 +1,4 @@
-import {coords} from './core';
+
 import {t} from './i18n';
 
 // Place names come from OpenStreetMap: Nominatim gives the road; Photon (komoot) is the fallback
@@ -79,7 +79,7 @@ async function fromPhoton(lat:number,lon:number):Promise<Place|null>{
 export function place(p:Point):Promise<Place|null>{
   const key=placeKey(p);
   if(places.has(key))return Promise.resolve(places.get(key)!);
-  if(Date.now()-(placeFailedAt.get(key)||0)<10*60000)return Promise.resolve(null);
+  if(Date.now()-(placeFailedAt.get(key)||0)<3*60000)return Promise.resolve(null);
   if(!placeWaiters.has(key))placeWaiters.set(key,(async()=>{
     try{
       let value:Place|null=null;
@@ -92,8 +92,15 @@ export function place(p:Point):Promise<Place|null>{
   return placeWaiters.get(key)!;
 }
 export const shortPlace=(label:string)=>label.split(', ').slice(0,2).join(', ');
+// Never show raw coordinates as a place: while the name loads (or if the lookup failed) use the
+// nearest place already known within 500 m, else a short note. The name replaces it when it arrives.
+export function placeFallback(p:Point){
+  let best:{label:string;m:number}|null=null;
+  for(const [k,v] of places){const [la,lo]=k.split(',').map(Number),dLat=(la-p.latitude)*111320,dLon=(lo-p.longitude)*111320*Math.cos(p.latitude*Math.PI/180),m=Math.hypot(dLat,dLon);if(m<=500&&(!best||m<best.m))best={label:v.label,m}}
+  return best?(best.m<30?best.label:t('Near {p}',{p:shortPlace(best.label)})):t('Finding place name…');
+}
 // Fill every on-screen label waiting for this place; keep the previous text if the lookup failed.
-function fillPlaceLabels(key:string){const found=places.get(key);if(found)document.querySelectorAll<HTMLElement>(`[data-place="${key}"]`).forEach(el=>el.textContent=el.dataset.short?shortPlace(found.label):found.label)}
+function fillPlaceLabels(key:string){const found=places.get(key);document.querySelectorAll<HTMLElement>(`[data-place="${key}"]`).forEach(el=>{if(found)el.textContent=el.dataset.short?shortPlace(found.label):found.label;else if(el.textContent===t('Finding place name…'))el.textContent=t('Place name not available yet')})}
 
 // Text for a place label right now, starting a lookup when needed. Each vehicle is looked up at most
 // every 30 s so moving trucks don't flood the shared geocoder; the last known name is shown meanwhile.
@@ -108,6 +115,6 @@ export function placeText(p:Point,owner:string,lookup=true){
 export function placeSpan(p:Point|null,owner:string,{short=false,lookup=true}={}){
   if(!p)return `<span>${t('No location yet')}</span>`;
   const {key,text}=placeText(p,owner,lookup);
-  const shown=text?(short?shortPlace(text):text):coords(p);
+  const shown=text?(short?shortPlace(text):text):placeFallback(p);
   return `<span data-place="${key}"${short?' data-short="1"':''}>${shown.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]!))}</span>`;
 }

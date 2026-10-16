@@ -387,4 +387,7 @@ export const HI:Record<string,string>={
   "west":"पश्चिम",
   "north-west":"उत्तर-पश्चिम",
   "Unnamed road":"बिना नाम की सड़क",
+  "Near {p}":"{p} के पास",
+  "Finding place name…":"जगह का नाम ढूँढ रहे हैं…",
+  "Place name not available yet":"जगह का नाम अभी नहीं मिला",
 };

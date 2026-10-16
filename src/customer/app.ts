@@ -1,6 +1,6 @@
 import {$,$$,api,post,clock,closeModal,coords,esc,hm,i,icons,localInput,mapsLink,modal,on,since,statusLabel,statusOf,time,ago,toast,whenUnauthorized,type Alert,type Fence,type Fix,type Identity,type StatusKey,type Vehicle} from '../shared/core';
 import {bearing,createMap,drawRoute,fleetIcon,playbackIcon,point,L} from '../shared/map';
-import {placeSpan,placeText,places,placeKey} from '../shared/places';
+import {placeSpan,placeText,places,placeKey,placeFallback} from '../shared/places';
 import {nearest,nearText,nearSaved,placeIcon,PLACE_KIND} from '../shared/poi';
 import {googleModal} from '../shared/google';
 import {googleLive} from '../shared/gview';
@@ -421,7 +421,7 @@ function renderVehicle(){
     trailLine.setLatLngs(tr.map(point));
     if(p){
       const {text}=placeText(p,d.id),speed=d.fresh&&statusOf(d)==='running'?Math.round(p.speed):0;
-      const tip=`<span class="we-tip-speed ${speed?'run':''}">${speed}</span><span>${esc(text||coords(p))}</span>`;
+      const tip=`<span class="we-tip-speed ${speed?'run':''}">${speed}</span><span>${esc(text||placeFallback(p))}</span>`;
       if(!marker){marker=L.marker(point(p),{icon:fleetIcon(d,true,false),zIndexOffset:1000}).addTo(map);marker.bindTooltip(tip,{permanent:true,direction:'top',offset:[0,-24],className:'we-tip'})}
       else{marker.setLatLng(point(p));marker.setIcon(fleetIcon(d,true,false));marker.setTooltipContent(tip)}
       if(following&&!map.getBounds().pad(-0.25).contains(point(p)))map.panTo(point(p));

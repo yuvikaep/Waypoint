@@ -2,7 +2,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {coords,esc,since,statusOf,type Fix,type Vehicle} from './core';
 import {t} from './i18n';
-import {placeText,shortPlace} from './places';
+import {placeText,shortPlace,placeFallback} from './places';
 import {landmarkLayer} from './poi';
 
 export type Point={latitude:number;longitude:number};
@@ -53,7 +53,7 @@ export function truckTag(v:Vehicle,withPlace=true){
   if(!withPlace){tag.append(name);return tag}
   const where=document.createElement('small');
   const {key,text}=placeText(v.position!,v.id);
-  where.dataset.place=key;where.dataset.short='1';where.textContent=text?shortPlace(text):coords(v.position!);
+  where.dataset.place=key;where.dataset.short='1';where.textContent=text?shortPlace(text):placeFallback(v.position!);
   tag.append(name,where);return tag;
 }
 
