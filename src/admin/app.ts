@@ -3,6 +3,8 @@ import {createMap,point,truckIcon,L} from '../shared/map';
 import {placeSpan} from '../shared/places';
 import {googleLive} from '../shared/gview';
 import {setLang} from '../shared/i18n';
+import '../customer/customer.css';
+import './admin.css';
 import {showLogin} from '../auth';
 
 type View='overview'|'devices'|'device'|'customers'|'admins'|'settings'|'more';
@@ -33,16 +35,25 @@ export async function startAdmin(identity:Identity){
   shell();
 }
 function go(next:View,id=''){const url=new URL(location.href);url.searchParams.set('view',next);if(id)url.searchParams.set('id',id);else url.searchParams.delete('id');history.pushState(null,'',url);view=next;detailId=id;shell()}
+const SIDE:[string,[View,string,string][]][]=[['Overview',[['overview','Overview','layout-dashboard']]],['Fleet',[['devices','GPS devices','radio-tower'],['customers','Customers','users']]],['Team',[['admins','Admins','shield-check']]],['Account',[['settings','Settings','settings']]]];
+const TITLE:Record<View,string>={overview:'Overview',devices:'GPS devices',device:'Device details',customers:'Customers',admins:'Admins',settings:'Settings',more:'More'};
+// Same design system as the customer app (navy actions, lavender surfaces), in English.
 function shell(){
   clearTimeout(poll);detailMap?.map.remove();detailMap=undefined;clearInterval(terminalTimer);terminalOpen=false;
-  $('#app').innerHTML=`<div class="app admin">
-    <aside class="sidebar">${brand()}<div class="who"><strong>Admin console</strong><small>${esc(me.email||'Maintenance key session')}</small></div>
-      <nav class="nav">${NAV.map(([v,l,ic])=>`<button data-go="${v}" class="${view===v||(v==='devices'&&view==='device')?'on':''}">${i(ic)}${l}</button>`).join('')}</nav>
-      <div class="foot"><button class="btn btn-ghost btn-block" data-logout>${i('log-out')}Sign out</button></div></aside>
-    <div class="main"><header class="mobile-head">${brand()}<span class="chip plain" style="background:#ffffff22;color:#fff">Admin</span></header>
-      <header class="topbar"><div class="title"><h1>${view==='device'?'Device details':(NAV.find(([v])=>v===view)||['','More'])[1]}</h1><small>Waypoint administration</small></div><div class="toolbar">${view==='devices'?`<button class="btn btn-primary" id="add-device">${i('plus')}Add GPS device</button>`:view==='customers'?`<button class="btn btn-primary" id="add-customer">${i('plus')}Add customer</button>`:''}</div></header>
-      <div id="view"><div class="page"><p class="muted">Loading…</p></div></div></div>
-    <nav class="tabbar">${TABS.map(([v,l,ic])=>`<button data-go="${v}" class="${view===v||(v==='devices'&&view==='device')||(v==='more'&&['admins','settings','more'].includes(view))?'on':''}">${i(ic)}${l}</button>`).join('')}</nav></div>`;
+  const action=view==='devices'?`<button class="cx-btn dark" id="add-device">${i('plus')}<span>Add GPS device</span></button>`:view==='customers'?`<button class="cx-btn dark" id="add-customer">${i('plus')}<span>Add customer</span></button>`:'';
+  const active=view==='device'?'devices':['admins','settings','more'].includes(view)?'more':view;
+  $('#app').innerHTML=`<div class="cx ax" data-view="${view}">
+    <aside class="cx-side">
+      <a class="cx-brand" href="/?live=1"><span class="cx-mark">${i('navigation')}</span><span><b>Waypoint</b><small>Admin console</small></span></a>
+      <nav>${SIDE.map(([g,items])=>`<div class="cx-side-group"><span>${g}</span>${items.map(([v,l,ic])=>`<button data-go="${v}" class="${view===v||(v==='devices'&&view==='device')?'on':''}">${i(ic)}<em>${l}</em></button>`).join('')}</div>`).join('')}</nav>
+      <button class="cx-me" data-go="settings"><span class="cx-avatar">${esc((me.email||'A').charAt(0).toUpperCase())}</span><span><b>Administrator</b><small>${esc(me.email||'Maintenance key session')}</small></span>${i('chevron-right')}</button>
+    </aside>
+    <main class="cx-main">
+      <header class="ax-head">${view==='device'?`<button class="cx-back" data-go="devices" aria-label="Back to devices">${i('chevron-left')}</button>`:''}<div class="ax-title"><small>Waypoint admin</small><h1>${TITLE[view]}</h1></div>${action}</header>
+      <div id="view"><div class="page"><p class="muted">Loading…</p></div></div>
+    </main>
+    <nav class="cx-tabs">${TABS.map(([v,l,ic])=>`<button data-go="${v}" class="${active===v?'on':''}"><span class="cx-tab-ico">${i(ic==='house'?'layout-dashboard':ic==='ellipsis'?'layout-grid':ic)}</span>${l}</button>`).join('')}</nav>
+  </div>`;
   on('[data-go]',el=>go(el.dataset.go as View));on('[data-logout]',logout);
   on('#add-device',()=>deviceForm());on('#add-customer',customerForm);
   icons();
@@ -57,14 +68,17 @@ async function renderOverview(){
   let o:Overview;try{o=await api<Overview>('/admin/overview');({devices,gateway}=await api<{devices:AdminDevice[];gateway:Gateway}>('/admin/devices'))}catch(e){fail(e);return}
   if(view!=='overview')return;
   const g=o.gateway,problems=devices.filter(d=>['Offline','Waiting','No GPS fix'].includes(d.status)||!d.customerId);
-  const kpi=(label:string,value:number,color='')=>`<div class="card kpi"><span>${label}</span><strong ${color?`style="color:var(--${color})"`:''}>${value}</strong></div>`;
+  const kpi=(label:string,value:number,note:string,icon:string,cls='')=>`<div class="cx-kpi ${cls}"><span class="cx-kpi-label">${label}${i(icon)}</span><b>${value}</b><span class="cx-kpi-note">${note}</span></div>`;
   $('#view').innerHTML=`<div class="page">
-    <div class="grid-kpi">${kpi('Customers',o.customers.total)}${kpi('GPS devices',o.devices.total)}${kpi('Running',o.devices.moving,'running')}${kpi('Stopped',o.devices.stopped,'stopped')}${kpi('Offline',o.devices.offline,'offline')}${kpi('Not installed',o.devices.waiting,'nofix')}${kpi('Unassigned',o.devices.unassigned,'idle')}</div>
-    <div class="card card-pad"><div class="section-title"><h2>Server health</h2><span class="chip ${g.connected?'ok':'bad'}">${g.connected?'GPS receiver connected':g.configured?'GPS receiver not syncing':'Not configured'}</span></div>
+    <div class="ax-health ${g.connected?'ok':'bad'}"><span class="cx-tile ${g.connected?'':'danger'}">${i('server')}</span><div><b>${g.connected?'GPS receiver connected':g.configured?'GPS receiver not syncing':'GPS receiver not configured'}</b><small>Last sync ${ago(g.lastSync)}${g.error?` · ${esc(g.error)}`:''}</small></div><span class="cx-live ${g.connected?'':'off'}"><i></i>${g.connected?'Live':'Check'}</span></div>
+    <div class="ax-kpis">${kpi('Customers',o.customers.total,`${o.customers.enabled} active`,'users')}${kpi('GPS devices',o.devices.total,`${o.devices.unassigned} unassigned`,'radio-tower',o.devices.unassigned?'warn':'')}${kpi('Running',o.devices.moving,'moving now','navigation','run')}${kpi('Stopped',o.devices.stopped,'standing','circle-parking')}${kpi('Offline',o.devices.offline,'no signal','wifi-off',o.devices.offline?'danger':'')}${kpi('Not installed',o.devices.waiting,`${o.devices.noFix} without GPS fix`,'plug')}</div>
+    <div class="cx-quick ax-quick"><button id="q-device"><span class="cx-tile dark">${i('plus')}</span>Add device</button><button id="q-customer"><span class="cx-tile">${i('user-plus')}</span>Add customer</button><button data-go="admins"><span class="cx-tile">${i('shield-check')}</span>Admins</button><button data-go="settings"><span class="cx-tile">${i('key-round')}</span>Password</button></div>
+    <div class="card card-pad"><div class="section-title"><h2>Server details</h2><span class="chip ${g.connected?'ok':'bad'}">${g.connected?'GPS receiver connected':g.configured?'GPS receiver not syncing':'Not configured'}</span></div>
       <dl class="facts"><dt>Last sync</dt><dd>${time(g.lastSync)} (${ago(g.lastSync)})</dd><dt>Tracker server</dt><dd class="mono">${esc(g.trackerHost||'—')}</dd><dt>GT06 / PT06 port</dt><dd class="mono">TCP ${g.gt06Port??5023}${g.gt06AlternativePort?` · alt ${g.gt06AlternativePort}`:''}</dd><dt>Teltonika port</dt><dd class="mono">TCP ${g.teltonikaPort??5027}</dd>${g.error?`<dt>Last error</dt><dd style="color:var(--stopped)">${esc(g.error)}</dd>`:''}<dt>Admins</dt><dd>${o.admins.map(esc).join(', ')||'—'}</dd></dl></div>
     <div class="card"><div class="card-pad section-title" style="margin:0"><h2>Needs attention</h2><button class="btn btn-ghost btn-sm" data-go="devices">All devices${i('chevron-right')}</button></div>
       ${problems.length?`<div class="table-wrap"><table class="table"><thead><tr><th>Vehicle</th><th>Customer</th><th>Status</th><th>Last signal</th><th></th></tr></thead><tbody>${problems.slice(0,12).map(d=>`<tr><td><b>${esc(d.name)}</b><small class="mono">${esc(d.uniqueId)}</small></td><td>${d.customerName?esc(d.customerName):'<span class="chip idle plain">Unassigned</span>'}</td><td>${chip(d)}</td><td>${ago(d.lastSeen)}</td><td><div class="actions"><button class="btn btn-ghost btn-sm" data-detail="${d.id}">${i('eye')}Details</button><button class="btn btn-ghost btn-sm" data-edit="${d.id}">${i('pencil')}Edit</button></div></td></tr>`).join('')}</tbody></table></div>`:`<div class="empty">${i('check')}<h3>Everything looks fine</h3></div>`}</div></div>`;
-  on('#view [data-go]',el=>go(el.dataset.go as View));on('[data-edit]',el=>deviceForm(devices.find(d=>d.id===el.dataset.edit)));on('[data-detail]',el=>go('device',el.dataset.detail));icons();
+  on('#view [data-go]',el=>go(el.dataset.go as View));on('[data-edit]',el=>deviceForm(devices.find(d=>d.id===el.dataset.edit)));on('[data-detail]',el=>go('device',el.dataset.detail));
+  on('#q-device',()=>deviceForm());on('#q-customer',customerForm);icons();
   later(()=>{if(view==='overview')void renderOverview()},15000);
 }
 
@@ -78,7 +92,7 @@ async function renderDevices(){
     <div class="toolbar"><label class="search">${i('search')}<input class="input" id="dq" placeholder="Search vehicle, IMEI, driver or customer" value="${esc(deviceFilter.q)}"></label>
       <select class="input" id="dc" style="max-width:220px"><option value="">All customers</option><option value="none" ${deviceFilter.customer==='none'?'selected':''}>Unassigned</option>${customers.map(c=>`<option value="${c.id}" ${deviceFilter.customer===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}</select>
       <select class="input" id="ds" style="max-width:180px"><option value="">Any status</option>${['Moving','Stopped','Offline','Waiting','No GPS fix'].map(s=>`<option ${deviceFilter.status===s?'selected':''}>${s}</option>`).join('')}</select>
-      <button class="btn btn-primary show-sm" id="add-device-sm">${i('plus')}Add</button></div>
+</div>
     <div class="card"><div class="table-wrap"><table class="table"><thead><tr><th>Vehicle</th><th>Customer</th><th>Tracker</th><th>Status</th><th>Last signal</th><th></th></tr></thead><tbody>
       ${list.map(d=>`<tr><td class="nowrap"><a href="?live=1&view=device&id=${d.id}" data-detail="${d.id}"><b>${esc(d.name)}</b></a><small>${esc(d.driver||'—')}</small></td><td>${d.customerName?esc(d.customerName):'<span class="chip idle plain">Unassigned</span>'}</td><td class="nowrap"><span class="mono">${esc(d.uniqueId)}</span><small>${esc(d.model)} · ${esc(d.model==='Mobile'?'driver link':d.bridgeStatus||'awaiting sync')}</small></td><td>${chip(d)}</td><td class="nowrap" title="Last packet ${esc(time(d.lastSeen))}">${ago(d.lastSeen)}<small>GPS fix ${d.position?ago(d.position.recordedAt):'never'}${d.position?.valid===0?' (no satellites)':''}</small></td>
         <td><div class="actions nowrap"><button class="btn btn-primary btn-sm" data-detail="${d.id}">${i('eye')}Details</button><button class="btn btn-blue btn-sm btn-icon" data-locate="${d.id}" ${d.position?'':'disabled'} title="Current location" aria-label="Location of ${esc(d.name)}">${i('map-pin')}</button><button class="btn btn-ghost btn-sm btn-icon" data-edit="${d.id}" title="Edit / assign customer" aria-label="Edit ${esc(d.name)}">${i('pencil')}</button><button class="btn btn-ghost btn-sm btn-icon" data-info="${d.id}" title="Tracker setup" aria-label="Setup ${esc(d.name)}">${i('info')}</button><button class="btn btn-danger btn-sm btn-icon" data-delete="${d.id}" title="Delete" aria-label="Delete ${esc(d.name)}">${i('trash-2')}</button></div></td></tr>`).join('')||`<tr><td colspan="6"><div class="empty">${i('radio-tower')}<h3>No devices</h3><p>Add a GPS device and assign it to a customer.</p></div></td></tr>`}
@@ -88,7 +102,6 @@ async function renderDevices(){
   $<HTMLSelectElement>('#dc').onchange=e=>{deviceFilter.customer=(e.target as HTMLSelectElement).value;void renderDevices()};
   $<HTMLSelectElement>('#ds').onchange=e=>{deviceFilter.status=(e.target as HTMLSelectElement).value;void renderDevices()};
   const find=(el:HTMLElement,key:string)=>devices.find(d=>d.id===el.dataset[key])!;
-  on('#add-device-sm',()=>deviceForm());
   host.querySelectorAll<HTMLAnchorElement>('a[data-detail]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();go('device',a.dataset.detail)}));
   on('button[data-detail]',el=>go('device',el.dataset.detail),host);
   on('[data-locate]',el=>locate(find(el,'locate')),host);on('[data-edit]',el=>deviceForm(find(el,'edit')),host);on('[data-info]',el=>setupInfo(find(el,'info')),host);
@@ -225,7 +238,7 @@ async function renderDevice(){
   const first=!document.querySelector('#device-page');
   if(first){
     detailMap?.map.remove();detailMap=undefined;
-    $('#view').innerHTML=`<div class="page" id="device-page"><div class="toolbar"><button class="btn btn-ghost btn-sm" data-go="devices">${i('chevron-left')}All devices</button></div><div id="dp-head"></div><div class="grid-kpi" id="dp-kpi"></div>
+    $('#view').innerHTML=`<div class="page" id="device-page"><div id="dp-head"></div><div class="grid-kpi" id="dp-kpi"></div>
       <div style="display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:14px" class="dp-cols"><div class="card"><div style="height:300px;border-radius:16px 16px 0 0;overflow:hidden;position:relative"><div class="map" id="dp-map"></div></div><div class="card-pad" id="dp-place"></div></div><div class="card card-pad" id="dp-today"></div></div>
       <div class="card card-pad" id="dp-health"></div><div class="card card-pad" id="dp-provision"></div><div class="card card-pad" id="dp-commands"></div><div class="card card-pad" id="dp-tracker"></div><div class="card" id="dp-terminal"></div><div class="card" id="dp-packets"></div><div class="card" id="dp-alerts"></div></div>`;
     on('#view [data-go]',el=>go(el.dataset.go as View));
@@ -395,7 +408,8 @@ function renderSettings(){
   on('#view [data-logout]',logout);icons();
 }
 function renderMore(){
-  $('#view').innerHTML=`<div class="page"><div class="card more-list">${[['admins','Admins','shield-check'],['settings','Settings','settings']].map(([v,l,ic])=>`<button data-go="${v}"><span class="ico">${i(ic)}</span>${l}${i('chevron-right')}</button>`).join('')}<button data-logout><span class="ico" style="background:var(--stopped-50);color:var(--stopped)">${i('log-out')}</span>Sign out${i('chevron-right')}</button></div></div>`;
+  $('#view').innerHTML=`<div class="page"><div class="cx-tiles">${[['admins','Admins','shield-check','Create admin users'],['settings','Settings','settings','Password and sign out']].map(([v,l,ic,h])=>`<button data-go="${v}"><span class="cx-tile">${i(ic)}</span><b>${l}</b><small>${h}</small></button>`).join('')}</div>
+    <button class="cx-btn sos-soft" data-logout>${i('log-out')}Sign out</button></div>`;
   on('#view [data-go]',el=>go(el.dataset.go as View));on('#view [data-logout]',logout);icons();
 }
 
