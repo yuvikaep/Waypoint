@@ -1,9 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Baloo+2:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
 
 /* Executive Fleet Telematics theme: deep teal actions, slate text, white cards on a cool canvas,
    muted status accents (emerald moving, amber standing, ruby alerts, slate offline). */
 :root{
-  --blue:#0f172a;--blue-600:#0f172a;--blue-50:#eef0fb;--navy:#0f172a;--navy-700:#1e293b;--ink:#0f172a;
+  --blue:#1463ff;--blue-600:#1463ff;--blue-50:#eaf1ff;--navy:#0f172a;--navy-700:#1e293b;--ink:#0f172a;
   --bg:#f7f8fc;--card:#fff;--line:#e6e9f2;--line-strong:#cbd5e1;--muted:#64748b;--soft:#eef0fb;--yellow:#fffbeb;
   --running:#059669;--running-50:#ecfdf5;--idle:#b45309;--idle-50:#fffbeb;--stopped:#d97706;--stopped-50:#fffbeb;
   --offline:#64748b;--offline-50:#f1f5f9;--nofix:#475569;--nofix-50:#f1f5f9;--sos:#be123c;--sos-50:#fff1f2;--sos-line:#fecdd3;
@@ -11,7 +11,7 @@
   --shadow:0 1px 3px 0 rgba(15,23,42,.04),0 1px 2px -1px rgba(15,23,42,.02);
   --shadow-md:0 4px 6px -1px rgba(15,23,42,.06),0 2px 4px -2px rgba(15,23,42,.04);
   --shadow-lg:0 10px 15px -3px rgba(15,23,42,.08),0 4px 6px -4px rgba(15,23,42,.03);
-  --font:'Plus Jakarta Sans',system-ui,-apple-system,'Segoe UI',sans-serif;--display:'Plus Jakarta Sans',system-ui,sans-serif;--data:'Inter',system-ui,sans-serif;
+  --font:'Baloo 2','Plus Jakarta Sans',system-ui,-apple-system,'Segoe UI',sans-serif;--display:'Baloo 2','Plus Jakarta Sans',system-ui,sans-serif;--data:'Inter',system-ui,sans-serif;
   --tabbar:68px;
 }
 *{box-sizing:border-box}
