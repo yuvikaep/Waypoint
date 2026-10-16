@@ -49,7 +49,12 @@ test('customer sessions scope fleet, commands, fences, alerts, links and relay a
   for(const d of aState.devices){for(const key of ['uniqueId','model','traccarId','bridgeStatus','cursor','command','tenantId','tokenHash'])assert.equal(key in d,false,key);}
   assert.equal(aState.devices.find(d=>d.name==='A phone').isMobile,true);
   assert.equal((await as(aCookie,`/devices/${aDevice.id}/ping`,'POST',{})).status,403);
-  assert.equal((await as(aCookie,`/devices/${aDevice.id}/relay`)).status,403);
+  const relayView=await as(aCookie,`/devices/${aDevice.id}/relay`);assert.equal(relayView.status,200);assert.equal((await relayView.json()).available,false);
+  assert.equal((await as(aCookie,`/devices/${aDevice.id}/relay`,'PUT',{wiring:'starter',adminKey:'x'})).status,403,'only admins record the installation');
+  const lockBody={action:'inhibit',confirmation:'A vehicle',reason:'Owner lock',requestId:'owner-1'};
+  const wrong=await as(aCookie,`/devices/${aDevice.id}/relay`,'POST',{...lockBody,adminKey:'wrong-password'});
+  assert.equal(wrong.status,403,'a wrong password does not sign the owner out');assert.match((await wrong.json()).error,/Incorrect password/);
+  assert.match((await (await as(aCookie,`/devices/${aDevice.id}/relay`,'POST',{...lockBody,adminKey:a.password})).json()).error,/disabled/);
   assert.equal((await as(aCookie,`/devices/${aDevice.id}/token`,'POST',{})).status,403);
   assert.equal((await as(aCookie,'/admin/overview')).status,403);
   assert.equal((await as(aCookie,'/admin/devices')).status,403);

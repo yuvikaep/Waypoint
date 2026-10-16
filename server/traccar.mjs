@@ -95,7 +95,8 @@ export class TraccarBridge {
     if(!remote||remote.uniqueId!==device.uniqueId||remote.status!=='online')return false;
     const positions=(await this.request(`/positions?deviceId=${device.traccarId}`)).data;
     const latest=positions.find(p=>p.deviceId===device.traccarId&&p.id===remote.positionId);
-    if(!latest||latest.protocol!==protocol||!latest.valid)return false;
+    // A parked GT06 reports heartbeats without a fresh fix; parking safety is checked by RelayService.
+    if(!latest||latest.protocol!==protocol)return false;
     await this.ingest(device.id,latest);
     const lastSeen=Date.parse(remote.lastUpdate);
     if(Number.isFinite(lastSeen)&&lastSeen<=this.store.now())await this.store.seen(device.id,lastSeen);

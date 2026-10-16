@@ -336,15 +336,20 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
       const deviceMatch=path.match(/^\/api\/gps\/devices\/([\w-]+)\/(history|ping|token|driver-link|relay)$/);
       if (deviceMatch) {
         const [,id,action]=deviceMatch,device=await ownsDevice(id);
-        if(session.role==='customer'&&!(action==='history'||(action==='driver-link'&&device.model==='Mobile')))fail(403,'Not available for customer accounts.');
-        if(action==='relay'&&method==='GET')return json(res,200,await relay.status(id));
+        if(session.role==='customer'&&!(action==='history'||(action==='driver-link'&&device.model==='Mobile')||(action==='relay'&&method!=='PUT')))fail(403,'Not available for customer accounts.');
+        if(action==='relay'&&method==='GET')return json(res,200,session.role==='customer'?await relay.customerStatus(id):await relay.status(id));
         if(action==='relay'&&(method==='POST'||method==='PUT')){
           await limited(`relay:${id}`,6);
           const input=await body(req);
           if(typeof input.adminKey!=='string')fail(403,'Workspace re-authentication is required for relay changes.');
-          if(session.role==='admin'){if(session.email)await store.adminLogin(session.email,input.adminKey);else if(hash(input.adminKey)!==hash(adminToken))fail(403,'Incorrect workspace key.');}
-          else await store.customerLogin(session.email,input.adminKey);
-          return json(res,200,method==='PUT'?await relay.configure(id,input):await relay.execute(id,input));
+          // A wrong password must not end the session (a 401 signs the app out), so it is a 403 here.
+          try{
+            if(session.role==='admin'){if(session.email)await store.adminLogin(session.email,input.adminKey);else if(hash(input.adminKey)!==hash(adminToken))fail(403,'Incorrect workspace key.');}
+            else await store.customerLogin(session.email,input.adminKey);
+          }catch(e){if(e.status===401)fail(403,'Incorrect password.');throw e;}
+          if(method==='PUT')return json(res,200,await relay.configure(id,input));
+          const done=await relay.execute(id,input,session.role==='customer'?`customer:${session.email}`:session.email?`admin:${session.email}`:'workspace-admin');
+          return json(res,200,session.role==='customer'?{action:done.action,status:done.status,detail:done.status==='sent-unverified'?'':done.detail,createdAt:Number(done.createdAt)}:done);
         }
         if(action==='driver-link' && method==='GET')return json(res,200,await store.getDriverLink(id));
         if(action==='driver-link' && method==='POST'){const input=await body(req);return json(res,201,await store.createDriverLink(id,{regenerate:input.regenerate===true,...(input.hours!==undefined?{hours:input.hours}:{})}));}

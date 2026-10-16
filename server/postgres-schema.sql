@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS customers (id TEXT PRIMARY KEY,name TEXT NOT NULL,ema
 CREATE TABLE IF NOT EXISTS admins (email TEXT PRIMARY KEY,salt TEXT NOT NULL,passwordHash TEXT NOT NULL,createdAt BIGINT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS workspace_data (tenantId TEXT NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,updatedAt BIGINT NOT NULL,PRIMARY KEY(tenantId,key));
 CREATE TABLE IF NOT EXISTS relay_installations (deviceId TEXT PRIMARY KEY REFERENCES devices(id),verifiedAt BIGINT NOT NULL,installer TEXT NOT NULL);
+ALTER TABLE relay_installations ADD COLUMN IF NOT EXISTS wiring TEXT NOT NULL DEFAULT 'starter';
 CREATE TABLE IF NOT EXISTS relay_commands (id TEXT PRIMARY KEY,deviceId TEXT NOT NULL REFERENCES devices(id),action TEXT NOT NULL,reason TEXT NOT NULL,actor TEXT NOT NULL,createdAt BIGINT NOT NULL,status TEXT NOT NULL,detail TEXT NOT NULL,rowid BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE);
 CREATE INDEX IF NOT EXISTS relay_commands_device_time ON relay_commands(deviceId,createdAt,rowid);
 -- Parent lifecycle code owns expiry cleanup and authentication policy.

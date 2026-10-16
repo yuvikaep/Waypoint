@@ -1,48 +1,38 @@
-# Starter Relay Controls
+# Engine Relay (Engine Lock)
 
-Relay controls are implemented but disabled by default. No physical tracker or
-vehicle relay has been tested. Do not enable this on a vehicle until a qualified
-installer has commissioned and verified it in a controlled, parked test.
+Relay control is off until `GPS_RELAY_ENABLED=true` is set on the server, and each vehicle
+also needs a fitting record saved by an admin. Owners can then lock or unlock the engine from
+the customer app (vehicle page → Engine lock, or the ⋮ menu).
 
 ## Scope
 
-- Model profiles: GT06, GT06N, FMB920, FMB125, FMC920, FMC130.
-- Only a starter-inhibit circuit is supported. Do not use fuel-pump or ignition
-  cut-off wiring with this feature. It must not stop an already-running engine.
-- Teltonika uses the gateway's engineStop/engineResume mapping to DOUT1; custom
-  outputs, inverted polarity, and arbitrary SMS commands are not exposed.
-- GT06 clones vary. Gateway protocol settings and command polarity must be
-  verified on the exact unit, not assumed from its label.
-- Mobile GPS cannot control a relay. Other hardware models are not certified
-  merely because Traccar can track their locations.
+- Model profiles: GT06, GT06N, FMB920, FMB125, FMC920, FMC130. Phone tracking cannot drive a relay.
+- Wiring is recorded per vehicle: **starter** (blocks the next start) or **fuel pump / ignition**
+  (cuts the engine). A fuel / ignition relay can stop a running engine, so the server only ever
+  sends a lock to a parked vehicle.
+- GT06 clones vary. Test lock and unlock once on the parked vehicle before saving the record.
 
-## Commissioning
+## Fitting
 
-1. Confirm starter-only wiring, physical ignition sensing, and output polarity
-   against manufacturer documentation with the installer. Do not rely on
-   inferred ignition from movement for commissioning.
-2. Verify the gateway's command mapping and device-side safeguards in a
-   controlled installation test outside this application.
-3. In Devices -> Relay -> Installer verification, record the verification
-   reference and confirm the wiring/polarity. Admin key re-entry is required.
-4. Only after verification, set `GPS_RELAY_ENABLED=true` on the server and
-   restart it. This is a global deployment switch, not a per-driver permission.
-5. Devices -> Relay requires the exact IMEI, an operation reason, and admin key
-   re-entry for each command. No driver-link access is permitted.
+1. Fit the relay on the tracker's relay output (often the yellow wire) and on the chosen line.
+2. Lock and unlock once on the parked vehicle and check the engine really stops / starts.
+3. Admin console → Devices → vehicle → Engine relay → Relay fitting record: choose the wiring,
+   tick the test (and, for fuel / ignition, the parked-only acknowledgement), enter the password.
+4. Set `GPS_RELAY_ENABLED=true` on the server once (global switch).
 
 ## Safety And Delivery
 
-The server requires a heartbeat and GPS fix no older than 30 seconds. Inhibit
-also requires two or more fixes spanning at least 30 seconds in the last minute,
-all with ignition OFF, speed at most 1 km/h, reported accuracy greater than zero
-and at most 50 metres, and positions within 15 metres of the latest fix. Trackers
-without trustworthy accuracy or ignition telemetry remain blocked.
+Every command needs the vehicle number (or IMEI) typed again and the user's password. A lock is
+refused unless all of these hold at the moment it is sent, and again after the gateway lookup:
 
-The connected gateway must identify the expected device IMEI and protocol, show
-it online, and advertise both engineStop and engineResume. Safety is rechecked
-after capability lookup. Commands use Traccar 6.16's `noQueue: true`, with no SMS
-fallback or automatic retry. Do not use an older/unverified gateway version.
-Firmware behavior and network latency are not substitutes for safe wiring.
+- the tracker is online (heard from in the last 5 minutes) and connected to the gateway;
+- the last ignition report is OFF, less than 5 minutes old, and the engine has been off for a minute;
+- no packet in the last 3 minutes reports speed above 1 km/h, and the last GPS fix is stationary;
+- recent fixes with usable accuracy are within 30 m of the last fix.
+
+A parked GT06 that only sends heartbeats can be locked: its heartbeat carries the ignition state.
+Unlock is allowed at any time. Commands use `noQueue: true`: nothing is queued for later, retried
+or sent by SMS.
 
 Requests use idempotency IDs, a per-device lock and a 60-second cooldown. Audit
 history is retained separately from location pings. A successful gateway response

@@ -104,6 +104,13 @@ export async function demoRequest(path:string,options:RequestInit={}):Promise<an
     }else if(action==='speed'){if(body.speedLimit!==undefined)d.speedLimit=Number(body.speedLimit);if(body.speedAlert!==undefined)d.speedAlert=body.speedAlert;result={speedLimit:d.speedLimit,speedAlert:d.speedAlert!==false};
     }else if(action==='park'){if(body.on&&d.status==='Moving')throw new Error('The vehicle is moving. Lock it once it is parked.');d.parkLock=!!body.on;d.parkAlerted=false;result=d;
     }else if(action==='driver-phone'){const ph=String(body.phone||'').replace(/[\s()-]/g,'');if(ph&&!/^\+?\d{10,13}$/.test(ph))throw new Error('Enter a 10 digit mobile number.');d.driverPhone=ph;result=d;
+    }else if(action==='relay'){
+      d.relay??=[];
+      if(method==='POST'){
+        if(String(body.confirmation||'').replace(/[^0-9a-z]/gi,'').toUpperCase()!==d.name.replace(/[^0-9a-z]/gi,'').toUpperCase())throw new Error('Type the vehicle number exactly to confirm.');
+        if(body.action==='inhibit'&&d.status==='Moving')throw new Error('The vehicle is moving. The engine can only be locked once it is parked with the engine off.');
+        d.relay.unshift({action:body.action,status:'sent-unverified',createdAt:now(),detail:''});result=d.relay[0];
+      }else{const last=d.relay[0];result={available:true,wiring:'fuel',locked:last?last.action==='inhibit':null,last:last||null,history:d.relay.slice(0,5)};}
     }else if(action==='driver-link'){result=method==='DELETE'?{ok:true}:{code:`demo:${d.id}`,expiresAt:now()+(Number(body.hours)||168)*3600000};}
     else throw new Error('Not available in the demo.');
   }else if(url.pathname==='/buy'){

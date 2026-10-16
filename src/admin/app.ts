@@ -198,7 +198,7 @@ function setupInfo(d:AdminDevice){
     ?`<p>This vehicle reports from the driver's phone. The customer shares the driver link from their app (vehicle card → Driver link).</p>`
     :`<dl class="facts"><dt>IMEI</dt><dd class="mono">${esc(d.uniqueId)}</dd><dt>Protocol</dt><dd>${protocolOf(d.model)}</dd><dt>Server IP</dt><dd class="mono">${esc(gateway.trackerHost||'—')}</dd><dt>Port</dt><dd class="mono">TCP ${gt06?(gateway.gt06Port??5023):(gateway.teltonikaPort??5027)}${gt06&&gateway.gt06AlternativePort?` (alternative ${gateway.gt06AlternativePort})`:''}</dd><dt>Receiver</dt><dd>${d.traccarId?'Linked':'Waiting for first sync'} · ${esc(d.bridgeStatus||'—')}</dd><dt>Last packet</dt><dd>${time(d.lastSeen)}</dd><dt>Last GPS fix</dt><dd>${d.position?time(d.position.recordedAt):'Never'}</dd></dl>
       ${gt06?`<div class="card card-pad" style="background:var(--soft)"><h3>SMS to the tracker SIM</h3><p class="small muted" style="margin:6px 0 10px">Syntax varies by maker; check the manual.</p><p class="mono">SERVER,1,${esc(gateway.trackerHost||'IP')},${gateway.gt06Port??5023},0#</p><p class="mono">APN,${esc(d.apn||'your-apn')}#${d.apn?'':'  (IoT SIMs: the APN comes from your SIM seller)'}</p><p class="mono">RESET#   then   STATUS#</p><p class="small muted" style="margin-top:8px">STATUS# should show GPRS: Link Up and GPS: FIXED.</p></div>`:''}
-      <button class="btn btn-ghost" id="relay">${i('shield-check')}Starter relay</button>`);
+      <button class="btn btn-ghost" id="relay">${i('shield-check')}Engine relay</button>`);
   on('#relay',()=>relayDialog(d));
 }
 function locate(d:AdminDevice){
@@ -426,23 +426,28 @@ function renderMore(){
   on('#view [data-go]',el=>go(el.dataset.go as View));on('#view [data-logout]',logout);icons();
 }
 
-/* ---------- Starter relay (kept from the earlier console, admin only) ---------- */
-type RelayStatus={enabled:boolean;supported:boolean;error:string|null;installation:{installer:string;verifiedAt:number}|null;history:{action:string;status:string;detail:string;createdAt:number}[]};
+/* ---------- Engine relay: installation record (admin) and lock / unlock ---------- */
+type RelayStatus={enabled:boolean;supported:boolean;error:string|null;installation:{installer:string;verifiedAt:number;wiring?:string}|null;history:{action:string;status:string;detail:string;createdAt:number}[]};
 async function relayDialog(d:AdminDevice){
   const status=await api<RelayStatus>(`/devices/${d.id}/relay`);
   const ready=status.enabled&&status.supported&&!!status.installation;
   const keyLabel=me.email?'Your admin password':'Maintenance key';
-  modal(`${d.name} · Starter relay`,`<p class="error">Starter-inhibit only. Fuel/ignition cut-off is not supported. Physical relay state is not verified.</p>
-    ${!status.enabled?'<p class="muted">Relay commands are disabled on this server.</p>':''}${status.error?`<p class="error">${esc(status.error)}</p>`:''}
-    <dl class="facts"><dt>Gateway support</dt><dd>${status.supported?'Supported':'Not available'}</dd><dt>Installation</dt><dd>${status.installation?`${esc(status.installation.installer)} · ${time(status.installation.verifiedAt)}`:'Not verified'}</dd></dl>
-    <form class="form" id="relay-command"><label class="field">Action<select class="input" name="action"><option value="inhibit">Block next engine start</option><option value="restore">Allow engine start</option></select></label>
-      <label class="field">Type the IMEI to confirm<input class="input mono" name="confirmation" required autocomplete="off" placeholder="${esc(d.uniqueId)}"></label><label class="field">Reason<input class="input" name="reason" required maxlength="300"></label>
+  const wiring=status.installation?.wiring==='fuel'?'Fuel pump / ignition':'Starter';
+  modal(`${d.name} · Engine relay`,`<p class="error">Lock is only sent when the vehicle is parked (online, engine off for a minute, no movement for 3 minutes). Unlock goes any time. The tracker does not confirm the physical relay.</p>
+    ${!status.enabled?'<p class="muted">Relay commands are switched off on this server (GPS_RELAY_ENABLED).</p>':''}${status.error?`<p class="error">${esc(status.error)}</p>`:''}
+    <dl class="facts"><dt>Gateway support</dt><dd>${status.supported?'Supported':'Not available'}</dd><dt>Installation</dt><dd>${status.installation?`${wiring} · ${esc(status.installation.installer)} · ${time(status.installation.verifiedAt)}`:'Not fitted / not tested'}</dd></dl>
+    <form class="form" id="relay-command"><label class="field">Action<select class="input" name="action"><option value="inhibit">Lock engine</option><option value="restore">Unlock engine</option></select></label>
+      <label class="field">Type the IMEI or vehicle number to confirm<input class="input mono" name="confirmation" required autocomplete="off" placeholder="${esc(d.uniqueId)}"></label><label class="field">Reason<input class="input" name="reason" required maxlength="300"></label>
       <label class="field">${keyLabel}<input class="input" name="adminKey" type="password" required autocomplete="off"></label><button class="btn btn-danger" type="submit" ${ready?'':'disabled'}>Send relay command</button><p id="relay-result" class="small"></p></form>
-    <details><summary>Installer verification</summary><form class="form" id="relay-install" style="margin-top:10px"><label class="field">Installer / reference<input class="input" name="installer" required maxlength="200" value="${esc(status.installation?.installer||'')}"></label>
-      <label class="check"><input type="checkbox" name="starterOnly" required>Starter circuit only</label><label class="check"><input type="checkbox" name="polarityVerified" required>Command polarity verified</label>
-      <label class="field">${keyLabel}<input class="input" name="adminKey" type="password" required autocomplete="off"></label><button class="btn btn-ghost" type="submit">Save verification</button><p class="error" id="relay-install-error"></p></form></details>
-    <h3>Recent commands</h3>${status.history.map(c=>`<p class="small"><b>${esc(c.action)} · ${esc(c.status)}</b> · ${time(c.createdAt)}<br>${esc(c.detail)}</p>`).join('')||'<p class="muted small">None.</p>'}`,{wide:true});
+    <details ${status.installation?'':'open'}><summary>Relay fitting record</summary><form class="form" id="relay-install" style="margin-top:10px">
+      <label class="field">Relay wired on<select class="input" name="wiring"><option value="fuel" ${status.installation?.wiring!=='starter'?'selected':''}>Fuel pump / ignition wire (cuts the engine)</option><option value="starter" ${status.installation?.wiring==='starter'?'selected':''}>Starter wire (blocks the next start)</option></select></label>
+      <label class="field">Installer / reference<input class="input" name="installer" required maxlength="200" value="${esc(status.installation?.installer||'')}"></label>
+      <label class="check"><input type="checkbox" name="polarityVerified" required>Tested once on the parked vehicle: lock stops the engine, unlock lets it start</label>
+      <label class="check"><input type="checkbox" name="parkedOnly">I understand a fuel / ignition relay stops a running engine; lock is only for a parked vehicle</label>
+      <label class="field">${keyLabel}<input class="input" name="adminKey" type="password" required autocomplete="off"></label><button class="btn btn-ghost" type="submit">Save fitting record</button>${status.installation?'<button class="btn btn-danger" type="button" id="relay-remove">Remove relay</button>':''}<p class="error" id="relay-install-error"></p></form></details>
+    <h3>Recent commands</h3>${status.history.map(c=>`<p class="small"><b>${esc(c.action==='inhibit'?'Lock':'Unlock')} · ${esc(c.status)}</b> · ${time(c.createdAt)}<br>${esc(c.detail)}</p>`).join('')||'<p class="muted small">None.</p>'}`,{wide:true});
   const requestId=crypto.randomUUID();
   $('#relay-command').addEventListener('submit',async e=>{e.preventDefault();const form=e.target as HTMLFormElement;try{const r=await post<{status:string;detail:string}>(`/devices/${d.id}/relay`,{...Object.fromEntries(new FormData(form)),requestId});$('#relay-result').textContent=`${r.status}: ${r.detail}`}catch(err){$('#relay-result').textContent=(err as Error).message}finally{form.querySelector<HTMLInputElement>('[name=adminKey]')!.value=''}});
-  $('#relay-install').addEventListener('submit',async e=>{e.preventDefault();const form=e.target as HTMLFormElement,f=new FormData(form);try{await api(`/devices/${d.id}/relay`,{method:'PUT',body:JSON.stringify({installer:f.get('installer'),adminKey:f.get('adminKey'),starterOnly:f.has('starterOnly'),polarityVerified:f.has('polarityVerified')})});await relayDialog(d)}catch(err){$('#relay-install-error').textContent=(err as Error).message;form.querySelector<HTMLInputElement>('[name=adminKey]')!.value=''}});
+  document.querySelector('#relay-remove')?.addEventListener('click',async()=>{const form=$<HTMLFormElement>('#relay-install'),key=form.querySelector<HTMLInputElement>('[name=adminKey]')!.value;if(!key){$('#relay-install-error').textContent='Enter your password first.';return}try{await api(`/devices/${d.id}/relay`,{method:'PUT',body:JSON.stringify({enabled:false,adminKey:key})});await relayDialog(d)}catch(err){$('#relay-install-error').textContent=(err as Error).message}});
+  $('#relay-install').addEventListener('submit',async e=>{e.preventDefault();const form=e.target as HTMLFormElement,f=new FormData(form);try{await api(`/devices/${d.id}/relay`,{method:'PUT',body:JSON.stringify({installer:f.get('installer'),adminKey:f.get('adminKey'),wiring:f.get('wiring'),parkedOnly:f.has('parkedOnly'),polarityVerified:f.has('polarityVerified')})});await relayDialog(d)}catch(err){$('#relay-install-error').textContent=(err as Error).message;form.querySelector<HTMLInputElement>('[name=adminKey]')!.value=''}});
 }

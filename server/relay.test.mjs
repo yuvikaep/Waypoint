@@ -24,19 +24,32 @@ test('relay is default-disabled and mobile devices cannot be commissioned',async
   await assert.rejects(disabled.execute(f.device.id,f.input),/disabled/);
   const mobile=f.store.createDevice({name:'Phone',model:'Mobile'}).device;
   await assert.rejects(()=>f.relay.configure(mobile.id,{starterOnly:true,polarityVerified:true,installer:'x'}),/no relay profile/);
-  await assert.rejects(()=>f.relay.configure(f.device.id,{starterOnly:false,polarityVerified:true,installer:'x'}),/Fuel\/ignition/);
+  await assert.rejects(()=>f.relay.configure(f.device.id,{starterOnly:false,polarityVerified:true,installer:'x'}),/Choose where/);
+  await assert.rejects(()=>f.relay.configure(f.device.id,{wiring:'fuel',polarityVerified:true,installer:'x'}),/stops a running engine/);
+  assert.equal((await f.relay.configure(f.device.id,{wiring:'fuel',parkedOnly:true,polarityVerified:true,installer:'x'})).wiring,'fuel');
   assert.equal(f.sends(),0);
 });
-for(const [name,change] of [['moving',{speed:12}],['ignition on',{ignition:true}],['unknown ignition',{ignition:null}],['poor accuracy',{accuracy:100}],['unknown accuracy',{accuracy:0}],['position drift',{latitude:18.6}]]){
-  test(`inhibit rejects ${name}`,async t=>{
+for(const [name,change,why] of [['moving',{speed:12},/moving/],['ignition on',{ignition:true},/engine is on/],['position drift',{latitude:18.6},/moved/]]){
+  test(`lock rejects ${name}`,async t=>{
     const f=await fixture(t);f.fix(0,change);
-    await assert.rejects(f.relay.execute(f.device.id,f.input),/stationary/);
+    await assert.rejects(f.relay.execute(f.device.id,f.input),why);
     assert.equal(f.sends(),0);
   });
 }
-test('stale fixes cannot be made safe by fresh heartbeats',async t=>{
-  const f=await fixture(t);f.advance(31000);f.store.seen(f.device.id);
-  await assert.rejects(f.relay.execute(f.device.id,f.input),/GPS fix/);assert.equal(f.sends(),0);
+test('lock waits a minute after the engine is switched off, and needs a connected tracker',async t=>{
+  const f=await fixture(t);f.fix(-20000,{ignition:true});f.fix(0,{ignition:false});
+  await assert.rejects(f.relay.execute(f.device.id,f.input),/less than a minute/);
+  f.advance(301000);
+  await assert.rejects(f.relay.execute(f.device.id,f.input),/offline/);assert.equal(f.sends(),0);
+  f.store.seen(f.device.id);
+  await assert.rejects(f.relay.execute(f.device.id,f.input),/engine is on \(or its state is not known\)/,'an old ignition report is not trusted');
+  f.fix(0,{valid:false});
+  assert.equal((await f.relay.execute(f.device.id,{...f.input,confirmation:'relay-TEST'})).status,'sent-unverified','a parked GT06 sending only heartbeats can be locked; the plate confirms');
+  assert.equal(f.store.alerts().some(a=>a.type==='relay'),true);
+});
+test('unlock is allowed while moving',async t=>{
+  const f=await fixture(t);f.fix(0,{speed:40,ignition:true});
+  assert.equal((await f.relay.execute(f.device.id,{...f.input,action:'restore'})).status,'sent-unverified');
 });
 test('successful requests are idempotent, rate limited, audited and not marked physically confirmed',async t=>{
   const f=await fixture(t),result=await f.relay.execute(f.device.id,f.input);

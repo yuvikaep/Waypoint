@@ -281,6 +281,39 @@ function parkLock(d:Vehicle,done?:()=>void){
   if(d.parkLock){modal(`${d.name} · ${t('Parking lock')}`,`${d.parkAlerted?`<p class="cx-note sos">${t('This vehicle started or moved while it was locked. Check the alerts.')}</p>`:''}<p class="hint">${t('The vehicle is locked. Unlock it before the driver starts the trip.')}</p><button class="btn btn-primary" id="punlock">${i('lock-open')} ${t('Unlock')}</button>`);on('#punlock',()=>void set(false));icons();return}
   modal(`${d.name} · ${t('Parking lock')}`,`<p class="hint">${t('Lock a parked vehicle. If the engine starts or the vehicle moves more than 100 m, you get a loud alert at once.')}</p><p class="hint">${t('This only alerts you. It does not switch the engine off.')}</p><button class="btn btn-primary" id="plock">${i('lock')} ${t('Lock vehicle')}</button>`);on('#plock',()=>void set(true));icons();
 }
+// Engine lock through the relay fitted in the vehicle. The server only sends a lock to a parked
+// vehicle with the engine off; unlock goes any time. Each command needs the plate and the password.
+type RelayView={available:boolean;wiring:'starter'|'fuel'|null;locked:boolean|null;last:{action:string;createdAt:number}|null;history:{action:string;status:string;createdAt:number;detail:string}[]};
+async function engineLock(d:Vehicle){
+  let r:RelayView;try{r=await api<RelayView>(`/devices/${d.id}/relay`)}catch(x){toast(t((x as Error).message),true);return}
+  const title=`${d.name} · ${t('Engine lock')}`;
+  if(!r.available){
+    modal(title,`<div class="cx-empty">${i('power')}<h3>${t('No relay in this vehicle yet')}</h3><p>${t('A relay has to be fitted in the vehicle and tested by our team first. Ask us to fit one.')}</p></div><button class="btn btn-primary" id="rbuy">${t('Ask for a relay')}</button>`);
+    on('#rbuy',()=>{closeModal();go('buy')});icons();return;
+  }
+  const state=r.locked==null?t('Not used yet'):r.locked?t('Locked'):t('Unlocked');
+  const words=(a:string)=>t(a==='inhibit'?'Lock':'Unlock'),stat=(s:string)=>t(s==='sent-unverified'?'Sent':s==='blocked'?'Not sent':s==='unknown'?'Not sure if delivered':s);
+  modal(title,`<div class="we-relay ${r.locked?'on':''}">${i(r.locked?'lock':'lock-open')}<div><b>${state}</b>${r.last?`<small>${t('Last command: {a}, {t}',{a:words(r.last.action),t:when(r.last.createdAt)})}</small>`:''}</div></div>
+    <p class="hint">${t(r.wiring==='fuel'?'Lock cuts the fuel / ignition, so the engine cannot run. It is sent only when the vehicle is parked with the engine off.':'Lock stops the engine from starting. It is sent only when the vehicle is parked with the engine off.')}</p>
+    <p class="hint">${t('The tracker does not confirm the relay. Ask the driver to check once after a lock or unlock.')}</p>
+    <form class="form" id="rform"><label class="field">${t('Type the vehicle number to confirm')}<input class="input" name="confirmation" required autocomplete="off" placeholder="${esc(d.name)}"></label>
+      <label class="field">${t('Your password')}<input class="input" name="adminKey" type="password" required autocomplete="current-password"></label>
+      <p class="error"></p>
+      <div class="we-relay-btns"><button class="btn btn-danger" type="submit" value="inhibit">${i('lock')} ${t('Lock engine')}</button><button class="btn btn-primary" type="submit" value="restore">${i('lock-open')} ${t('Unlock engine')}</button></div></form>
+    ${r.history.length?`<h3 class="we-h">${t('Recent commands')}</h3><div class="cx-group">${r.history.map(c=>`<div class="cx-item static"><span class="cx-item-text"><b>${words(c.action)} · ${stat(c.status)}</b><small>${when(c.createdAt)}${c.detail?` · ${esc(t(c.detail))}`:''}</small></span></div>`).join('')}</div>`:''}`);
+  icons();
+  const form=$<HTMLFormElement>('#rform'),requestId=crypto.randomUUID();
+  form.onsubmit=async e=>{
+    e.preventDefault();const action=((e as SubmitEvent).submitter as HTMLButtonElement)?.value||'inhibit',f=new FormData(form),err=form.querySelector('.error')!;err.textContent='';
+    form.querySelectorAll('button').forEach(b=>b.disabled=true);
+    try{
+      const res=await post<{status:string;detail:string}>(`/devices/${d.id}/relay`,{action,confirmation:f.get('confirmation'),adminKey:f.get('adminKey'),reason:action==='inhibit'?'Locked by owner from the app':'Unlocked by owner from the app',requestId:`${requestId}:${action}`});
+      if(res.status==='sent-unverified'){closeModal();toast(action==='inhibit'?t('Lock command sent to {n}.',{n:d.name}):t('Unlock command sent to {n}.',{n:d.name}))}
+      else err.textContent=res.status==='unknown'?t('Not sure if the command reached the tracker. Check the vehicle before trying again.'):t(res.detail);
+    }catch(x){err.textContent=t((x as Error).message)}
+    finally{form.querySelector<HTMLInputElement>('[name=adminKey]')!.value='';form.querySelectorAll('button').forEach(b=>b.disabled=false)}
+  };
+}
 // WhatsApp first (most drivers and owners use it), the phone's share sheet otherwise.
 function shareVehicle(d:Vehicle){
   const p=d.position;if(!p){toast(t('No location yet'),true);return}
@@ -291,6 +324,7 @@ function vehicleMenu(d:Vehicle){
   modal(d.name,`<div class="cx-group">
     <button class="cx-item" data-m="open"><span class="cx-ico">${i('map')}</span><span class="cx-item-text"><b>${t('Open on map')}</b></span>${i('chevron-right')}</button>
     <button class="cx-item" data-m="speed"><span class="cx-ico">${i('gauge')}</span><span class="cx-item-text"><b>${t('Overspeed alert')}</b><small>${d.speedAlert===false?t('Off'):t('Speed limit: {n} km/h',{n:d.speedLimit})}</small></span>${i('chevron-right')}</button>
+    ${d.isMobile?'':`<button class="cx-item" data-m="engine"><span class="cx-ico">${i('power')}</span><span class="cx-item-text"><b>${t('Engine lock')}</b><small>${t('Relay in the vehicle')}</small></span>${i('chevron-right')}</button>`}
     <button class="cx-item" data-m="phone"><span class="cx-ico">${i('phone')}</span><span class="cx-item-text"><b>${t('Driver number')}</b><small>${esc(d.driverPhone||t('Not added'))}</small></span>${i('chevron-right')}</button>
     ${d.isMobile?`<button class="cx-item" data-m="driver"><span class="cx-ico">${i('smartphone')}</span><span class="cx-item-text"><b>${t('Driver link')}</b></span>${i('chevron-right')}</button>`:''}
     ${d.position?`<a class="cx-item" href="${mapsLink(d.position)}" target="_blank" rel="noopener"><span class="cx-ico">${i('navigation')}</span><span class="cx-item-text"><b>${t('Navigate')}</b><small>${t('Open in Google Maps')}</small></span>${i('external-link')}</a>`:''}
@@ -300,6 +334,7 @@ function vehicleMenu(d:Vehicle){
   on('[data-m="speed"]',()=>speedSettings(d,()=>onRefresh?.()),dlg);
   on('[data-m="driver"]',()=>driverLink(d),dlg);
   on('[data-m="phone"]',()=>driverPhone(d),dlg);
+  on('[data-m="engine"]',()=>void engineLock(d),dlg);
 }
 
 /* ---------- Map ---------- */
@@ -407,6 +442,9 @@ function renderVehicle(){
         <button data-go="documents"><span class="we-grid-ico y">${i('files')}</span>${t('Documents')}</button>
         ${d.isMobile?`<button id="vdriver"><span class="we-grid-ico b">${i('smartphone')}</span>${t('Driver link')}</button>`:`<button data-go="alerts"><span class="we-grid-ico b">${i('bell')}</span>${t('Alerts')}</button>`}
         <button id="vpark"><span class="we-grid-ico ${d.parkLock?'r':'g'}">${i(d.parkLock?'lock':'lock-open')}</span>${t(d.parkLock?'Locked':'Parking lock')}</button>
+      </div>
+      <div class="we-grid">
+        ${d.isMobile?'':`<button id="vengine"><span class="we-grid-ico r">${i('power')}</span>${t('Engine lock')}</button>`}
       </div>`;
     const sh=$('#vsheet');
     on('#vsave',()=>addFence({latitude:p!.latitude,longitude:p!.longitude,radius:150}),sh);
@@ -419,6 +457,7 @@ function renderVehicle(){
     on('#vinfo',()=>vehicleInfo(d),sh);
     on('#vdriver',()=>driverLink(d),sh);
     on('#vpark',()=>parkLock(d,drawSheet),sh);
+    on('#vengine',()=>void engineLock(d),sh);
     on('[data-go]',b=>go(b.dataset.go as View),sh);
     icons();
   };

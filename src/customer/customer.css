@@ -705,3 +705,8 @@
 .we-status{padding:3px 10px;border-radius:999px;font-size:13px;font-weight:600;background:#fdf3e3;color:#b45309}
 .we-status.contacted{background:var(--c-accent-soft);color:var(--c-accent)}.we-status.done{background:var(--c-run-soft);color:var(--c-run)}
 .cx #view>.documents-workspace{padding:14px 14px 100px;display:flex;flex-direction:column;gap:12px}
+
+.we-relay{display:flex;align-items:center;gap:12px;padding:14px;border-radius:14px;background:var(--c-run-soft);color:#15803d;margin-bottom:10px}
+.we-relay.on{background:var(--c-sos-soft);color:var(--c-sos)}
+.we-relay svg.lucide{width:30px;height:30px}.we-relay b{display:block;font-size:18px}.we-relay small{display:block;color:var(--c-ink-2);font-size:13px}
+.we-relay-btns{display:grid;grid-template-columns:1fr 1fr;gap:10px}

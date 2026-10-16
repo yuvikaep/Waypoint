@@ -38,6 +38,7 @@ function words(a:Alert,l:Lang):Words{
     case 'share_expired':return {title:T('Driver link expired'),text:T('Driver link for vehicle {n} has expired',{n})};
     case 'share_resumed':return {title:T('Driver sharing again'),text:T('Driver location for vehicle {n} is back',{n})};
     case 'parking_lock':return {title:T('Parking lock alert'),text:/engine/.test(m)?T('Locked vehicle {n} engine started',{n}):T('Locked vehicle {n} is moving',{n})};
+    case 'relay':return {title:T('Engine lock'),text:/unlock/i.test(m)?T('Unlock command sent to {n}.',{n}):T('Lock command sent to {n}.',{n})};
     case 'sos':return {title:T('SOS emergency'),text:T('Emergency! SOS from vehicle {n}',{n})};
     case 'harsh_brake':return {title:T('Hard braking'),text:T('Vehicle {n} hard braking',{n})};
     case 'harsh':return {title:T('Harsh driving'),text:`${n}. ${T(m)}`};
@@ -58,6 +59,7 @@ export function alertText(a:Alert){
     case 'speed':return nums.length>=2?t('Speed {s} km/h, limit {l} km/h',{s:nums[0],l:nums[1]}):t(m);
     case 'harsh_brake':return nums.length>=3?t('Hard braking: {a} → {b} km/h in {s} s',{a:nums[0],b:nums[1],s:nums[2]}):t(m);
     case 'parking_lock':return /engine/.test(m)?t('Parking lock: engine started'):nums.length?t('Parking lock: vehicle moved {m} m from where it was parked',{m:nums[0]}):t(m);
+    case 'relay':return /unlock/i.test(m)?t('Engine unlock command sent to the tracker.'):t('Engine lock command sent to the tracker.');
     case 'enter':return t('Entered {p}',{p:m.replace(/^Entered /,'')});
     case 'exit':return t('Left {p}',{p:m.replace(/^Left /,'')});
     case 'share_stopped':return `${/no update for/.test(m)?t("Driver's phone stopped sending location"):t(m)}. ${t('Send the link again or create a new one.')}`;
