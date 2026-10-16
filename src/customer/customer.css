@@ -449,7 +449,12 @@
 .we-search button{color:var(--c-accent)}.we-search button.on{color:var(--c-sos)}
 .we-diesel{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--c-accent-soft)}
 .we-diesel-ico{font-size:20px}
-.we-diesel-row{flex:1;min-width:0;display:flex;gap:8px;overflow-x:auto;scrollbar-width:none}
+.we-diesel-row{flex:1;min-width:0;overflow:hidden;mask-image:linear-gradient(90deg,transparent,#000 3%,#000 97%,transparent)}
+.we-diesel-run{display:flex;gap:8px;width:max-content;animation:we-ticker linear infinite}
+.we-diesel-copy{display:contents}
+.we-diesel-row:hover .we-diesel-run,.we-diesel-row:active .we-diesel-run{animation-play-state:paused}
+@keyframes we-ticker{from{transform:translateX(0)}to{transform:translateX(calc(-50% - 4px))}}
+@media (prefers-reduced-motion:reduce){.we-diesel-row{overflow-x:auto}.we-diesel-run{animation:none}.we-diesel-copy{display:none}}
 .we-diesel-row::-webkit-scrollbar{display:none}
 .we-dchip{display:inline-flex;align-items:center;flex:none;border-radius:6px;overflow:hidden;background:#fff;font-size:14px}
 .we-dchip em{font-style:normal;padding:3px 8px;color:var(--c-ink)}

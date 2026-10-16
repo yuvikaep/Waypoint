@@ -177,7 +177,7 @@ const fuelDay=(f:Fuel)=>f.date?new Date(f.date).toLocaleDateString(locale(),{day
 // The strip under the home header: today's diesel price, the fleet's states first.
 function dieselStrip(){
   if(!fuel?.states.length)return '<div id="diesel" hidden></div>';
-  return `<div class="we-diesel" id="diesel"><span class="we-diesel-ico">⛽</span><div class="we-diesel-row">${sortedFuel().map(s=>`<span class="we-dchip"><em>${esc(s.state)}</em><b>₹${s.price.toFixed(2)}</b>${s.dir?`<i class="${s.dir>0?'up':'down'}">${s.dir>0?'▲':'▼'}</i>`:''}</span>`).join('')}</div><button class="we-diesel-all" data-diesel>${t('View all')}${i('chevron-right')}</button></div>`;
+  return `<div class="we-diesel" id="diesel"><span class="we-diesel-ico">⛽</span><div class="we-diesel-row"><div class="we-diesel-run" style="animation-duration:${Math.max(20,fuel.states.length*3)}s">${(()=>{const chips=sortedFuel().map(s=>`<span class="we-dchip"><em>${esc(s.state)}</em><b>₹${s.price.toFixed(2)}</b>${s.dir?`<i class="${s.dir>0?'up':'down'}">${s.dir>0?'▲':'▼'}</i>`:''}</span>`).join('');return chips+`<span class="we-diesel-copy" aria-hidden="true">${chips}</span>`})()}</div></div><button class="we-diesel-all" data-diesel>${t('View all')}${i('chevron-right')}</button></div>`;
 }
 function bindDiesel(){on('[data-diesel]',showFuel)}
 function showFuel(){
@@ -671,7 +671,7 @@ async function showStops(){
 function addFence(at?:{latitude:number;longitude:number;radius:number}){
   const withPos=fleet.devices.filter(d=>d.position);
   modal(t('Add place'),`<form class="form" id="fence-form"><label class="field">${t('Name')}<input class="input" name="name" required maxlength="100" placeholder="${t('HP petrol pump, Tridev dhaba, Pune depot')}"></label>
-    <label class="field">${t('Type')}<select class="input" name="kind">${Object.entries(PLACE_KIND).map(([k,[ic,l]])=>`<option value="${k}">${ic} ${esc(t(l))}</option>`).join('')}</select></label>
+    <label class="field">${t('Type')}<select class="input" name="kind">${Object.entries(PLACE_KIND).map(([k,[ic,l]])=>`<option value="${k}" ${k==='other'?'selected':''}>${ic} ${esc(t(l))}</option>`).join('')}</select></label>
     ${at?'':`<label class="field">${t('Centre')}<select class="input" id="fence-from"><option value="">${t('Enter coordinates')}</option>${withPos.map(d=>`<option value="${d.id}">${t('Current place of {n}',{n:esc(d.name)})}</option>`).join('')}</select></label>`}
     <div class="form-row"><label class="field">${t('Latitude')}<input class="input" type="number" step="any" min="-90" max="90" name="latitude" required value="${at?at.latitude.toFixed(6):''}"></label><label class="field">${t('Longitude')}<input class="input" type="number" step="any" min="-180" max="180" name="longitude" required value="${at?at.longitude.toFixed(6):''}"></label></div>
     <label class="field">${t('Radius (metres)')}<input class="input" type="number" name="radius" min="50" max="100000" value="${at?.radius??500}" required></label>
