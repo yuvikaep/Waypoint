@@ -31,7 +31,7 @@
 .ax .empty{padding:36px 20px;text-align:center;color:var(--c-muted)}.ax .empty h3{color:var(--c-ink)}
 .ax .grid-kpi{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px}
 .ax .kpi{padding:16px;border-radius:20px}.ax .kpi span{font-size:13px;color:var(--c-ink-2);font-weight:600}
-.ax .kpi strong{font-family:'Inter',sans-serif;font-size:30px;font-weight:800}
+.ax .kpi strong{font-family:'Baloo 2',system-ui,sans-serif;font-size:30px;font-weight:800}
 
 /* Tables */
 .ax .table-wrap{border-radius:20px;overflow:auto}
@@ -41,7 +41,7 @@
 .ax .table tbody tr:hover{background:#fafbfe}
 .ax .table td b{font-weight:700}
 .ax .table td small{color:var(--c-muted);font-size:12.5px}
-.ax .mono{font-family:'Inter',ui-monospace,monospace;font-size:12.5px}
+.ax .mono{font-family:'Baloo 2',ui-monospace,monospace;font-size:12.5px}
 
 /* Chips, buttons, inputs */
 .ax .chip{height:26px;padding:0 10px;border-radius:999px;font-size:12px;font-weight:700}
@@ -75,3 +75,4 @@
   .ax .table td,.ax .table th{padding:12px}
   .ax .health-grid{grid-template-columns:1fr}
 }
+.ax select[data-status]{min-width:130px}

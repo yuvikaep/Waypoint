@@ -13,7 +13,7 @@ import './customer.css';
 // Layout follows the familiar Indian fleet-app pattern: a vehicle list home with a diesel strip,
 // a bottom bar (Map, Reports, Home, Notifications, Menu), a side drawer, a full-map vehicle page
 // with a features sheet, report cards and a route-history timeline.
-type View='home'|'map'|'vehicle'|'history'|'reports'|'report'|'alerts'|'geofences'|'documents'|'ebills'|'settings'|'more';
+type View='buy'|'home'|'map'|'vehicle'|'history'|'reports'|'report'|'alerts'|'geofences'|'documents'|'ebills'|'settings'|'more';
 type Fleet={devices:Vehicle[];fences:Fence[];alerts:Alert[]};
 type Gap={from:number;to:number;minutes:number;movedKm:number|null};
 type DayReport={date:string;distanceKm:number;runningMinutes:number;idleMinutes:number;ignitionMinutes:number;maxSpeed:number;avgSpeed:number;firstMove:number|null;lastMove:number|null;gaps:Gap[]};
@@ -23,17 +23,18 @@ const APP_VERSION='4.0';
 
 // Distance is only what the tracker reported. When it went silent, say so instead of guessing.
 const gapNote=(g:Gap)=>`${t('Tracker sent no data {a} – {b} ({d})',{a:clock(g.from),b:clock(g.to),d:hm(g.minutes)})}${g.movedKm?` · ${t('moved {n} km in this time',{n:g.movedKm})}`:''} · ${t('km in this period is not recorded')}`;
-const TITLES:Record<View,string>={home:'Vehicles',map:'Live map',vehicle:'Vehicle',history:'Route history',reports:'Reports',report:'Report',alerts:'Notifications',geofences:'Saved locations',documents:'Vehicle documents',ebills:'E-way bills',settings:'Settings',more:'Menu'};
+const TITLES:Record<View,string>={buy:'Buy GPS',home:'Vehicles',map:'Live map',vehicle:'Vehicle',history:'Route history',reports:'Reports',report:'Report',alerts:'Notifications',geofences:'Saved locations',documents:'Vehicle documents',ebills:'E-way bills',settings:'Settings',more:'Menu'};
 const TABS:[View|'menu',string,string][]=[['map','Map','map'],['reports','Reports','chart-column'],['home','Home','navigation'],['alerts','Notification','bell'],['menu','Menu','menu']];
 const SIDE:[string,[View,string,string][]][]=[
   ['Fleet',[['home','Vehicles','truck'],['map','Live map','map'],['history','Route history','route']]],
   ['Alerts & reports',[['alerts','Notifications','bell'],['reports','Reports','chart-column']]],
   ['Manage',[['geofences','Saved locations','map-pin'],['documents','Vehicle documents','files'],['ebills','E-way bills','file-text']]],
+  ['Services',[['buy','Buy GPS','shopping-cart']]],
   ['Account',[['settings','Settings','settings']]],
 ];
-const DRAWER:[View,string,string][]=[['history','Route history','route'],['geofences','Saved locations','map-pin'],['documents','Vehicle documents','files'],['ebills','E-way bills','file-text'],['settings','Settings','settings']];
+const DRAWER:[View,string,string][]=[['buy','Buy GPS','shopping-cart'],['history','Route history','route'],['geofences','Saved locations','map-pin'],['documents','Vehicle documents','files'],['ebills','E-way bills','file-text'],['settings','Settings','settings']];
 const ROOT:View[]=['home','map','reports','alerts'];
-const PAGES:View[]=['home','map','vehicle','history','reports','report','alerts','geofences','documents','ebills','settings','more'];
+const PAGES:View[]=['buy','home','map','vehicle','history','reports','report','alerts','geofences','documents','ebills','settings','more'];
 type ReportKind='distance'|'stoppage'|'overspeed'|'itinerary'|'geofence';
 const REPORTS:[ReportKind,string,string,string][]=[
   ['distance','Distance','gauge','Kilometres driven, running and idle time for each day'],
@@ -116,11 +117,11 @@ function render(){
       <nav>${SIDE.map(([g,items])=>`<div class="cx-side-group"><span>${t(g)}</span>${items.map(([v,l,ic])=>`<button data-go="${v}" class="${active===v?'on':''}">${i(ic)}<em>${t(l)}</em>${v==='alerts'?badgeHtml:''}</button>`).join('')}</div>`).join('')}</nav>
       <button class="cx-me" data-go="settings"><span class="cx-avatar">${initial(p.workspace)}</span><span><b>${esc(p.workspace)}</b><small>${esc(me.email||p.name)}</small></span>${i('chevron-right')}</button>
     </aside>
-    <main class="cx-main">${['geofences','documents','ebills','settings'].includes(view)?topBar(t(TITLES[view])):''}<div id="view"></div></main>
+    <main class="cx-main">${['buy','geofences','documents','ebills','settings'].includes(view)?topBar(t(TITLES[view])):''}<div id="view"></div></main>
     <nav class="we-tabs">${TABS.map(([v,l,ic])=>`<button ${v==='menu'?'data-drawer':`data-go="${v}"`} class="${active===v?'on':''} ${v==='home'?'home':''}"><span class="we-tab-ico">${i(ic)}${v==='alerts'?badgeHtml:''}</span>${t(l)}</button>`).join('')}</nav>
     <div class="we-drawer" id="drawer" hidden><div class="we-drawer-panel">
       <div class="we-drawer-head"><span class="cx-avatar lg">${initial(p.workspace)}</span><div><b>${esc(p.name||p.workspace)}</b><small>${esc(me.email||'')}</small><small>${t('App version: {v}',{v:APP_VERSION})}</small></div></div>
-      ${DRAWER.map(([v,l,ic])=>`<button class="we-drawer-item" data-go="${v}">${i(ic)}<span>${t(l)}</span></button>`).join('')}
+      ${DRAWER.map(([v,l,ic])=>`<button class="we-drawer-item" data-go="${v}">${i(ic)}<span>${t(l)}</span>${v==='buy'?`<em class="we-new">${t('New')}</em>`:''}</button>`).join('')}
       <button class="we-drawer-item" data-lang-menu>${i('languages')}<span>${t('Language')}</span><em>${LANGS.find(([k])=>k===getLang())![1]}</em></button>
       <button class="we-drawer-item danger" data-logout>${i('log-out')}<span>${t('Sign out')}</span></button>
     </div></div>
@@ -131,7 +132,7 @@ function render(){
   $('#drawer').addEventListener('click',e=>{if(e.target===$('#drawer'))closeDrawer()});
   on('[data-lang-menu]',()=>{closeDrawer();languageMenu()});
   on('[data-logout]',logout);
-  ({home:renderHome,map:renderMap,vehicle:renderVehicle,history:renderHistory,reports:renderReports,report:renderReport,alerts:renderAlerts,geofences:renderGeofences,documents:()=>renderDocuments('Documents'),ebills:()=>renderDocuments('E-way bills'),settings:renderSettings,more:renderHome} as Record<View,()=>void>)[view]();
+  ({buy:renderBuy,home:renderHome,map:renderMap,vehicle:renderVehicle,history:renderHistory,reports:renderReports,report:renderReport,alerts:renderAlerts,geofences:renderGeofences,documents:()=>renderDocuments('Documents'),ebills:()=>renderDocuments('E-way bills'),settings:renderSettings,more:renderHome} as Record<View,()=>void>)[view]();
   icons();
 }
 const closeDrawer=()=>{const d=document.querySelector<HTMLElement>('#drawer');if(d)d.hidden=true};
@@ -605,6 +606,38 @@ function renderReport(){
     }catch(e){$('#rbody').innerHTML=`<p class="cx-error pad">${esc((e as Error).message)}</p>`}
   };
   void load();
+}
+
+/* ---------- Buy GPS ---------- */
+type GpsRequest={id:string;name:string;phone:string;vehicles:number;product:string;note:string;status:string;createdAt:number};
+const PRODUCTS:[string,string,string,string[]][]=[
+  ['wired','Truck GPS (wired)','truck',['Fitted to the vehicle battery, always on','Ignition on/off, power-cut and SOS alerts','Best for trucks, buses and tractors']],
+  ['portable','Portable GPS (magnetic)','battery',['No wiring, sticks anywhere on the vehicle','Rechargeable battery','Good for trailers, containers and hired vehicles']],
+  ['phone','Driver phone tracking','smartphone',['No device needed — the driver shares location from the phone','Free with your account','Good for short trips and hired drivers']],
+];
+function renderBuy(){
+  const draw=async()=>{
+    let mine:GpsRequest[]=[];try{mine=(await api<{requests:GpsRequest[]}>('/buy')).requests}catch{/* shown empty */}
+    $('#view').innerHTML=`<div class="we-page we-buy">
+      <div class="we-buy-hero"><div><b>${t('Get GPS for your vehicles')}</b><p>${t('Live location, route history, alerts and reports — all in this app.')}</p></div><span class="we-buy-ico">${i('navigation')}</span></div>
+      ${PRODUCTS.map(([k,l,ic,points])=>`<article class="we-buy-card"><div class="we-buy-head"><span class="we-feat-ico">${i(ic)}</span><b>${t(l)}</b>${k==='phone'?`<span class="we-free">${t('Free')}</span>`:''}</div><ul>${points.map(x=>`<li>${i('check')}${t(x)}</li>`).join('')}</ul><button class="cx-btn primary" data-buy="${k}">${t(k==='phone'?'Ask for driver tracking':'Request a call back')}</button></article>`).join('')}
+      <p class="cx-hint we-buy-note">${t('Our team calls you back to share price, installation and delivery. Nothing is charged in the app.')}</p>
+      ${mine.length?`<h3 class="we-h">${t('My requests')}</h3><div class="cx-group">${mine.map(r=>`<div class="cx-item static"><span class="cx-ico">${i(PRODUCTS.find(p=>p[0]===r.product)?.[2]||'navigation')}</span><span class="cx-item-text"><b>${t(PRODUCTS.find(p=>p[0]===r.product)?.[1]||'GPS')} · ${r.vehicles}</b><small>${when(r.createdAt)} · ${esc(r.phone)}</small></span><span class="we-status ${r.status}">${t(r.status==='new'?'Received':r.status==='contacted'?'Contacted':'Completed')}</span></div>`).join('')}</div>`:''}
+    </div>`;
+    on('[data-buy]',el=>buyForm(el.dataset.buy!,draw));icons();
+  };
+  void draw();
+}
+function buyForm(product:string,done:()=>void){
+  const p=prefs();
+  modal(t('Request a call back'),`<form class="form" id="buy-form">
+    <label class="field">${t('GPS type')}<select class="input" name="product">${PRODUCTS.map(([k,l])=>`<option value="${k}" ${k===product?'selected':''}>${t(l)}</option>`).join('')}</select></label>
+    <label class="field">${t('Your name')}<input class="input" name="name" required maxlength="100" value="${esc(p.name)}"></label>
+    <label class="field">${t('Mobile number')}<input class="input" name="phone" required inputmode="tel" maxlength="14" placeholder="98765 43210"></label>
+    <label class="field">${t('Number of vehicles')}<input class="input" name="vehicles" type="number" min="1" max="1000" value="1" required></label>
+    <label class="field">${t('City or note (optional)')}<input class="input" name="note" maxlength="500"></label>
+    <p class="error" id="buy-error"></p><button class="btn btn-primary" type="submit">${t('Send request')}</button></form>`);
+  $('#buy-form').addEventListener('submit',async e=>{e.preventDefault();const v=Object.fromEntries(new FormData(e.target as HTMLFormElement));try{await post('/buy',{...v,vehicles:Number(v.vehicles)});closeModal();toast(t('Request sent. Our team will call you soon.'));done()}catch(err){$('#buy-error').textContent=(err as Error).message}});
 }
 
 /* ---------- Places ---------- */

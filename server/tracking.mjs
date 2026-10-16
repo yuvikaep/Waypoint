@@ -217,6 +217,8 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
         try{return json(res,200,await landmarks(store,url.searchParams.get('tile')))}
         catch(e){if(e.status)throw e;fail(503,'Nearby places are unavailable right now.')}
       }
+      if(path==='/api/gps/buy'&&method==='GET')return json(res,200,{requests:(await store.gpsRequests(session.tenantId)).map(({tenantId,customerName,...r})=>r)});
+      if(path==='/api/gps/buy'&&method==='POST'){await limited(`buy:${session.tenantId}`,5);return json(res,201,await store.addGpsRequest(session.tenantId,await body(req)))}
       if(path==='/api/gps/fuel'&&method==='GET'){await limited(`fuel:${session.tenantId}`,60);return json(res,200,await dieselPrices(store))}
       if(path==='/api/gps/stops'&&method==='GET'){
         const days=Number(url.searchParams.get('days')??14);
@@ -306,6 +308,9 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
           return json(res,200,{...updated,...(await store.device(adminDevice[1]))});
         }
         if(adminDevice&&method==='DELETE'){await store.deleteDevice(adminDevice[1]);return json(res,200,{ok:true});}
+        if(path==='/api/gps/admin/requests'&&method==='GET')return json(res,200,{requests:await store.gpsRequests()});
+        const requestMatch=path.match(/^\/api\/gps\/admin\/requests\/([\w-]+)$/);
+        if(requestMatch&&method==='PATCH'){await store.setGpsRequestStatus(requestMatch[1],(await body(req)).status);return json(res,200,{ok:true})}
         if(path==='/api/gps/admin/admins'&&method==='GET')return json(res,200,{admins:await store.admins()});
         if(path==='/api/gps/admin/admins'&&method==='POST')return json(res,201,await store.createAdmin((await body(req)).email));
         fail(404,'Endpoint not found.');

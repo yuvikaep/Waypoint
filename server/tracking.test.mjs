@@ -391,3 +391,16 @@ test('saved places carry a type from the list',t=>{
   assert.throws(()=>store.addFence({name:'Bad',latitude:25.4,longitude:82.7,radius:150,kind:'casino'}),/place type/);
   assert.equal(store.fences().find(f=>f.name==='HP pump').kind,'fuel');
 });
+
+test('buy GPS enquiries are checked, saved for the admin and can be marked contacted',t=>{
+  const {store}=fixture(t);
+  const c=store.createCustomer({name:'Sharma Roadways',email:'sharma@example.test'});
+  assert.throws(()=>store.addGpsRequest(c.customer.id,{name:'Ravi',phone:'123'}),/mobile number/);
+  assert.throws(()=>store.addGpsRequest(c.customer.id,{name:'Ravi',phone:'9876543210',product:'drone'}),/GPS type/);
+  const r=store.addGpsRequest(c.customer.id,{name:'Ravi',phone:'98765 43210',vehicles:3,product:'portable',note:'Lucknow'});
+  assert.equal(r.phone,'9876543210');
+  const [row]=store.gpsRequests();
+  assert.equal(row.customerName,'Sharma Roadways');assert.equal(row.vehicles,3);assert.equal(row.status,'new');
+  store.setGpsRequestStatus(r.id,'contacted');assert.equal(store.gpsRequests()[0].status,'contacted');
+  assert.throws(()=>store.setGpsRequestStatus(r.id,'paid'),/Unknown status/);
+});

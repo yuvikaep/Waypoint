@@ -7,7 +7,7 @@ import '../customer/customer.css';
 import './admin.css';
 import {showLogin} from '../auth';
 
-type View='overview'|'devices'|'device'|'customers'|'admins'|'settings'|'more';
+type View='requests'|'overview'|'devices'|'device'|'customers'|'admins'|'settings'|'more';
 type Gateway={configured:boolean;connected:boolean;lastSync:number|null;error:string|null;trackerHost?:string;gt06Port?:number;gt06AlternativePort?:number;teltonikaPort?:number};
 type Step={id:string;seq:number;command:string;label:string;status:'pending'|'sent'|'ok'|'failed';attempts:number;reply:string|null;sentAt:number|null;doneAt:number|null};
 type Provisioning={steps:Step[];sms:{label:string;text:string}[];operators?:Record<string,{label:string;apn:Record<string,string>}>};
@@ -30,18 +30,18 @@ export async function startAdmin(identity:Identity){
   me=identity;
   whenUnauthorized(()=>{clearTimeout(poll);showLogin('Your session ended. Please sign in again.')});
   const requested=new URLSearchParams(location.search).get('view') as View|null;
-  view=requested&&([...NAV,...TABS].some(([v])=>v===requested)||(requested==='device'&&detailId))?requested:'overview';
+  view=requested&&(([...NAV,...TABS].some(([v])=>v===requested)||requested==='requests')||(requested==='device'&&detailId))?requested:'overview';
   window.addEventListener('popstate',()=>{const q=new URLSearchParams(location.search);view=(q.get('view') as View)||'overview';detailId=q.get('id')||'';shell()});
   shell();
 }
 function go(next:View,id=''){const url=new URL(location.href);url.searchParams.set('view',next);if(id)url.searchParams.set('id',id);else url.searchParams.delete('id');history.pushState(null,'',url);view=next;detailId=id;shell()}
-const SIDE:[string,[View,string,string][]][]=[['Overview',[['overview','Overview','layout-dashboard']]],['Fleet',[['devices','GPS devices','radio-tower'],['customers','Customers','users']]],['Team',[['admins','Admins','shield-check']]],['Account',[['settings','Settings','settings']]]];
-const TITLE:Record<View,string>={overview:'Overview',devices:'GPS devices',device:'Device details',customers:'Customers',admins:'Admins',settings:'Settings',more:'More'};
+const SIDE:[string,[View,string,string][]][]=[['Overview',[['overview','Overview','layout-dashboard']]],['Fleet',[['devices','GPS devices','radio-tower'],['customers','Customers','users'],['requests','Buy GPS requests','shopping-cart']]],['Team',[['admins','Admins','shield-check']]],['Account',[['settings','Settings','settings']]]];
+const TITLE:Record<View,string>={requests:'Buy GPS requests',overview:'Overview',devices:'GPS devices',device:'Device details',customers:'Customers',admins:'Admins',settings:'Settings',more:'More'};
 // Same design system as the customer app (navy actions, lavender surfaces), in English.
 function shell(){
   clearTimeout(poll);detailMap?.map.remove();detailMap=undefined;clearInterval(terminalTimer);terminalOpen=false;
   const action=view==='devices'?`<button class="cx-btn dark" id="add-device">${i('plus')}<span>Add GPS device</span></button>`:view==='customers'?`<button class="cx-btn dark" id="add-customer">${i('plus')}<span>Add customer</span></button>`:'';
-  const active=view==='device'?'devices':['admins','settings','more'].includes(view)?'more':view;
+  const active=view==='device'?'devices':['admins','settings','more','requests'].includes(view)?'more':view;
   $('#app').innerHTML=`<div class="cx ax" data-view="${view}">
     <aside class="cx-side">
       <a class="cx-brand" href="/?live=1"><span class="cx-mark">${i('navigation')}</span><span><b>Waypoint</b><small>Admin console</small></span></a>
@@ -57,7 +57,7 @@ function shell(){
   on('[data-go]',el=>go(el.dataset.go as View));on('[data-logout]',logout);
   on('#add-device',()=>deviceForm());on('#add-customer',customerForm);
   icons();
-  void ({overview:renderOverview,devices:renderDevices,device:renderDevice,customers:renderCustomers,admins:renderAdmins,settings:renderSettings,more:renderMore} as Record<View,()=>Promise<void>|void>)[view]();
+  void ({requests:renderRequests,overview:renderOverview,devices:renderDevices,device:renderDevice,customers:renderCustomers,admins:renderAdmins,settings:renderSettings,more:renderMore} as Record<View,()=>Promise<void>|void>)[view]();
 }
 async function logout(){await api('/session',{method:'DELETE'}).catch(()=>{});location.href='/?live=1&auth=admin'}
 const fail=(e:unknown)=>{$('#view').innerHTML=`<div class="page"><div class="card empty">${i('triangle-alert')}<h3>Could not load</h3><p>${esc((e as Error).message)}</p></div></div>`;icons()};
@@ -72,7 +72,7 @@ async function renderOverview(){
   $('#view').innerHTML=`<div class="page">
     <div class="ax-health ${g.connected?'ok':'bad'}"><span class="cx-tile ${g.connected?'':'danger'}">${i('server')}</span><div><b>${g.connected?'GPS receiver connected':g.configured?'GPS receiver not syncing':'GPS receiver not configured'}</b><small>Last sync ${ago(g.lastSync)}${g.error?` · ${esc(g.error)}`:''}</small></div><span class="cx-live ${g.connected?'':'off'}"><i></i>${g.connected?'Live':'Check'}</span></div>
     <div class="ax-kpis">${kpi('Customers',o.customers.total,`${o.customers.enabled} active`,'users')}${kpi('GPS devices',o.devices.total,`${o.devices.unassigned} unassigned`,'radio-tower',o.devices.unassigned?'warn':'')}${kpi('Running',o.devices.moving,'moving now','navigation','run')}${kpi('Stopped',o.devices.stopped,'standing','circle-parking')}${kpi('Offline',o.devices.offline,'no signal','wifi-off',o.devices.offline?'danger':'')}${kpi('Not installed',o.devices.waiting,`${o.devices.noFix} without GPS fix`,'plug')}</div>
-    <div class="cx-quick ax-quick"><button id="q-device"><span class="cx-tile dark">${i('plus')}</span>Add device</button><button id="q-customer"><span class="cx-tile">${i('user-plus')}</span>Add customer</button><button data-go="admins"><span class="cx-tile">${i('shield-check')}</span>Admins</button><button data-go="settings"><span class="cx-tile">${i('key-round')}</span>Password</button></div>
+    <div class="cx-quick ax-quick"><button id="q-device"><span class="cx-tile dark">${i('plus')}</span>Add device</button><button id="q-customer"><span class="cx-tile">${i('user-plus')}</span>Add customer</button><button data-go="requests"><span class="cx-tile">${i('shopping-cart')}</span>GPS requests</button><button data-go="settings"><span class="cx-tile">${i('key-round')}</span>Password</button></div>
     <div class="card card-pad"><div class="section-title"><h2>Server details</h2><span class="chip ${g.connected?'ok':'bad'}">${g.connected?'GPS receiver connected':g.configured?'GPS receiver not syncing':'Not configured'}</span></div>
       <dl class="facts"><dt>Last sync</dt><dd>${time(g.lastSync)} (${ago(g.lastSync)})</dd><dt>Tracker server</dt><dd class="mono">${esc(g.trackerHost||'—')}</dd><dt>GT06 / PT06 port</dt><dd class="mono">TCP ${g.gt06Port??5023}${g.gt06AlternativePort?` · alt ${g.gt06AlternativePort}`:''}</dd><dt>Teltonika port</dt><dd class="mono">TCP ${g.teltonikaPort??5027}</dd>${g.error?`<dt>Last error</dt><dd style="color:var(--stopped)">${esc(g.error)}</dd>`:''}<dt>Admins</dt><dd>${o.admins.map(esc).join(', ')||'—'}</dd></dl></div>
     <div class="card"><div class="card-pad section-title" style="margin:0"><h2>Needs attention</h2><button class="btn btn-ghost btn-sm" data-go="devices">All devices${i('chevron-right')}</button></div>
@@ -407,8 +407,21 @@ function renderSettings(){
   document.querySelector('#password')?.addEventListener('submit',async e=>{e.preventDefault();const form=e.target as HTMLFormElement,f=new FormData(form);$('#password-error').textContent='';try{if(f.get('newPassword')!==f.get('confirmPassword'))throw Error('New passwords do not match.');await post('/account/password',{currentPassword:f.get('currentPassword'),newPassword:f.get('newPassword')});form.reset();toast('Password changed.')}catch(err){$('#password-error').textContent=(err as Error).message}});
   on('#view [data-logout]',logout);icons();
 }
+/* ---------- Buy GPS requests ---------- */
+type GpsRequest={id:string;tenantId:string;customerName:string;name:string;phone:string;vehicles:number;product:string;note:string;status:string;createdAt:number};
+const PRODUCT_LABEL:Record<string,string>={wired:'Truck GPS (wired)',portable:'Portable GPS (magnetic)',phone:'Driver phone tracking'};
+async function renderRequests(){
+  let list:GpsRequest[];try{list=(await api<{requests:GpsRequest[]}>('/admin/requests')).requests}catch(e){fail(e);return}
+  if(view!=='requests')return;
+  const fresh=list.filter(r=>r.status==='new').length;
+  $('#view').innerHTML=`<div class="page">
+    <div class="ax-kpis"><div class="cx-kpi ${fresh?'warn':''}"><span class="cx-kpi-label">New requests${i('shopping-cart')}</span><b>${fresh}</b><span class="cx-kpi-note">waiting for a call</span></div><div class="cx-kpi"><span class="cx-kpi-label">All requests${i('list')}</span><b>${list.length}</b><span class="cx-kpi-note">${list.reduce((s,r)=>s+r.vehicles,0)} vehicles asked for</span></div></div>
+    <div class="card">${list.length?`<div class="table-wrap"><table class="table"><thead><tr><th>Received</th><th>Customer</th><th>Contact</th><th>GPS type</th><th>Vehicles</th><th>Note</th><th>Status</th></tr></thead><tbody>${list.map(r=>`<tr><td>${time(r.createdAt)}</td><td><b>${esc(r.customerName||'—')}</b></td><td><b>${esc(r.name)}</b><small><a href="tel:${esc(r.phone)}">${esc(r.phone)}</a> · <a href="https://wa.me/${esc(r.phone.replace(/^\+?(?=\d{10}$)/,'91').replace('+',''))}" target="_blank" rel="noopener">WhatsApp</a></small></td><td>${esc(PRODUCT_LABEL[r.product]||r.product)}</td><td>${r.vehicles}</td><td>${esc(r.note||'—')}</td><td><select class="input" data-status="${r.id}" style="min-height:36px">${['new','contacted','done'].map(s=>`<option value="${s}" ${r.status===s?'selected':''}>${s==='new'?'New':s==='contacted'?'Contacted':'Done'}</option>`).join('')}</select></td></tr>`).join('')}</tbody></table></div>`:`<div class="empty">${i('shopping-cart')}<h3>No requests yet</h3><p>When a customer asks for GPS from the app it shows here.</p></div>`}</div></div>`;
+  $$<HTMLSelectElement>('[data-status]').forEach(sel=>sel.onchange=async()=>{try{await api(`/admin/requests/${sel.dataset.status}`,{method:'PATCH',body:JSON.stringify({status:sel.value})});toast('Saved.')}catch(e){toast((e as Error).message,true)}});
+  icons();
+}
 function renderMore(){
-  $('#view').innerHTML=`<div class="page"><div class="cx-tiles">${[['admins','Admins','shield-check','Create admin users'],['settings','Settings','settings','Password and sign out']].map(([v,l,ic,h])=>`<button data-go="${v}"><span class="cx-tile">${i(ic)}</span><b>${l}</b><small>${h}</small></button>`).join('')}</div>
+  $('#view').innerHTML=`<div class="page"><div class="cx-tiles">${[['requests','Buy GPS requests','shopping-cart','Customers asking for GPS'],['admins','Admins','shield-check','Create admin users'],['settings','Settings','settings','Password and sign out']].map(([v,l,ic,h])=>`<button data-go="${v}"><span class="cx-tile">${i(ic)}</span><b>${l}</b><small>${h}</small></button>`).join('')}</div>
     <button class="cx-btn sos-soft" data-logout>${i('log-out')}Sign out</button></div>`;
   on('#view [data-go]',el=>go(el.dataset.go as View));on('#view [data-logout]',logout);icons();
 }

@@ -5,7 +5,7 @@ const names = Object.fromEntries([
   'offlineSeconds','speedLimit','speedAlert','offlineAlert','tenantId','deviceId','eventId',
   'recordedAt','receivedAt','fenceId','updatedAt','expiresAt','linkHash',
   'passwordHash','deviceName','verifiedAt','resetAt',
-  'simOperator','simType','simNumber','apnUser','apnPass','commandId','sentAt','doneAt',
+  'simOperator','simType','simNumber','customerName','apnUser','apnPass','commandId','sentAt','doneAt',
 ].map(name => [name.toLowerCase(), name]));
 
 // Only these two legacy SQLite statements are accepted. All other statements

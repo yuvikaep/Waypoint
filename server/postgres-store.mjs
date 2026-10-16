@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { PgAdapter } from './pg-adapter.mjs';
 import { cleanExtra, alarmAlerts, hardBrake, overspeed, REPEAT, SPEED_REPEAT, shareHours, SHARE_STOPPED, shareSilent, PLACE_KINDS } from './extra.mjs';
 import { cleanSetup } from './provision.mjs';
+import { cleanGpsRequest, REQUEST_STATUS } from './buy.mjs';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 
 export const hash = value => createHash('sha256').update(value).digest('hex');
@@ -51,6 +52,10 @@ export class PostgresTrackingStore {
   }
   async customer(id){return (await this.db.prepare('SELECT id,name,email,createdAt,enabled FROM customers WHERE id=?').get(id))||fail(404,'Customer not found.');}
   // Map landmarks per tile, shared by every customer (public place data, no tenant).
+  // Buy GPS enquiries (customer → admin).
+  async addGpsRequest(tenantId,body){const r={id:randomUUID(),tenantId,...cleanGpsRequest(body),status:'new',createdAt:this.now()};(await this.db.prepare('INSERT INTO gps_requests(id,tenantId,name,phone,vehicles,product,note,status,createdAt) VALUES (?,?,?,?,?,?,?,?,?)').run(r.id,r.tenantId,r.name,r.phone,r.vehicles,r.product,r.note,r.status,r.createdAt));return r;}
+  async gpsRequests(tenantId){const q="SELECT r.*,COALESCE(c.name,'') AS customerName FROM gps_requests r LEFT JOIN customers c ON c.id=r.tenantId";return tenantId?(await this.db.prepare(q+' WHERE r.tenantId=? ORDER BY r.createdAt DESC LIMIT 100').all(tenantId)):(await this.db.prepare(q+' ORDER BY r.createdAt DESC LIMIT 500').all());}
+  async setGpsRequestStatus(id,status){if(!REQUEST_STATUS.includes(status))fail(400,'Unknown status.');if(!(await this.db.prepare('UPDATE gps_requests SET status=? WHERE id=?').run(status,id)).changes)fail(404,'Request not found.');}
   async landmarkTile(key){const row=(await this.db.prepare('SELECT value FROM landmark_tiles WHERE key=?').get(key));return row?JSON.parse(row.value):null;}
   async saveLandmarkTile(key,value){(await this.db.prepare('INSERT INTO landmark_tiles(key,value,fetchedAt) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,fetchedAt=excluded.fetchedAt').run(key,JSON.stringify(value),value.fetchedAt));}
   async workspaceData(tenantId,key){

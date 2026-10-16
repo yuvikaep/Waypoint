@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { cleanExtra, alarmAlerts, hardBrake, overspeed, REPEAT, SPEED_REPEAT, shareHours, SHARE_STOPPED, shareSilent, PLACE_KINDS } from './extra.mjs';
 import { cleanSetup } from './provision.mjs';
+import { cleanGpsRequest, REQUEST_STATUS } from './buy.mjs';
 
 export const hash = value => createHash('sha256').update(value).digest('hex');
 export const token = () => randomBytes(32).toString('base64url');
@@ -57,6 +58,7 @@ export class TrackingStore {
     for(const column of ['simOperator','simType','simNumber','apn','apnUser','apnPass'])
       if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name===column))this.db.exec(`ALTER TABLE devices ADD COLUMN ${column} TEXT`);
     if(!this.db.prepare('PRAGMA table_info(fences)').all().some(c=>c.name==='kind'))this.db.exec("ALTER TABLE fences ADD COLUMN kind TEXT NOT NULL DEFAULT 'other'");
+    this.db.exec('CREATE TABLE IF NOT EXISTS gps_requests (id TEXT PRIMARY KEY,tenantId TEXT NOT NULL,name TEXT NOT NULL,phone TEXT NOT NULL,vehicles INTEGER NOT NULL,product TEXT NOT NULL,note TEXT,status TEXT NOT NULL,createdAt INTEGER NOT NULL)');
     this.db.exec('CREATE TABLE IF NOT EXISTS landmark_tiles (key TEXT PRIMARY KEY,value TEXT NOT NULL,fetchedAt INTEGER NOT NULL)');
     this.db.exec('CREATE TABLE IF NOT EXISTS provision_steps (id TEXT PRIMARY KEY,deviceId TEXT NOT NULL,seq INTEGER NOT NULL,command TEXT NOT NULL,label TEXT NOT NULL,status TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,commandId TEXT,sentAt INTEGER,doneAt INTEGER,reply TEXT)');
     if(!this.db.prepare('PRAGMA table_info(fences)').all().some(c=>c.name==='tenantId'))this.db.exec("ALTER TABLE fences ADD COLUMN tenantId TEXT NOT NULL DEFAULT 'owner'");
@@ -86,6 +88,10 @@ export class TrackingStore {
   }
   customer(id){return this.db.prepare('SELECT id,name,email,createdAt,enabled FROM customers WHERE id=?').get(id)||fail(404,'Customer not found.');}
   // Map landmarks per tile, shared by every customer (public place data, no tenant).
+  // Buy GPS enquiries (customer → admin).
+  addGpsRequest(tenantId,body){const r={id:randomUUID(),tenantId,...cleanGpsRequest(body),status:'new',createdAt:this.now()};this.db.prepare('INSERT INTO gps_requests(id,tenantId,name,phone,vehicles,product,note,status,createdAt) VALUES (?,?,?,?,?,?,?,?,?)').run(r.id,r.tenantId,r.name,r.phone,r.vehicles,r.product,r.note,r.status,r.createdAt);return r;}
+  gpsRequests(tenantId){const q="SELECT r.*,COALESCE(c.name,'') AS customerName FROM gps_requests r LEFT JOIN customers c ON c.id=r.tenantId";return tenantId?this.db.prepare(q+' WHERE r.tenantId=? ORDER BY r.createdAt DESC LIMIT 100').all(tenantId):this.db.prepare(q+' ORDER BY r.createdAt DESC LIMIT 500').all();}
+  setGpsRequestStatus(id,status){if(!REQUEST_STATUS.includes(status))fail(400,'Unknown status.');if(!this.db.prepare('UPDATE gps_requests SET status=? WHERE id=?').run(status,id).changes)fail(404,'Request not found.');}
   landmarkTile(key){const row=this.db.prepare('SELECT value FROM landmark_tiles WHERE key=?').get(key);return row?JSON.parse(row.value):null;}
   saveLandmarkTile(key,value){this.db.prepare('INSERT OR REPLACE INTO landmark_tiles(key,value,fetchedAt) VALUES (?,?,?)').run(key,JSON.stringify(value),value.fetchedAt);}
   workspaceData(tenantId,key){
