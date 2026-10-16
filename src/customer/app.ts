@@ -22,20 +22,20 @@ const APP_VERSION='3.0';
 
 // Distance is only what the tracker reported. When it went silent, say so instead of guessing.
 const gapNote=(g:Gap)=>`${t('Tracker sent no data {a} – {b} ({d})',{a:clock(g.from),b:clock(g.to),d:hm(g.minutes)})}${g.movedKm?` · ${t('moved {n} km in this time',{n:g.movedKm})}`:''} · ${t('km in this period is not recorded')}`;
-const TITLES:Record<View,string>={home:'My vehicles',map:'Live map',vehicle:'Vehicle',history:'Route history',reports:'Reports',alerts:'Alerts',geofences:'Places',documents:'Documents',ebills:'E-way bills',settings:'Settings',more:'More'};
-const TABS:[View,string,string][]=[['home','Home','house'],['map','Map','map'],['alerts','Alerts','bell'],['more','More','layout-grid']];
+const TITLES:Record<View,string>={home:'Dashboard',map:'Live map',vehicle:'Vehicle',history:'Route history',reports:'Reports',alerts:'Alerts',geofences:'Places',documents:'Documents',ebills:'E-way bills',settings:'Settings',more:'More'};
+const TABS:[View,string,string][]=[['home','Dashboard','layout-dashboard'],['map','Map','map'],['history','History','route'],['more','More','layout-grid']];
 const SIDE:[string,[View,string,string][]][]=[
-  ['Fleet',[['home','My vehicles','truck'],['history','Route history','route']]],
+  ['Fleet',[['home','Dashboard','layout-dashboard'],['history','Route history','route']]],
   ['Alerts & reports',[['alerts','Alerts','bell'],['reports','Reports','chart-column']]],
   ['Manage',[['geofences','Places','map-pin'],['documents','Documents','files'],['ebills','E-way bills','file-text']]],
   ['Account',[['settings','Settings','settings']]],
 ];
 const MORE:[string,[View,string,string,string][]][]=[
-  ['Trips & reports',[['history','Route history','route','Replay any day on the map'],['reports','Reports','chart-column','Distance, running and idle time']]],
+  ['Trips & reports',[['alerts','Alerts','bell','Engine, SOS, overspeed, signal'],['reports','Reports','chart-column','Distance, running and idle time']]],
   ['Places & papers',[['geofences','Places','map-pin','Petrol pumps, dhabas, depots'],['documents','Documents','files','RC, insurance, permits'],['ebills','E-way bills','file-text','E-way bills for your trips']]],
   ['Account',[['settings','Settings','settings','Notifications, overspeed, language, password']]],
 ];
-const ROOT:View[]=['home','map','alerts','more'];
+const ROOT:View[]=['home','map','history','more'];
 const PAGES:View[]=['home','map','vehicle','history','reports','alerts','geofences','documents','ebills','settings','more'];
 
 let me:Identity,fleet:Fleet={devices:[],fences:[],alerts:[]},view:View='home',vehicleId='',filter:'all'|'running'|'stopped'|'offline'='all',search='',following=true;
@@ -88,7 +88,7 @@ async function refresh(){
   catch{/* keep showing the last data; the next poll retries */}
   finally{schedule()}
 }
-function updateBadges(){const n=openAlerts();$$('[data-alert-badge]').forEach(b=>{b.textContent=n>99?'99+':String(n);b.hidden=!n})}
+function updateBadges(){const n=openAlerts();$$('[data-alert-badge]').forEach(b=>{b.textContent=n>99?'99+':String(n);b.hidden=!n});$$('[data-alert-dot]').forEach(b=>{b.hidden=!n})}
 async function logout(){if(!DEMO_MODE)await api('/session',{method:'DELETE'}).catch(()=>{});location.href='/?live=1&auth=customer'}
 
 function render(){
@@ -101,7 +101,7 @@ function render(){
       <nav>${SIDE.map(([g,items])=>`<div class="cx-side-group"><span>${t(g)}</span>${items.map(([v,l,ic])=>`<button data-go="${v}" class="${(view===v||(v==='home'&&view==='vehicle'))?'on':''}">${i(ic)}<em>${t(l)}</em>${v==='alerts'?badgeHtml:''}</button>`).join('')}</div>`).join('')}</nav>
       <button class="cx-me" data-go="settings"><span class="cx-avatar">${initial(p.workspace)}</span><span><b>${esc(p.workspace)}</b><small>${esc(me.email||p.name)}</small></span>${i('chevron-right')}</button>
     </aside>
-    <main class="cx-main">${ROOT.includes(view)||view==='vehicle'?'':`<header class="cx-top"><button class="cx-back" data-back aria-label="${t('Back')}">${i('chevron-left')}</button><h1>${t(TITLES[view])}</h1></header>`}<div id="view"></div></main>
+    <main class="cx-main">${['home','map','more','vehicle'].includes(view)?'':`<header class="cx-top">${ROOT.includes(view)?'':`<button class="cx-back" data-back aria-label="${t('Back')}">${i('chevron-left')}</button>`}<h1>${t(TITLES[view])}</h1></header>`}<div id="view"></div></main>
     <nav class="cx-tabs">${TABS.map(([v,l,ic])=>`<button data-go="${v}" class="${active===v?'on':''}"><span class="cx-tab-ico">${i(ic)}${v==='alerts'?badgeHtml:''}</span>${t(l)}</button>`).join('')}</nav>
   </div>`;
   on('[data-go]',el=>go(el.dataset.go as View));
@@ -175,43 +175,104 @@ function fleetMap(host:HTMLElement,{peek}:{peek:boolean}){
   return {update,destroy(){resize.disconnect();gl.destroy();map.remove()}};
 }
 
-/* ---------- Home ---------- */
+/* ---------- Dashboard ---------- */
+// Plate numbers are matched without spaces or dashes, so "MH12AB" and a spoken "MH 12 AB" both find it.
+const squash=(s:string)=>s.toLowerCase().replace(/[^a-z0-9ऀ-ॿ]/g,'');
+let todayFleetKm:{at:number;km:number|null}={at:0,km:null};
+async function loadFleetKm(done:()=>void){
+  if(Date.now()-todayFleetKm.at<60000)return;
+  todayFleetKm={at:Date.now(),km:todayFleetKm.km};
+  try{const r=await reports(dayStart(),new Date());todayFleetKm={at:Date.now(),km:Math.round(r.vehicles.reduce((s,v)=>s+v.total.distanceKm,0)*10)/10};done()}catch{/* shown as … */}
+}
+// Free voice search through the browser's own speech recognition (Chrome on Android, Edge, Safari).
+const Speech=(window as unknown as {SpeechRecognition?:new()=>any;webkitSpeechRecognition?:new()=>any}).SpeechRecognition||(window as unknown as {webkitSpeechRecognition?:new()=>any}).webkitSpeechRecognition;
 function renderHome(){
   const host=$('#view'),desktop=matchMedia('(min-width:901px)').matches,p=prefs();
   host.innerHTML=`<div class="cx-home">
     <section class="cx-home-list">
-      <header class="cx-hero">
-        <div class="cx-hero-top"><span class="cx-mark light">${i('navigation')}</span><div><b>${esc(p.workspace)}</b><small>${t('Real-time GPS updates · auto refresh on')}</small></div></div>
-        <div id="hero"></div>
-      </header>
-      <label class="cx-search">${i('search')}<input id="q" placeholder="${t('Search vehicle number or driver…')}" value="${esc(search)}" autocomplete="off"></label>
-      <div class="cx-list" id="list"></div>
+      ${appBar('Dashboard')}
+      <div class="cx-welcome">
+        <div class="cx-welcome-top"><span class="cx-tile dark">${i('truck')}</span><div><b>${t('Namaste, {n} ji',{n:esc((p.name||p.workspace).split(' ')[0])})}</b><small>${esc(p.workspace)}</small></div><span class="cx-live"><i></i>${t('Live sync')}</span></div>
+        <div class="cx-today" id="today"></div>
+        <label class="cx-search">${i('search')}<input id="q" placeholder="${t('Search or speak a vehicle number or driver (e.g. HR 55)')}" value="${esc(search)}" autocomplete="off">${Speech?`<button type="button" class="cx-mic" id="mic" aria-label="${t('Search by voice')}">${i('mic')}</button>`:''}</label>
+      </div>
+      <div class="cx-kpis" id="kpis"></div>
+      <div id="urgent"></div>
+      <h3 class="cx-section">${t('Quick actions')}</h3>
+      <div class="cx-quick">${([['history','Route history','route'],['reports','Reports','chart-column'],['ebills','E-way bills','file-text'],['geofences','Places','map-pin']] as [View,string,string][]).map(([v,l,ic])=>`<button data-go="${v}"><span class="cx-tile">${i(ic)}</span>${t(l)}</button>`).join('')}</div>
+      <div class="cx-fleet-head"><h2>${t('Live status of vehicles')} <small>(Live Fleet)</small></h2><span id="fleetcount"></span></div>
+      <div class="cx-cards" id="list"></div>
     </section>
     ${desktop?'<section class="cx-home-map" id="homemap"></section>':''}
   </div>`;
   const input=$<HTMLInputElement>('#q');input.oninput=()=>{search=input.value;drawList()};
+  on('#mic',btn=>{
+    const r=new Speech!();r.lang='en-IN';r.interimResults=false;r.maxAlternatives=1;
+    btn.classList.add('on');
+    r.onresult=(e:any)=>{search=String(e.results[0][0].transcript||'');input.value=search;drawList()};
+    r.onerror=()=>toast(t('Could not hear that. Try again.'),true);
+    r.onend=()=>btn.classList.remove('on');
+    r.start();
+  });
+  on('[data-go]',el=>go(el.dataset.go as View),host);
   const fm=desktop?fleetMap($('#homemap'),{peek:false}):undefined;
-  const drawHero=()=>{
-    const n={running:0,stopped:0,offline:0};for(const d of fleet.devices)n[group(statusOf(d))]++;
-    const total=fleet.devices.length||1;
-    $('#hero').innerHTML=`<div class="cx-hero-count"><b>${fleet.devices.length}</b><span>${t('Vehicles')}</span></div>
-      <div class="cx-bar">${(['running','stopped','offline'] as const).map(k=>`<i class="${k}" style="flex:${n[k]/total}"></i>`).join('')}</div>
-      <div class="cx-legend">${(['running','stopped','offline'] as const).map(k=>`<button data-filter="${k}" class="${filter===k?'on':''}" aria-pressed="${filter===k}"><i class="${k}"></i><b>${n[k]}</b>${t(k==='running'?'Moving':k==='stopped'?'Standing':'Offline')}</button>`).join('')}</div>`;
-    on('[data-filter]',el=>{const f=el.dataset.filter as typeof filter;filter=filter===f?'all':f;drawHero();drawList()},$('#hero'));
+  const drawTop=()=>{
+    const list=fleet.devices,n={running:0,stopped:0,offline:0};for(const d of list)n[group(statusOf(d))]++;
+    const idle=list.filter(d=>statusOf(d)==='idle').length,moving=list.filter(d=>statusOf(d)==='running'&&d.position);
+    const avg=moving.length?Math.round(moving.reduce((s,d)=>s+d.position!.speed,0)/moving.length):0;
+    const unseen=fleet.alerts.filter(a=>!a.acknowledged),overNow=list.filter(overspeeding).length;
+    const top=unseen[0]?CATEGORIES.find(c=>c.key===categoryOf(unseen[0].type)):undefined;
+    $('#today').innerHTML=`${i('clock')}<span>${t('Today: {a} vehicles on duty',{a:list.filter(d=>d.online).length})} · <b class="run">${t('{n} moving',{n:n.running})}</b></span><em>${clock(Date.now())}</em>`;
+    const kpi=(f:typeof filter|'',cls:string,label:string,value:string,unit:string,note:string,ic:string)=>`<button class="cx-kpi ${cls} ${f&&filter===f?'on':''}" ${f?`data-filter="${f}"`:'data-go="alerts"'}><span class="cx-kpi-label">${label}${ic}</span><b>${value}<small>${unit}</small></b><span class="cx-kpi-note">${note}</span></button>`;
+    $('#kpis').innerHTML=
+      kpi('running','',t('Moving vehicles'),String(n.running),t('/ {n} total',{n:list.length}),`${i('gauge')}${t('Average speed {n} km/h',{n:avg})}`,`<span class="cx-live sm"><i></i>${t('Live')}</span>`)+
+      kpi('stopped','',t('Standing vehicles'),String(n.stopped),t('vehicles'),`${i('circle-parking')}${idle?t('{n} with engine on',{n:idle}):t('{n} offline',{n:n.offline})}`,i('moon-star'))+
+      kpi('',unseen.length||overNow?'danger':'',t('Danger & warnings'),String(unseen.length),t('need attention'),`${i('triangle-alert')}${overNow?t('{n} overspeeding now',{n:overNow}):top?esc(t(top.label)):t('All clear')}`,i('circle-alert'))+
+      `<div class="cx-kpi"><span class="cx-kpi-label">${t('Distance today')}${i('route')}</span><b>${todayFleetKm.km==null?'…':todayFleetKm.km}<small>km</small></b><span class="cx-kpi-note">${i('truck')}${t('All vehicles together')}</span></div>`;
+    on('[data-filter]',el=>{const f=el.dataset.filter as typeof filter;filter=filter===f?'all':f;drawTop();drawList()},$('#kpis'));
+    on('[data-go]',el=>go(el.dataset.go as View),$('#kpis'));
+    // The one thing that needs attention first: an open SOS, a vehicle speeding now, or the newest alert.
+    const sos=unseen.find(a=>a.type==='sos'),speeder=list.find(overspeeding),latest=unseen[0];
+    const focus=sos?{d:vehicle(sos.deviceId),tag:t('SOS'),line:alertText(sos)}:speeder?{d:speeder,tag:t('Overspeed'),line:`${Math.round(speeder.position!.speed)} km/h · ${placeSpan(speeder.position,speeder.id,{short:true})}`,raw:true}:latest?{d:vehicle(latest.deviceId),tag:t(CATEGORIES.find(c=>c.key===categoryOf(latest.type))!.label),line:alertText(latest)}:null;
+    $('#urgent').innerHTML=focus?.d?`<div class="cx-urgent">
+        <div class="cx-urgent-top"><span class="cx-tile danger">${i('triangle-alert')}</span><div><b class="cx-plate">${esc(focus.d.name)}</b><span class="cx-tag danger">${esc(focus.tag)}</span><p>${focus.raw?focus.line:esc(focus.line)}</p>${focus.d.driver?`<small>${t('Driver: {n}',{n:esc(focus.d.driver)})}${speeder&&focus.d===speeder?` (${t('speed limit {n} km/h',{n:speeder.speedLimit})})`:''}</small>`:''}</div></div>
+        <div class="cx-urgent-acts"><button class="cx-btn dark" data-open="${focus.d.id}">${i('map')}${t('View vehicle')}</button><button class="cx-btn soft" data-go="alerts">${i('bell-ring')}${t('All alerts')}</button></div></div>`:'';
+    on('[data-open]',el=>openVehicle(el.dataset.open!),$('#urgent'));
+    on('[data-go]',el=>go(el.dataset.go as View),$('#urgent'));
+    icons();
   };
   const order=['running','stopped','offline'];
   const drawList=()=>{
-    const q=search.toLowerCase();
-    const list=fleet.devices.filter(d=>(filter==='all'||group(statusOf(d))===filter)&&`${d.name} ${d.driver}`.toLowerCase().includes(q))
+    const q=squash(search);
+    const list=fleet.devices.filter(d=>(filter==='all'||group(statusOf(d))===filter)&&squash(`${d.name} ${d.driver}`).includes(q))
       .sort((a,b)=>Number(overspeeding(b))-Number(overspeeding(a))||order.indexOf(group(statusOf(a)))-order.indexOf(group(statusOf(b)))||a.name.localeCompare(b.name));
-    $('#list').innerHTML=list.length?`${filter!=='all'?`<button class="cx-clear" data-clear>${i('x')}${t('Showing: {f}',{f:t(filter==='running'?'Moving':filter==='stopped'?'Standing':'Offline')})}</button>`:''}${list.map(vehicleRow).join('')}`:`<div class="cx-empty">${i('truck')}<h3>${t(fleet.devices.length?'No vehicles match':'No vehicles yet')}</h3><p>${t(fleet.devices.length?'Try another filter.':'Your fleet administrator will add your GPS devices here.')}</p></div>`;
+    $('#fleetcount').textContent=filter==='all'&&!q?t('{n} vehicles',{n:fleet.devices.length}):t('{n} of {m}',{n:list.length,m:fleet.devices.length});
+    $('#list').innerHTML=list.length?`${filter!=='all'?`<button class="cx-clear" data-clear>${i('x')}${t('Showing: {f}',{f:t(filter==='running'?'Moving':filter==='stopped'?'Standing':'Offline')})}</button>`:''}${list.map(fleetCard).join('')}`:`<div class="cx-empty">${i('truck')}<h3>${t(fleet.devices.length?'No vehicles match':'No vehicles yet')}</h3><p>${t(fleet.devices.length?'Try another filter.':'Your fleet administrator will add your GPS devices here.')}</p></div>`;
     on('[data-open]',el=>openVehicle(el.dataset.open!),$('#list'));
-    on('[data-clear]',()=>{filter='all';drawHero();drawList()},$('#list'));
+    on('[data-clear]',()=>{filter='all';drawTop();drawList()},$('#list'));
     icons();
   };
-  drawHero();drawList();
-  onRefresh=()=>{drawHero();drawList();fm?.update()};
+  drawTop();drawList();void loadFleetKm(drawTop);
+  onRefresh=()=>{drawTop();drawList();fm?.update();void loadFleetKm(drawTop)};
   teardown=()=>fm?.destroy();
+}
+// A vehicle on the dashboard: plate, speed or state, where it is and how fresh that is, driver.
+function fleetCard(d:Vehicle){
+  const p=d.position,s=statusOf(d),over=overspeeding(d),g=over?'sos':group(s);
+  const right=s==='running'&&p?`<span class="cx-speed ${over?'sos':'run'}"><i></i>${Math.round(p.speed)} ${t('km/h')}</span><small>${t(over?'Overspeed':'Running')}</small>`
+    :(s==='stopped'||s==='idle')?`<span class="cx-speed stand"><i></i>${t(s==='idle'?'Idle':'Engine off')}</span><small>${d.stoppedSince?t('since {d}',{d:since(d.stoppedSince)}):''}</small>`
+    :`<span class="cx-speed off"><i></i>${statusLabel(s)}</span><small>${ago(d.lastSeen)}</small>`;
+  const mine=p?nearSaved(p.latitude,p.longitude,fleet.fences):null;
+  return `<article class="cx-card ${over?'over':''}" data-open="${d.id}" role="button" tabindex="0">
+    <div class="cx-card-top"><div><b class="cx-plate">${esc(d.name)}</b>${d.isMobile?`<span class="cx-chip">${t('Driver phone')}</span>`:''}</div><div class="cx-card-state">${right}</div></div>
+    <div class="cx-card-place"><span class="cx-mini-ico ${g}">${i(s==='running'?'navigation':s==='stopped'||s==='idle'?'circle-parking':'wifi-off')}</span><div><b>${mine?esc(mine):placeSpan(p,d.id,{short:true})}</b><small>${ago(p?.recordedAt??d.lastSeen)}${mine?` · ${placeSpan(p,d.id,{short:true})}`:''}</small></div></div>
+    <div class="cx-card-foot"><div class="cx-cell"><span>${i('key-round')}${t('Ignition')}</span><b class="${d.ignition?'run':''}">${d.ignition==null?'—':d.ignition?t('On'):t('Off')}</b></div><div class="cx-cell"><span>${t('Driver')}</span><b>${esc(d.driver||'—')}</b></div><span class="cx-go ${over?'sos':''}">${i('arrow-right')}</span></div>
+  </article>`;
+}
+// The header of the main pages: fleet name, page title, alerts bell and profile.
+function appBar(title:string){
+  const p=prefs(),n=openAlerts();
+  return `<header class="cx-appbar"><div><small>${esc(p.workspace)}</small><h1>${t(title)}</h1></div><button class="cx-bell" data-go="alerts" aria-label="${t('Alerts')}">${i('bell')}<span class="cx-dot" data-alert-dot ${n?'':'hidden'}></span></button><button class="cx-avatar-btn" data-go="settings" aria-label="${t('Settings')}">${i('user-round')}</button></header>`;
 }
 
 /* ---------- Map ---------- */
@@ -308,7 +369,7 @@ function renderAlerts(){
     const days=new globalThis.Map<string,Alert[]>();for(const a of list){const k=dayOf(a.createdAt);if(!days.has(k))days.set(k,[]);days.get(k)!.push(a)}
     const style=(type:string)=>{const c=CATEGORIES.find(x=>x.key===categoryOf(type))!;const ic=type==='ignition_on'||type==='ignition_off'?'power':type==='online'?'activity':c.icon;const tone=type==='sos'||type==='speed'||type==='offline'?'sos':type==='ignition_on'||type==='online'||type==='share_resumed'?'good':type==='ignition_off'?'neutral':'warn';return {ic,tone}};
     $('#view').innerHTML=`<div class="cx-page">
-      <div class="cx-head"><h1 class="cx-title">${t('Alerts')}</h1>${unseen('all')?`<button class="cx-btn soft sm" id="ack-all">${i('check-check')}${t('Mark all seen')}</button>`:''}</div>
+      ${unseen('all')?`<div class="cx-head end"><button class="cx-btn soft sm" id="ack-all">${i('check-check')}${t('Mark all seen')}</button></div>`:''}
       ${cats.length>1?`<div class="cx-chips"><button data-cat="all" class="${alertsCat==='all'?'on':''}">${t('All')}</button>${cats.map(c=>`<button data-cat="${c.key}" class="${alertsCat===c.key?'on':''}">${esc(t(c.label))}${unseen(c.key)?`<b>${unseen(c.key)}</b>`:''}</button>`).join('')}</div>`:''}
       ${list.length?[...days].map(([day,items])=>`<h3 class="cx-section">${esc(day)}</h3><div class="cx-group">${items.map(a=>{const st=style(a.type);return `<button class="cx-item cx-alert ${a.acknowledged?'':'new'}" data-alert="${a.id}"><span class="cx-ico ${st.tone}">${i(st.ic)}</span><span class="cx-item-text"><b>${esc(a.deviceName)}</b><small>${esc(alertText(a))}</small></span><span class="cx-time">${clock(a.createdAt)}</span></button>`}).join('')}</div>`).join(''):`<div class="cx-empty">${i('bell')}<h3>${t('All clear')}</h3><p>${t('SOS, engine, geofence, overspeed, hard braking and signal alerts appear here.')}</p></div>`}
     </div>`;
@@ -328,10 +389,8 @@ function renderAlerts(){
 
 /* ---------- More ---------- */
 function renderMore(){
-  const p=prefs();
   $('#view').innerHTML=`<div class="cx-page">
-    <h1 class="cx-title">${t('More')}</h1>
-    <button class="cx-profile" data-go="settings"><span class="cx-avatar lg">${initial(p.workspace)}</span><span><b>${esc(p.workspace)}</b><small>${esc(me.email||p.name)}</small></span>${i('chevron-right')}</button>
+    ${appBar('More')}
     ${MORE.map(([g,items])=>`<h3 class="cx-section">${t(g)}</h3><div class="cx-group">${items.map(([v,l,ic,h])=>`<button class="cx-item" data-go="${v}"><span class="cx-ico">${i(ic)}</span><span class="cx-item-text"><b>${t(l)}</b><small>${t(h)}</small></span>${i('chevron-right')}</button>`).join('')}</div>`).join('')}
   </div>`;
   on('#view [data-go]',el=>go(el.dataset.go as View));icons();
