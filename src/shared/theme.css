@@ -3,8 +3,8 @@
 /* Executive Fleet Telematics theme: deep teal actions, slate text, white cards on a cool canvas,
    muted status accents (emerald moving, amber standing, ruby alerts, slate offline). */
 :root{
-  --blue:#0d5c52;--blue-600:#0d5c52;--blue-50:#e3f1ee;--navy:#0d5c52;--navy-700:#00433b;--ink:#0f172a;
-  --bg:#f8fafc;--card:#fff;--line:#e2e8f0;--line-strong:#cbd5e1;--muted:#64748b;--soft:#f2f3ff;--yellow:#fffbeb;
+  --blue:#0f172a;--blue-600:#0f172a;--blue-50:#eef0fb;--navy:#0f172a;--navy-700:#1e293b;--ink:#0f172a;
+  --bg:#f7f8fc;--card:#fff;--line:#e6e9f2;--line-strong:#cbd5e1;--muted:#64748b;--soft:#eef0fb;--yellow:#fffbeb;
   --running:#059669;--running-50:#ecfdf5;--idle:#b45309;--idle-50:#fffbeb;--stopped:#d97706;--stopped-50:#fffbeb;
   --offline:#64748b;--offline-50:#f1f5f9;--nofix:#475569;--nofix-50:#f1f5f9;--sos:#be123c;--sos-50:#fff1f2;--sos-line:#fecdd3;
   --radius:16px;--radius-sm:8px;
@@ -566,9 +566,9 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:4px 0}
 .set-text{flex:1;min-width:0;display:flex;flex-direction:column}.set-text b{font-weight:600}.set-text small{color:var(--muted);font-size:12.5px}
 .set-sub{font-size:13px;font-weight:600;color:var(--muted);margin:6px 2px 0}
 .input.compact{width:auto;min-height:38px;max-width:170px}
-.switch{appearance:none;-webkit-appearance:none;flex:none;width:50px;height:30px;border-radius:999px;background:#cbd5e1;position:relative;cursor:pointer;transition:background .2s}
-.switch::after{content:'';position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #0003;transition:transform .2s}
-.switch:checked{background:var(--blue)}.switch:checked::after{transform:translateX(20px)}
+input.switch{appearance:none;-webkit-appearance:none;flex:none;width:50px;height:30px;border-radius:999px;background:#cbd5e1;position:relative;cursor:pointer;transition:background .2s}
+input.switch::after{content:'';position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #0003;transition:transform .2s}
+input.switch:checked{background:var(--blue)}input.switch:checked::after{transform:translateX(20px)}
 .switch-row{display:flex;align-items:center;justify-content:space-between;gap:10px;font-weight:600;font-size:13px;padding:6px 0}
 .lang-seg{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .lang-seg button{display:flex;flex-direction:column;align-items:center;gap:2px;padding:12px 6px;border-radius:12px;background:var(--soft);border:1.5px solid transparent}
@@ -654,3 +654,33 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:4px 0}
 .live .live-count{position:absolute;left:12px;top:12px;z-index:600;transform:none;right:auto;box-shadow:var(--shadow-md);padding:6px 12px}
 .live.sheet-open .live-count{display:none}
 @media (max-width:900px){.live-panel{display:none}}
+
+/* ===== Shared design: navy actions, lavender surfaces (login, driver page, dialogs, admin) ===== */
+.auth-hero{background:linear-gradient(150deg,#1e293b 0%,#0f172a 70%)}
+.auth-hero .brand .mark{background:#fff;color:#0f172a}
+.auth-panel{background:#f7f8fc}
+.auth-card{background:#fff;border:1px solid var(--line);border-radius:24px;padding:24px;box-shadow:0 10px 30px rgba(15,23,42,.06)}
+.auth-card .switch{display:flex;background:var(--soft);border:0;border-radius:14px;padding:4px}
+.auth-card .switch a{flex:1;text-align:center;padding:10px 6px;border-radius:11px;color:var(--muted);font-weight:700}
+.auth-card .switch a.on{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(15,23,42,.08)}
+.auth-card .btn-primary{min-height:52px;border-radius:14px}
+.auth-card .input{background:var(--soft);border-color:transparent;border-radius:12px;min-height:50px}
+.auth-card .input:focus{background:#fff;border-color:var(--ink)}
+.auth-langs{display:flex;gap:6px;justify-content:flex-end}
+.auth-langs button{height:32px;padding:0 12px;border-radius:999px;background:var(--soft);font-weight:600;font-size:12.5px;color:var(--muted)}
+.auth-langs button.on{background:var(--ink);color:#fff}
+.sender{background:linear-gradient(180deg,#0f172a 0,#0f172a 190px,var(--bg) 190px)}
+.sender .card{border-radius:24px}
+.sender .btn{min-height:52px;border-radius:14px}
+.sender .state{background:var(--soft);border-radius:14px}
+dialog.modal{border-radius:24px;box-shadow:0 24px 60px rgba(15,23,42,.22)}
+dialog.modal .modal-head{border-bottom:0;padding:20px 22px 6px}
+dialog.modal .modal-head h2{font-size:19px;font-weight:800}
+dialog.modal .modal-head .icon-btn{border:0;background:var(--soft);border-radius:12px}
+dialog.modal .modal-body{padding:12px 22px 22px}
+dialog.modal .input{background:var(--soft);border-color:transparent;border-radius:12px;min-height:48px}
+dialog.modal .input:focus{background:#fff;border-color:var(--ink)}
+dialog.modal .btn{border-radius:12px;min-height:46px}
+dialog.modal .btn-primary{background:var(--ink)}
+dialog.modal .btn-ghost{background:var(--soft);border-color:transparent}
+.toast{background:#0f172a;border-radius:16px}

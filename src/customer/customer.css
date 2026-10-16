@@ -330,3 +330,63 @@
 }
 @media (min-width:901px){.cx-home{grid-template-columns:460px minmax(0,1fr)}}
 @media (min-width:901px){.cx-bell,.cx-avatar-btn{display:none}}
+
+/* ===== Remaining pages in the shared design ===== */
+.cx-top{gap:10px;padding:14px 20px;background:rgba(247,248,252,.92)}
+.cx-top h1{font-size:22px;font-weight:800}
+.cx-back{display:grid;width:44px;height:44px;border-radius:14px;background:var(--c-fill);margin:0}
+.cx-quick a,.cx-quick button{display:flex;flex-direction:column;align-items:center;gap:8px;padding:14px 6px;border-radius:18px;background:#fff;border:1px solid var(--c-line);font-size:12.5px;font-weight:600;text-align:center;line-height:1.25;color:var(--c-ink);text-decoration:none}
+.cx-quick button.on .cx-tile{background:var(--c-ink);color:#fff}
+.cx-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.cx-tiles button{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:16px;border-radius:20px;background:#fff;border:1px solid var(--c-line);text-align:left;min-height:132px}
+.cx-tiles button:hover{box-shadow:var(--sh-2)}
+.cx-tiles b{font-size:15px;font-weight:700;margin-top:4px}.cx-tiles small{font-size:12.5px;color:var(--c-muted);line-height:1.35}
+.cx-peek{background:none;box-shadow:none;border-radius:0;overflow:visible}
+.cx-peek .cx-card{box-shadow:var(--sh-3)}
+.cx-vbody .cx-quick{grid-template-columns:repeat(4,1fr)}
+.cx-group{border:1px solid var(--c-line);box-shadow:none}
+.cx-place,.cx-stats>div,.cx-player,.cx-profile{border:1px solid var(--c-line);box-shadow:none}
+.cx-place{background:var(--c-fill);border-color:transparent}
+.cx-stats>div{background:var(--c-fill);border-color:transparent}
+.cx-chips button{box-shadow:none;border:1px solid var(--c-line)}
+.cx-chips button.on{border-color:var(--c-ink)}
+.cx-search{box-shadow:none;border:1px solid var(--c-line)}
+.cx-field select,.cx-field input{background:var(--c-fill);border-color:transparent}
+.cx-play{background:var(--c-ink)}
+.cx-pill.running{background:var(--c-run-soft);color:#15803d}
+.cx .leaflet-tooltip.fence-label{background:var(--c-ink)}
+.cx-fab.on{background:var(--c-ink)}
+.cx-vbody{background:#fff}
+@media (max-width:900px){
+  .cx-top{padding:10px 14px}
+  .cx-top h1{font-size:20px}
+  .cx-tiles{grid-template-columns:1fr 1fr}
+  .cx-vbody .cx-quick button,.cx-vbody .cx-quick a{font-size:11.5px;padding:12px 4px}
+}
+
+/* Documents and E-way bills (older module) in the same look */
+.cx .documents-workspace{--green:#0f172a;--line:#e6e9f2;--muted:#64748b;font-family:'Plus Jakarta Sans',system-ui,sans-serif;color:var(--c-ink)}
+.cx-docs{padding-top:16px}
+.cx .documents-workspace .stats{gap:12px;grid-template-columns:1fr 1fr}
+.cx .documents-workspace .stat{border-radius:20px;background:#fff;border:1px solid var(--c-line);padding:14px}
+.cx .documents-workspace .stat span{font-size:13px;color:var(--c-ink-2);font-weight:600}
+.cx .documents-workspace .stat strong{font-family:'Inter',sans-serif;font-size:30px;font-weight:800}
+.cx .documents-workspace .stat-icon{background:var(--c-fill);color:var(--c-ink);border-radius:12px}
+.cx .documents-workspace .primary{background:var(--c-ink);border-radius:12px;padding:12px 18px;font-size:14px;box-shadow:none}
+.cx .documents-workspace .subtle,.cx .documents-workspace button.secondary{border-radius:12px;font-size:13px;padding:10px 14px;background:var(--c-fill);border-color:transparent;color:var(--c-ink)}
+.cx .documents-workspace .table-panel{border-radius:20px;border:1px solid var(--c-line)}
+.cx .documents-workspace .table-heading{padding:18px}
+.cx .documents-workspace h2{font-family:'Plus Jakarta Sans',sans-serif;font-size:18px;font-weight:800}
+.cx .documents-workspace p{font-size:13px}
+.cx .documents-workspace table{font-size:13.5px}.cx .documents-workspace th{font-size:12px;background:var(--c-fill)}
+.cx .documents-workspace td{padding:14px 16px}
+.cx .documents-workspace select,.cx .documents-workspace input{border-radius:12px;background:var(--c-fill);border-color:transparent;font-size:14px;min-height:44px}
+.cx .documents-workspace .search{border-radius:12px;background:var(--c-fill);border-color:transparent;margin:0}
+.cx .documents-workspace .search input{font-size:14px}
+.cx .documents-workspace label{font-size:12.5px}
+.cx .documents-workspace .renewal-banner,.cx .documents-workspace .help{background:var(--c-fill);border-color:transparent;border-radius:16px}
+.cx .documents-workspace dialog{border-radius:24px}
+.cx .documents-workspace .stats .stat{display:flex;flex-direction:row;justify-content:space-between;align-items:flex-start}
+.cx .documents-workspace .stats .stat>div:first-child{background:none;padding:0;border-radius:0}
+.cx .documents-workspace .stats .stat-icon{width:40px;height:40px;padding:0;display:grid;place-items:center;border-radius:12px}
+.cx .documents-workspace .document-actions{justify-content:flex-end}

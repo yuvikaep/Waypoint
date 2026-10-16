@@ -164,7 +164,7 @@ function fleetMap(host:HTMLElement,{peek}:{peek:boolean}){
     gHost.hidden=!googleView;el.style.visibility=googleView?'hidden':'';
     if(googleView)gl.update(list,picked,picked?trails.get(picked):[]);
     const pk=host.querySelector<HTMLElement>('[data-fm-peek]');
-    if(pk){const d=vehicle(picked);pk.hidden=!d;if(d){pk.innerHTML=vehicleRow(d);on('[data-open]',b=>openVehicle(b.dataset.open!),pk);icons()}}
+    if(pk){const d=vehicle(picked);pk.hidden=!d;if(d){pk.innerHTML=fleetCard(d);on('[data-open]',b=>openVehicle(b.dataset.open!),pk);icons()}}
   }
   map.on('click',()=>{if(picked){picked='';update()}});
   host.querySelectorAll<HTMLElement>('[data-fm]').forEach(b=>b.addEventListener('click',()=>{
@@ -327,27 +327,31 @@ function renderVehicle(){
     const near=mine||(p?nearCache.get(placeKey(p)):'');
     const standing=(s==='stopped'||s==='idle')&&d.stoppedSince;
     $('#vbody').innerHTML=`<div class="cx-grab"></div>
-      <div class="cx-vhead"><div><h1 class="cx-plate">${esc(d.name)}</h1><div class="cx-vsub">${statusPill(d)}${d.driver?`<span>${i('user-round')}${esc(d.driver)}</span>`:''}</div></div><button class="cx-icon" id="vshare" aria-label="${t('Share')}">${i('share-2')}</button></div>
+      <div class="cx-vhead"><div><h1 class="cx-plate">${esc(d.name)}</h1><div class="cx-vsub">${statusPill(d)}${d.driver?`<span>${i('user-round')}${esc(d.driver)}</span>`:''}</div></div></div>
       <div class="cx-place">${i('map-pin')}<div><b>${placeSpan(p,d.id)}</b>${near?`<small class="near">${esc(near)}</small>`:''}<small>${t('Last GPS signal: {a}',{a:ago(p?.recordedAt??d.lastSeen)})}</small></div></div>
       <div class="cx-stats">
         <div class="${over?'sos':''}"><span>${t('Speed')}</span><b>${p&&d.fresh?Math.round(p.speed):0}<small>km/h</small></b><em>${t('Limit {n}',{n:d.speedLimit})}</em></div>
         <div><span>${t('Today')}</span><b>${km?.km==null?'…':km.km}<small>km</small></b><em>${t('Distance')}</em></div>
         <div class="${d.ignition?'good':''}"><span>${t('Ignition')}</span><b>${d.ignition==null?'—':d.ignition?t('On'):t('Off')}</b><em>${standing?t('standing for {d}',{d:since(d.stoppedSince!)}):statusLabel(s)}</em></div>
       </div>
+      <div class="cx-quick">
+        <button id="vhistory"><span class="cx-tile dark">${i('history')}</span>${t('Route history')}</button>
+        <button id="vgoogle-tile" class="${googleView?'on':''}"><span class="cx-tile">${i('layers')}</span>${t(googleView?'Our map':'Google view')}</button>
+        <button id="vshare"><span class="cx-tile">${i('share-2')}</span>${t('Share')}</button>
+        ${p?`<a href="${mapsLink(p)}" target="_blank" rel="noopener"><span class="cx-tile">${i('navigation')}</span>${t('Directions')}</a>`:`<span></span>`}
+      </div>
+      <h3 class="cx-section">${t('Settings for this vehicle')}</h3>
       <div class="cx-group">
-        <button class="cx-item" id="vhistory"><span class="cx-ico">${i('history')}</span><span class="cx-item-text"><b>${t('Route history')}</b><small>${t('Replay any day on the map')}</small></span>${i('chevron-right')}</button>
-        <label class="cx-item"><span class="cx-ico">${i('layers')}</span><span class="cx-item-text"><b>${t('Google view')}</b><small>${t('Google map with all nearby places')}</small></span><input type="checkbox" class="cx-switch" id="vgswitch" ${googleView?'checked':''}></label>
         <button class="cx-item" id="vspeed"><span class="cx-ico">${i('gauge')}</span><span class="cx-item-text"><b>${t('Overspeed alert')}</b><small>${d.speedAlert===false?t('Off'):t('Speed limit: {n} km/h',{n:d.speedLimit})}</small></span>${i('chevron-right')}</button>
         ${p?`<button class="cx-item" id="vsave"><span class="cx-ico">${i('map-pin')}</span><span class="cx-item-text"><b>${t('Save place')}</b><small>${t('Name this spot, e.g. petrol pump or depot')}</small></span>${i('chevron-right')}</button>`:''}
         ${d.isMobile?`<button class="cx-item" id="vdriver"><span class="cx-ico">${i('smartphone')}</span><span class="cx-item-text"><b>${t('Driver link')}</b><small>${t("Share location from the driver's phone")}</small></span>${i('chevron-right')}</button>`:''}
-        ${p?`<a class="cx-item" href="${mapsLink(p)}" target="_blank" rel="noopener"><span class="cx-ico">${i('navigation')}</span><span class="cx-item-text"><b>${t('Directions')}</b><small>${t('Open in Google Maps')}</small></span>${i('external-link')}</a>`:''}
       </div>`;
     on('#vshare',async()=>{if(!p)return;const text=`${d.name}: ${places.get(placeKey(p))?.label||coords(p)}\n${mapsLink(p)}`;if(navigator.share)await navigator.share({title:d.name,text}).catch(()=>{});else{await navigator.clipboard.writeText(text);toast(t('Location copied.'))}});
     on('#vhistory',()=>{historyVehicle=d.id;go('history')});
     on('#vspeed',()=>speedSettings(d,drawBody));
     on('#vsave',()=>addFence({latitude:p!.latitude,longitude:p!.longitude,radius:150}));
     on('#vdriver',()=>driverLink(d));
-    $<HTMLInputElement>('#vgswitch').onchange=e=>{setGoogle((e.target as HTMLInputElement).checked);$('#vgtoggle').classList.toggle('on',googleView);drawMap();if(!googleView)map.invalidateSize()};
+    on('#vgoogle-tile',()=>{setGoogle(!googleView);$('#vgtoggle').classList.toggle('on',googleView);drawMap();if(!googleView)map.invalidateSize();drawBody()});
     icons();
   };
   drawMap();drawBody();
@@ -391,7 +395,7 @@ function renderAlerts(){
 function renderMore(){
   $('#view').innerHTML=`<div class="cx-page">
     ${appBar('More')}
-    ${MORE.map(([g,items])=>`<h3 class="cx-section">${t(g)}</h3><div class="cx-group">${items.map(([v,l,ic,h])=>`<button class="cx-item" data-go="${v}"><span class="cx-ico">${i(ic)}</span><span class="cx-item-text"><b>${t(l)}</b><small>${t(h)}</small></span>${i('chevron-right')}</button>`).join('')}</div>`).join('')}
+    ${MORE.map(([g,items])=>`<h3 class="cx-section">${t(g)}</h3><div class="cx-tiles">${items.map(([v,l,ic,h])=>`<button data-go="${v}"><span class="cx-tile">${i(ic)}</span><b>${t(l)}</b><small>${t(h)}</small></button>`).join('')}</div>`).join('')}
   </div>`;
   on('#view [data-go]',el=>go(el.dataset.go as View));icons();
 }
