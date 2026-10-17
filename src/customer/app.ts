@@ -1,6 +1,6 @@
 import {$,$$,api,post,clock,closeModal,coords,esc,hm,i,icons,localInput,mapsLink,modal,on,since,statusLabel,statusOf,time,ago,toast,whenUnauthorized,type Alert,type Fence,type Fix,type Identity,type StatusKey,type Vehicle} from '../shared/core';
 import {bearing,createMap,drawRoute,fleetIcon,glide,markerHtml,playbackIcon,point,L} from '../shared/map';
-import {placeSpan,placeText,places,placeKey,placeFallback} from '../shared/places';
+import {place,placeSpan,placeText,places,placeKey,placeFallback} from '../shared/places';
 import {nearest,nearText,nearSaved,placeIcon,PLACE_KIND} from '../shared/poi';
 import {googleModal} from '../shared/google';
 import {googleLive} from '../shared/gview';
@@ -627,7 +627,18 @@ function renderHistory(){
     on('[data-tab]',b=>{tab=b.dataset.tab as typeof tab;drawSheet(segs)},sh);
     on('[data-go]',b=>go(b.dataset.go as View),sh);
     on('[data-seg]',b=>{const s=segs[Number(b.dataset.seg)];const n=track.findIndex(p=>p.recordedAt>=s.from);stopPlay();$('#scrub').hidden=false;showPoint(Math.max(0,n));hmap.setView(point(s.at),Math.max(hmap.getZoom(),14));window.scrollTo({top:0,behavior:'smooth'})},sh);
-    on('#csv',()=>{const v=vehicle(historyVehicle);download(`${v?.name||'route'}-history.csv`,[['Type','From','To','Minutes','Km','Max speed','Latitude','Longitude'],...segs.map(s=>[s.kind==='run'?'Running':'Stopped',new Date(s.from).toISOString(),new Date(s.to).toISOString(),Math.round((s.to-s.from)/60000),Math.round(s.km*10)/10,Math.round(s.maxSpeed),s.at.latitude,s.at.longitude])])},sh);
+    on('#csv',async()=>{
+      const v=vehicle(historyVehicle),btn=$<HTMLButtonElement>('#csv');btn.disabled=true;toast(t('Preparing the file…'));
+      // Place names come from the free map service, one per second; the file waits for up to 25 of them and
+      // keeps the coordinates in their own columns for anything it could not name.
+      let budget=25;
+      const name=async(p:Fix)=>{const key=placeKey(p),known=places.get(key);if(known)return known.label;if(budget<=0)return '';budget--;return (await place(p).catch(()=>null))?.label||''};
+      const stamp=(at:number)=>new Date(at).toLocaleString(locale(),{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:true});
+      const rows:(string|number)[][]=[];
+      for(const s of segs)rows.push([s.kind==='run'?'Running':'Stopped',stamp(s.from),stamp(s.to),Math.round((s.to-s.from)/60000),s.kind==='run'?Math.round(s.km*10)/10:0,s.kind==='run'?Math.round(s.maxSpeed):0,await name(s.at),s.kind==='run'?await name(s.end):await name(s.at),+s.at.latitude.toFixed(6),+s.at.longitude.toFixed(6),+s.end.latitude.toFixed(6),+s.end.longitude.toFixed(6)]);
+      download(`${v?.name||'route'}-history.csv`,[['Type','Start time','End time','Minutes','Km','Max speed (km/h)','Start place','End place','Start latitude','Start longitude','End latitude','End longitude'],...rows]);
+      btn.disabled=false;
+    },sh);
     icons();
   };
   const load=async()=>{
@@ -698,7 +709,7 @@ function renderReport(){
           const segs=segments(await loadTrack(d.id,range[0],range[1]));
           if(reportKind==='stoppage'){head=[t('Vehicle No.'),t('Place'),t('From'),t('To'),t('Duration')];for(const s of segs.filter(x=>x.kind==='stop'))rows.push([d.name,places.get(placeKey(s.at))?.label||coords(s.at),when(s.from),when(s.to),dur(s.to-s.from)])}
           if(reportKind==='overspeed'){head=[t('Vehicle No.'),t('Time'),t('Top speed'),t('Limit'),t('Place')];for(const s of segs.filter(x=>x.kind==='run'&&x.maxSpeed>d.speedLimit))rows.push([d.name,when(s.from),`${Math.round(s.maxSpeed)} km/h`,`${d.speedLimit} km/h`,places.get(placeKey(s.at))?.label||coords(s.at)])}
-          if(reportKind==='itinerary'){head=[t('Vehicle No.'),t('Status'),t('From'),t('To'),t('Duration'),t('Distance')];for(const s of segs)rows.push([d.name,t(s.kind==='run'?'Running':'Stopped'),when(s.from),when(s.to),dur(s.to-s.from),s.kind==='run'?`${Math.round(s.km*10)/10} km`:'—'])}
+          if(reportKind==='itinerary'){head=[t('Vehicle No.'),t('Status'),t('From'),t('To'),t('Duration'),t('Distance'),t('Start place'),t('End place')];for(const s of segs)rows.push([d.name,t(s.kind==='run'?'Running':'Stopped'),when(s.from),when(s.to),dur(s.to-s.from),s.kind==='run'?`${Math.round(s.km*10)/10} km`:'—',places.get(placeKey(s.at))?.label||'',places.get(placeKey(s.kind==='run'?s.end:s.at))?.label||''])}
         }
         summary=reportKind==='stoppage'?`${t('{n} stops',{n:rows.length})}`:reportKind==='overspeed'?`${t('{n} overspeeding runs',{n:rows.length})}`:'';
       }

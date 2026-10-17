@@ -393,4 +393,7 @@ export const HI:Record<string,string>={
   "Last GPS fix {t}. The tracker has no satellite signal, so this place may be a little off.":"आख़िरी GPS लोकेशन {t} की है। ट्रैकर को सैटेलाइट सिग्नल नहीं मिल रहा, इसलिए यह जगह थोड़ी अलग हो सकती है।",
   "Location updated":"लोकेशन अपडेट",
   "Last signal":"आख़िरी सिग्नल",
+  "Preparing the file…":"फ़ाइल तैयार हो रही है…",
+  "Start place":"शुरू की जगह",
+  "End place":"अंत की जगह",
 };
