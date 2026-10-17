@@ -106,8 +106,9 @@ export async function gatewayRequest(req,res,store,client,bridge){
     for(const incoming of data.devices){
       try{const fresh=await store.raw(incoming.id);if(fresh.model!=='Mobile')await provisionTick(store,bridge,fresh)}
       catch(e){console.error('Provisioning step failed:',e.message)}
-    // A parked tracker stops uploading location; ask it for its position while its last fix is stale.
-    for(const incoming of data.devices){
+    // Off by default: a PT06 hangs up within seconds of connecting and never answers WHERE# over GPRS (only by SMS),
+    // so asking only fills the command log. Set GPS_LOCATE_POLL=true for trackers that do answer.
+    if(process.env.GPS_LOCATE_POLL==='true')for(const incoming of data.devices){
       try{const fresh=await store.raw(incoming.id);if(fresh.model!=='Mobile')await locationTick(store,bridge,fresh)}
       catch(e){console.error('Location refresh failed:',e.message)}
     }
