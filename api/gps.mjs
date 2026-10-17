@@ -2,6 +2,7 @@ import { PostgresTrackingStore } from '../server/postgres-store.mjs';
 import { createTrackingServer } from '../server/tracking.mjs';
 import { createCloudFileHandler } from '../server/cloud-files.mjs';
 import { isIP } from 'node:net';
+import { randomBytes } from 'node:crypto';
 import { normalizeCloudRequest } from '../server/cloud-routing.mjs';
 import { databasePool,initializeDatabase,CloudSessions,cloudRateLimit,authenticateWorkspace,cloudBridge,gatewayRequest } from '../server/cloud-runtime.mjs';
 
@@ -18,8 +19,10 @@ export default async function handler(req,res){
     if(await files(req,res))return;
     const bridge=await cloudBridge(store,client);
     if(await gatewayRequest(req,res,store,client,bridge))return;
-    const adminToken=process.env.WAYPOINT_SESSION_SECRET;
-    if(!adminToken||adminToken.length<24)throw new Error('Vercel session secret is not configured.');
+    let adminToken=process.env.WAYPOINT_SESSION_SECRET;
+    // A missing or too-short maintenance key must not take customers down: keep the app running, but with a
+    // random key nobody knows, so maintenance-key sign-in and password recovery stay off until it is fixed.
+    if(!adminToken||adminToken.length<24){console.error('WAYPOINT_SESSION_SECRET is missing or shorter than 24 characters: maintenance-key sign-in and admin password recovery are off.');adminToken=randomBytes(32).toString('hex');}
     const server=createTrackingServer({store,adminToken,bridge,publicOrigin:origin,frontendOrigin:undefined,sessionStore:sessions,rateLimit:cloudRateLimit(client),clientAddressResolver:request=>{
       const address=String(request.headers['x-vercel-forwarded-for']||'').split(',')[0].trim();
       return isIP(address)?address:request.socket?.remoteAddress||'unknown';
