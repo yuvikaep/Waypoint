@@ -20,9 +20,13 @@ export async function initializeDatabase(){
       const email=process.env.WAYPOINT_ADMIN_EMAIL?.trim().toLowerCase();
       const password=process.env.WAYPOINT_ADMIN_PASSWORD;
       if(email&&password){
-        if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||password.length<12||password.length>128)throw new Error('Invalid admin bootstrap configuration.');
-        const salt=randomBytes(16).toString('hex');
-        await store.db.prepare('INSERT INTO admins(email,salt,passwordHash,createdAt) VALUES (?,?,?,?) ON CONFLICT(email) DO NOTHING').run(email,salt,scryptSync(password,salt,64).toString('hex'),Date.now());
+        // A mistyped bootstrap value must never take the whole app down for every customer:
+        // skip creating the admin and say why in the logs.
+        if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||password.length<12||password.length>128)console.error('WAYPOINT_ADMIN_EMAIL / WAYPOINT_ADMIN_PASSWORD ignored: the email must look like name@site.com and the password must be 12 to 128 characters.');
+        else{
+          const salt=randomBytes(16).toString('hex');
+          await store.db.prepare('INSERT INTO admins(email,salt,passwordHash,createdAt) VALUES (?,?,?,?) ON CONFLICT(email) DO NOTHING').run(email,salt,scryptSync(password,salt,64).toString('hex'),Date.now());
+        }
       }
     }finally{client.release();}
   })().catch(error=>{initialized=undefined;throw error;});
