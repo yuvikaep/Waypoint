@@ -57,15 +57,24 @@ export function showSecret(email:string,password:string,note='Share it privately
 }
 export function wireCopy(root:ParentNode=document){on('[data-copy]',async el=>{await navigator.clipboard.writeText(el.dataset.copy!);toast('Copied.')},root)}
 
-// Formatting
-export const time=(at:number|null)=>at?new Date(at).toLocaleString(locale(),{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}):t('Never');
-export const clock=(at:number|null)=>at?new Date(at).toLocaleTimeString(locale(),{hour:'2-digit',minute:'2-digit'}):'—';
+// Formatting. The app is used in India, so every time is shown in IST whatever the phone's own zone.
+export const IST='Asia/Kolkata',IST_OFFSET=-330;
+const IST_MS=19800000;
+export const time=(at:number|null)=>at?new Date(at).toLocaleString(locale(),{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',timeZone:IST}):t('Never');
+export const clock=(at:number|null)=>at?new Date(at).toLocaleTimeString(locale(),{hour:'2-digit',minute:'2-digit',timeZone:IST}):'—';
+// Midnight IST, offset by whole days.
+export const istDayStart=(offset=0,at=Date.now())=>new Date(Math.floor((at+IST_MS)/86400000+offset)*86400000-IST_MS);
 export function ago(at:number|null){if(!at)return t('Never');const s=Math.max(0,Math.floor((Date.now()-at)/1000));return s<60?t('Just now'):s<3600?t('{n} min ago',{n:Math.floor(s/60)}):s<86400?t('{n} h ago',{n:Math.floor(s/3600)}):t('{n} d ago',{n:Math.floor(s/86400)})}
 export function since(from:number){const m=Math.max(0,Math.floor((Date.now()-from)/60000));return m<60?t('{m} min',{m}):m<1440?t('{h} h {m} min',{h:Math.floor(m/60),m:m%60}):t('{d} d {h} h',{d:Math.floor(m/1440),h:Math.floor(m%1440/60)})}
 export const hm=(minutes:number)=>minutes<60?t('{m} min',{m:minutes}):t('{h} h {m} min',{h:Math.floor(minutes/60),m:String(minutes%60).padStart(2,'0')});
 export const coords=(p:{latitude:number;longitude:number})=>`${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)}`;
 export const mapsLink=(p:{latitude:number;longitude:number})=>`https://www.google.com/maps?q=${p.latitude},${p.longitude}`;
-export const localInput=(date:Date)=>new Date(date.getTime()-date.getTimezoneOffset()*60000).toISOString().slice(0,16);
+// datetime-local fields hold IST wall time.
+export const localInput=(date:Date)=>new Date(date.getTime()+IST_MS).toISOString().slice(0,16);
+export const fromLocalInput=(value:string)=>new Date(`${value}:00+05:30`);
+// A parked hardware tracker sends a heartbeat every minute from where it stands, so while it is
+// online and parked its location counts as updated at the latest heartbeat.
+export const updatedAt=(v:Vehicle)=>{const p=v.position;if(!p)return v.lastSeen;return !v.isMobile&&v.model!=='Mobile'&&v.online&&v.status==='Stopped'&&v.lastSeen?Math.max(p.recordedAt,v.lastSeen):p.recordedAt};
 
 // One status vocabulary for chips, markers and filters, in the way Indian fleet apps show it.
 export type StatusKey='running'|'idle'|'stopped'|'offline'|'nofix'|'waiting';

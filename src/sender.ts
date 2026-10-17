@@ -34,7 +34,7 @@ export async function mobileSender(){
   };
   const send=async(position:GeolocationPosition,commandId?:string)=>{
     if(!sharing||sending)return;sending=true;const run=generation;
-    try{await senderRequest('/sender/position',{eventId:crypto.randomUUID(),recordedAt:new Date(position.timestamp).toISOString(),latitude:position.coords.latitude,longitude:position.coords.longitude,speed:Math.max(0,(position.coords.speed||0)*3.6),heading:position.coords.heading,accuracy:position.coords.accuracy,commandId});if(run===generation){error('');$('#sender-status').textContent=`Location share ho rahi hai · ${new Date().toLocaleTimeString()} · accuracy ${Math.round(position.coords.accuracy)} m`;}}
+    try{await senderRequest('/sender/position',{eventId:crypto.randomUUID(),recordedAt:new Date(position.timestamp).toISOString(),latitude:position.coords.latitude,longitude:position.coords.longitude,speed:Math.max(0,(position.coords.speed||0)*3.6),heading:position.coords.heading,accuracy:position.coords.accuracy,commandId});if(run===generation){error('');$('#sender-status').textContent=`Location share ho rahi hai · ${new Date().toLocaleTimeString('en-IN',{timeZone:'Asia/Kolkata'})} · accuracy ${Math.round(position.coords.accuracy)} m`;}}
     catch(e){error((e as Error).message)}finally{sending=false}
   };
   const locationError=(e:GeolocationPositionError)=>{error(e.code===1?'Location permission band hai. Browser settings mein Location Allow karein, phir dobara shuru karein.':e.code===2?'Location nahi mil rahi. Phone ka GPS on karke khuli jagah par try karein.':'GPS ka wait ho raha hai. Dobara koshish karein.');if(e.code===1){if(sharing)report('permission');stop()}};
@@ -49,7 +49,7 @@ export async function mobileSender(){
   });
   const connect=async()=>{
     $('#retry-sender').hidden=true;
-    try{type Joined={device:{id:string;name:string;driver:string};expiresAt?:number|null};const result=joinCode?await api<Joined>('/sender/join',{method:'POST',body:JSON.stringify({code:joinCode})}):await api<Joined>('/sender/me');$('#sender-until').textContent=result.expiresAt?`Yeh link ${new Date(result.expiresAt).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} tak chalega.`:'';deviceId=result.device.id;$('#sender-vehicle').textContent=result.device.name+(result.device.driver?' · '+result.device.driver:'');$<HTMLButtonElement>('#start-sender').disabled=false;error('')}
+    try{type Joined={device:{id:string;name:string;driver:string};expiresAt?:number|null};const result=joinCode?await api<Joined>('/sender/join',{method:'POST',body:JSON.stringify({code:joinCode})}):await api<Joined>('/sender/me');$('#sender-until').textContent=result.expiresAt?`Yeh link ${new Date(result.expiresAt).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kolkata'})} tak chalega.`:'';deviceId=result.device.id;$('#sender-vehicle').textContent=result.device.name+(result.device.driver?' · '+result.device.driver:'');$<HTMLButtonElement>('#start-sender').disabled=false;error('')}
     catch(e){$('#sender-vehicle').textContent='Driver link chahiye';error((e as Error).message);$('#retry-sender').hidden=false}
   };
   action('#retry-sender',connect);await connect();

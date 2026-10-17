@@ -15,7 +15,7 @@ test('SIM operator and type pick the APN; bootstrap texts and plan match the tra
     ['APN,seller.apn.example,u,p#', 'SERVER,0,92.4.84.227,5023,0#', 'STATUS#']);
   assert.deepEqual(bootstrapSms({ model: 'FMB920' }, {}), []);
   const plan = buildPlan({ model: 'PT06' }, { moving: 10, parked: 60 });
-  assert.deepEqual(plan.map(s => s.command), ['VERSION#', 'GMT,E,0,0#', 'TIMER#', 'ACCREP,ON#', 'BATCH,OFF#', 'GPRSON,1#', 'STATUS#', 'PARAM#', 'RESET#']);
+  assert.deepEqual(plan.map(s => s.command), ['VERSION#', 'GMT,E,5,30#', 'TIMER#', 'ACCREP,ON#', 'BATCH,OFF#', 'GPRSON,1#', 'STATUS#', 'PARAM#', 'RESET#']);
   assert.equal(buildPlan({ model: 'GT06' }, { moving: 10, parked: 60 })[2].command, 'TIMER,10,60#');
   for (const step of plan) assert.ok(commandAllowed(step.command), `${step.command} must be on the command channel allowlist`);
   assert.deepEqual(buildPlan({ model: 'Mobile' }), []);
@@ -45,7 +45,7 @@ test('automatic set-up sends one command at a time, waits for each reply, retrie
   assert.equal((await tick()).waiting, true); assert.deepEqual(sent, ['VERSION#']);
   reply('GT06B_10_8MM V11');
   assert.equal((await tick()).advanced, true);
-  for (const next of ['GMT,E,0,0#', 'TIMER,10,60#', 'ACCREP,ON#', 'BATCH,OFF#', 'GPRSON,1#', 'STATUS#']) {
+  for (const next of ['GMT,E,5,30#', 'TIMER,10,60#', 'ACCREP,ON#', 'BATCH,OFF#', 'GPRSON,1#', 'STATUS#']) {
     assert.deepEqual(await tick(), { sent: next });
     reply(next === 'TIMER,10,60#' ? 'TIMER:10,60;OK' : 'OK');
     assert.equal((await tick()).advanced, true);

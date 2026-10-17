@@ -1,4 +1,4 @@
-import {$,$$,api,post,clock,closeModal,coords,esc,hm,i,icons,localInput,mapsLink,modal,on,since,statusLabel,statusOf,time,ago,toast,whenUnauthorized,type Alert,type Fence,type Fix,type Identity,type StatusKey,type Vehicle} from '../shared/core';
+import {$,$$,api,post,clock,closeModal,coords,esc,fromLocalInput,hm,i,icons,IST,IST_OFFSET,istDayStart,localInput,updatedAt,mapsLink,modal,on,since,statusLabel,statusOf,time,ago,toast,whenUnauthorized,type Alert,type Fence,type Fix,type Identity,type StatusKey,type Vehicle} from '../shared/core';
 import {bearing,createMap,drawRoute,fleetIcon,glide,markerHtml,playbackIcon,point,L} from '../shared/map';
 import {place,placeSpan,placeText,places,placeKey,placeFallback} from '../shared/places';
 import {nearest,nearText,nearSaved,placeIcon,PLACE_KIND} from '../shared/poi';
@@ -59,13 +59,12 @@ const vehicle=(id:string)=>fleet.devices.find(d=>d.id===id);
 const group=(s:StatusKey)=>s==='running'?'running':s==='stopped'||s==='idle'?'stopped':'offline';
 const overspeeding=(d:Vehicle)=>statusOf(d)==='running'&&!!d.position&&d.position.speed>d.speedLimit;
 const initial=(s:string)=>esc((s||'W').trim().charAt(0).toUpperCase());
-const dayStart=(offset=0)=>{const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()+offset);return d};
+const dayStart=(offset=0)=>istDayStart(offset);
 // "Today, 03:45 PM" / "Yesterday, 11:02 AM" / "14 Oct, 09:30 AM"
 function when(at:number|null){
   if(!at)return t('Never');
-  const d=new Date(at),day=new Date(at);day.setHours(0,0,0,0);
-  const diff=Math.round((+dayStart()-+day)/86400000);
-  return `${diff===0?t('Today'):diff===1?t('Yesterday'):d.toLocaleDateString(locale(),{day:'numeric',month:'short'})}, ${clock(at)}`;
+  const diff=Math.round((+dayStart()-+istDayStart(0,at))/86400000);
+  return `${diff===0?t('Today'):diff===1?t('Yesterday'):new Date(at).toLocaleDateString(locale(),{day:'numeric',month:'short',timeZone:IST})}, ${clock(at)}`;
 }
 
 /* ---------- Start, routing, refresh ---------- */
@@ -164,7 +163,7 @@ async function loadFleetKm(){
   try{const r=await reports(dayStart(),new Date());for(const v of r.vehicles)kmToday.set(v.id,v.total.distanceKm);if(view==='home'||view==='vehicle')onRefresh?.()}catch{/* shown as — */}
 }
 function reports(from:Date,to:Date,device?:string){
-  return api<{vehicles:VehicleReport[]}>(`/reports?${new URLSearchParams({from:from.toISOString(),to:to.toISOString(),tz:String(new Date().getTimezoneOffset()),...(device?{device}:{})})}`);
+  return api<{vehicles:VehicleReport[]}>(`/reports?${new URLSearchParams({from:from.toISOString(),to:to.toISOString(),tz:String(IST_OFFSET),...(device?{device}:{})})}`);
 }
 
 /* ---------- Diesel prices ---------- */
@@ -239,13 +238,13 @@ function vehicleCard(d:Vehicle){
   return `<article class="we-card ${over?'over':''}">
     <button class="we-card-top" data-open="${d.id}">
       <span class="we-speed ${over?'sos':speed?'run':'zero'}"><b>${speed}</b><small>kmph</small></span>
-      <span class="we-id"><b class="cx-plate">${esc(d.name)}</b><small class="we-upd"><em>${t(p?'Location updated':'Last signal')}</em>${when(p?.recordedAt??d.lastSeen)}</small></span>
+      <span class="we-id"><b class="cx-plate">${esc(d.name)}</b><small class="we-upd"><em>${t(p?'Location updated':'Last signal')}</em>${when(updatedAt(d))}</small></span>
       <span class="we-ign ${d.ignition?'on':''}"><b>${d.ignition==null?'—':d.ignition?'ON':'OFF'}</b><small>${t('Ignition')}</small></span>
     </button>
     <button class="we-kebab" data-menu="${d.id}" aria-label="${t('More options')}">${i('ellipsis-vertical')}</button>
     <div class="we-addr"><p>${mine?`<b>${esc(mine)}</b><br>`:''}${placeSpan(p,d.id)}</p></div>
     ${line?`<p class="we-line">${esc(line)}</p>`:''}
-    ${!d.isMobile&&p&&d.online&&Date.now()-p.recordedAt>10*60000?`<p class="we-stale">${i('satellite')} ${t('Last GPS fix {t}. The tracker has no satellite signal, so this place may be a little off.',{t:ago(p.recordedAt)})}</p>`:''}
+    ${!d.isMobile&&p&&d.online&&Date.now()-updatedAt(d)!>10*60000?`<p class="we-stale">${i('satellite')} ${t('Last GPS fix {t}. The tracker has no satellite signal, so this place may be a little off.',{t:ago(p.recordedAt)})}</p>`:''}
     <div class="we-acts">
       ${d.driverPhone?`<a href="tel:${esc(d.driverPhone)}"><span class="we-act-ico">${i('phone')}</span>${t('Call driver')}</a>`:`<button data-phone="${d.id}"><span class="we-act-ico">${i('phone')}</span>${t('Call driver')}</button>`}
       <button data-signal="${d.id}"><span class="we-act-ico">${bars(d.signal)}</span>${signalLabel(d)}</button>
@@ -446,7 +445,7 @@ function renderVehicle(){
     const d=vehicle(vehicleId);if(!d)return;
     const p=d.position,km=kmToday.get(d.id),s=statusOf(d);
     $('#vcard').innerHTML=`<button class="we-back" data-back aria-label="${t('Back')}">${i('arrow-left')}</button>
-      <div class="we-vcard-main"><b class="cx-plate">${esc(d.name)}<i class="we-dot ${overspeeding(d)?'sos':group(s)}"></i></b><small>${t('Last updated on {t}',{t:when(p?.recordedAt??d.lastSeen)})}</small>
+      <div class="we-vcard-main"><b class="cx-plate">${esc(d.name)}<i class="we-dot ${overspeeding(d)?'sos':group(s)}"></i></b><small>${t('Last updated on {t}',{t:when(updatedAt(d))})}</small>
       <div class="we-vcard-line"><span>${km==null?'—':t('{n} km today',{n:km})}</span><span>${t('Ignition')}: <b class="${d.ignition?'on':'off'}">${d.ignition==null?'—':d.ignition?t('On'):t('Off')}</b></span></div></div>`;
     on('[data-back]',back,$('#vcard'));icons();
   };
@@ -505,7 +504,7 @@ function renderAlerts(){
     const unseen=fleet.alerts.filter(a=>!a.acknowledged).length;
     const cats=CATEGORIES.filter(c=>fleet.alerts.some(a=>categoryOf(a.type)===c.key));
     const list=fleet.alerts.filter(a=>alertsCat==='all'||categoryOf(a.type)===alertsCat).sort((a,b)=>b.createdAt-a.createdAt);
-    const days=new globalThis.Map<string,Alert[]>();for(const a of list){const k=new Date(a.createdAt).toLocaleDateString(locale(),{day:'numeric',month:'short',year:'numeric'});if(!days.has(k))days.set(k,[]);days.get(k)!.push(a)}
+    const days=new globalThis.Map<string,Alert[]>();for(const a of list){const k=new Date(a.createdAt).toLocaleDateString(locale(),{day:'numeric',month:'short',year:'numeric',timeZone:IST});if(!days.has(k))days.set(k,[]);days.get(k)!.push(a)}
     const tone=(type:string)=>type==='sos'||type==='speed'||type==='offline'||type==='harsh_brake'||type==='parking_lock'?'sos':type==='ignition_on'||type==='online'||type==='share_resumed'?'good':'neutral';
     $('#view').innerHTML=`<div class="we-page">${topBar(t('Notifications'),`<button class="we-toplink" data-go="settings">${i('settings')}${t('Settings')}</button>`)}
       <div id="push-banner"></div>
@@ -570,7 +569,7 @@ function askRange(from:Date,to:Date):Promise<[Date,Date]|null>{
     modal(t('Date range'),`<form class="form" id="range"><div class="form-row"><label class="field">${t('From')}<input class="input" type="datetime-local" name="from" value="${localInput(from)}" required></label><label class="field">${t('To')}<input class="input" type="datetime-local" name="to" value="${localInput(to)}" required></label></div><p class="hint">${t('Up to 31 days.')}</p><button class="btn btn-primary" type="submit">${t('Show')}</button></form>`);
     const dlg=document.querySelector<HTMLDialogElement>('dialog.modal')!;let done=false;
     dlg.addEventListener('close',()=>{if(!done)resolve(null)},{once:true});
-    $('#range').addEventListener('submit',e=>{e.preventDefault();const f=new FormData(e.target as HTMLFormElement),a=new Date(String(f.get('from'))),b=new Date(String(f.get('to')));if(!(+a<+b)||+b-+a>31*86400000){toast(t('Choose a range of up to 31 days.'),true);return}done=true;closeModal();resolve([a,b])});
+    $('#range').addEventListener('submit',e=>{e.preventDefault();const f=new FormData(e.target as HTMLFormElement),a=fromLocalInput(String(f.get('from'))),b=fromLocalInput(String(f.get('to')));if(!(+a<+b)||+b-+a>31*86400000){toast(t('Choose a range of up to 31 days.'),true);return}done=true;closeModal();resolve([a,b])});
   });
 }
 
@@ -629,7 +628,7 @@ function renderHistory(){
       // keeps the coordinates in their own columns for anything it could not name.
       let budget=25;
       const name=async(p:Fix)=>{const key=placeKey(p),known=places.get(key);if(known)return known.label;if(budget<=0)return '';budget--;return (await place(p).catch(()=>null))?.label||''};
-      const stamp=(at:number)=>new Date(at).toLocaleString(locale(),{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:true});
+      const stamp=(at:number)=>new Date(at).toLocaleString(locale(),{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:true,timeZone:IST});
       const rows:(string|number)[][]=[];
       for(const s of segs)rows.push([s.kind==='run'?'Running':'Stopped',stamp(s.from),stamp(s.to),Math.round((s.to-s.from)/60000),s.kind==='run'?Math.round(s.km*10)/10:0,s.kind==='run'?Math.round(s.maxSpeed):0,await name(s.at),s.kind==='run'?await name(s.end):await name(s.at),+s.at.latitude.toFixed(6),+s.at.longitude.toFixed(6),+s.end.latitude.toFixed(6),+s.end.longitude.toFixed(6)]);
       download(`${v?.name||'route'}-history.csv`,[['Type','Start time','End time','Minutes','Km','Max speed (km/h)','Start place','End place','Start latitude','Start longitude','End latitude','End longitude'],...rows]);
@@ -694,7 +693,7 @@ function renderReport(){
       if(reportKind==='distance'){
         const r=(await reports(range[0],range[1],device||undefined)).vehicles;
         head=[t('Vehicle No.'),t('Date'),t('Distance'),t('Running'),t('Idle'),t('Max speed')];
-        rows=r.flatMap(v=>v.days.map(d=>[v.name,new Date(d.date+'T00:00').toLocaleDateString(locale(),{day:'numeric',month:'short'}),`${d.distanceKm} km`,hm(d.runningMinutes),hm(d.idleMinutes),`${d.maxSpeed} km/h`]));
+        rows=r.flatMap(v=>v.days.map(d=>[v.name,new Date(d.date+'T00:00Z').toLocaleDateString(locale(),{day:'numeric',month:'short',timeZone:'UTC'}),`${d.distanceKm} km`,hm(d.runningMinutes),hm(d.idleMinutes),`${d.maxSpeed} km/h`]));
         summary=`${t('Total distance')}: ${Math.round(r.reduce((s,v)=>s+v.total.distanceKm,0)*10)/10} km`;
       }else if(reportKind==='geofence'){
         const from=+range[0],to=+range[1];
