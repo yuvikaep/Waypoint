@@ -25,6 +25,11 @@ export function commandText(model,action,input={}){
     reboot:()=>'RESET#',status:()=>'STATUS#',settings:()=>'PARAM#',version:()=>'VERSION#',where:()=>'WHERE#',network:()=>'GPRSSET#',gprsOn:()=>'GPRSON,1#',
     accReport:()=>`ACCREP,${input.on===false?'OFF':'ON'}#`,
     batchOff:()=>'BATCH,OFF#',
+    // A portable tracker sleeps its GPS while the vehicle stands still, so a parked vehicle sends
+    // heartbeats without a new fix. SLEEP,OFF keeps GPS on; it uses far more battery.
+    sleepOff:()=>'SLEEP,OFF#',
+    sleepOn:()=>'SLEEP,SHOCK#',
+    sleepRead:()=>'SLEEP#',
     timezone:()=>`GMT,${input.west?'W':'E'},${Number(input.hours)},${Number(input.minutes)||0}#`,
     interval:()=>`TIMER,${seconds(input.moving,5)},${seconds(input.parked,1)}#`,
     apn:()=>`APN,${[input.apn,...(input.user||input.password?[input.user||'',input.password||'']:[])].join(',')}#`,

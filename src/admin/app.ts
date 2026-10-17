@@ -335,7 +335,7 @@ function renderHealth(data:Detail){
   const fixAge=fix?Date.now()-fix.recordedAt:Infinity;
   const fixState=!fix?['bad','No fix yet','The tracker has not sent a satellite location yet.']
     :fixAge<=10*60000?['ok','Live GPS',`Fixed ${ago(fix.recordedAt).toLowerCase()} · ${time(fix.recordedAt)}`]
-    :d.online?['bad','No location being sent',`The tracker is connected and heartbeating, but its last position is from ${time(fix.recordedAt)} (${ago(fix.recordedAt).toLowerCase()}). It is not uploading a new fix.`]
+    :d.online?['bad','No location being sent',`Connected and heartbeating, but the last position is from ${time(fix.recordedAt)} (${ago(fix.recordedAt).toLowerCase()}). A battery-powered tracker does this when it sleeps its GPS while the vehicle stands still — try <b>Keep GPS awake</b> under Setup &amp; commands.`]
     :['warn','Old fix',`${ago(fix.recordedAt)} · ${time(fix.recordedAt)}`];
   const sig=rssi?Number(rssi.v):null,sigTone=sig==null?'':sig>=3?'ok':sig>=2?'warn':'bad';
   const powerTone=data.power.connected==null?(charge?(charge.v?'ok':'bad'):''):data.power.connected?'ok':'bad';
@@ -362,7 +362,7 @@ function renderHealth(data:Detail){
   </div>`;
 }
 const SMS_TEXT:Record<string,(i:Record<string,string>)=>string>={
-  reboot:()=>'RESET#',status:()=>'STATUS#',settings:()=>'PARAM#',version:()=>'VERSION#',where:()=>'WHERE#',network:()=>'GPRSSET#',gprsOn:()=>'GPRSON,1#',batchOff:()=>'BATCH,OFF#',
+  reboot:()=>'RESET#',status:()=>'STATUS#',settings:()=>'PARAM#',version:()=>'VERSION#',where:()=>'WHERE#',network:()=>'GPRSSET#',gprsOn:()=>'GPRSON,1#',batchOff:()=>'BATCH,OFF#',sleepOff:()=>'SLEEP,OFF#',sleepOn:()=>'SLEEP,SHOCK#',sleepRead:()=>'SLEEP#',
   accReport:i=>`ACCREP,${i.on==='false'?'OFF':'ON'}#`,timezone:i=>`GMT,${i.west==='true'?'W':'E'},${Number(i.hours)},${Number(i.minutes)||0}#`,interval:i=>`TIMER,${i.moving},${i.parked}#`,
   apn:i=>`APN,${i.apn}${i.user||i.password?`,${i.user||''},${i.password||''}`:''}#`,
   server:i=>`SERVER,${/^\d+(\.\d+){3}$/.test(i.host)?0:1},${i.host},${i.port},0#`};
@@ -370,7 +370,7 @@ function renderCommands(data:Detail){
   const d=data.device,gt06=['GT06','GT06N','PT06'].includes(d.model);
   const online=!!d.lastSeen&&Date.now()-d.lastSeen<=600000;
   if(d.model==='Mobile'){$('#dp-commands').innerHTML='<h2>Commands</h2><p class="muted" style="margin-top:8px">Phone-based vehicles have no tracker settings.</p>';return}
-  const quick=[['status','Status','activity'],['settings','Read settings','info'],['version','Firmware version','server'],['where','Location now','map-pin'],['network','Network settings','radio-tower'],['gprsOn','GPRS on','power'],['batchOff','Send fixes at once','timer']] as const;
+  const quick=[['status','Status','activity'],['settings','Read settings','info'],['version','Firmware version','server'],['where','Location now','map-pin'],['network','Network settings','radio-tower'],['gprsOn','GPRS on','power'],['batchOff','Send fixes at once','timer'],['sleepOff','Keep GPS awake (no sleep)','satellite'],['sleepRead','Read sleep setting','moon-star']] as const;
   $('#dp-commands').innerHTML=`<div class="section-title"><h2>Commands</h2><span class="chip ${online?'ok':'bad'}">${online?`Signal ${ago(d.lastSeen).toLowerCase()} · delivered at its next connection`:'No recent signal'}</span></div>
     <p class="${online?'hint':'gap-note'}" style="margin-bottom:12px">${online?'Commands wait in a queue and reach the tracker the next time it connects, usually within a minute or two. The reply appears in the log below.':`${i('triangle-alert')}No signal from the tracker for over 10 minutes, so commands are not queued. Copy the SMS text and send it from a phone to the tracker's SIM.`}</p>
     <div class="presets" id="quick">${quick.map(([a,l,ic])=>`<button class="btn btn-ghost btn-sm" data-cmd="${a}">${i(ic)}${l}</button>`).join('')}<button class="btn btn-danger btn-sm" data-cmd="reboot">${i('refresh-cw')}Reboot</button></div>
