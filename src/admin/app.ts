@@ -298,7 +298,7 @@ function renderHealth(data:Detail){
     <div class="health-grid">
       <div><h3>Network</h3><dl class="facts">
         <dt>GSM signal</dt><dd>${rssi?`${SIGNAL[Math.min(4,Math.max(0,Number(rssi.v)))]||rssi.v} (${rssi.v}/4)`:na}</dd>
-        <dt>Last packet</dt><dd>${ago(d.lastSeen)}<small>${time(d.lastSeen)}</small></dd>
+        <dt>Last packet</dt><dd>${ago(d.lastSeen)} · ${time(d.lastSeen)}<small class="muted">Heartbeat: the tracker is connected. It does not carry a location.</small></dd>
         <dt>Heartbeats (last hour)</dt><dd>${hbHour}</dd>
         ${clockNote?`<dt>GPS clock</dt><dd>${clockNote}</dd>`:''}
         <dt>Timeout setting</dt><dd>${limit} min${gap!=null&&gap>limit?` <span class="chip bad plain">missed ${Math.max(1,Math.floor(gap/Math.max(1,limit)))}×</span>`:''}</dd></dl></div>
@@ -309,8 +309,8 @@ function renderHealth(data:Detail){
         <dt>Voltage (V)</dt><dd><span class="muted">Not reported by ${esc(d.model)} (only % is sent)</span></dd>
         <dt>Tamper / alarms</dt><dd>${alarms.length?alarms.map(a=>`<span class="chip bad plain">${esc(alarmWords(String(extraOf(a).alarm)))}</span> ${time(a.receivedAt)}`).join('<br>'):'None reported'}</dd></dl></div>
       <div><h3>GPS quality</h3><dl class="facts">
-        <dt>Fix status</dt><dd>${lastFix?`Fixed · ${ago(lastFix.recordedAt)}`:'No recent fix'}</dd>
-        <dt>Satellites</dt><dd>${sats?String(sats.v):na}</dd>
+        <dt>Fix status</dt><dd>${lastFix?(Date.now()-lastFix.recordedAt>10*60000?`<span class="chip idle plain">Old fix</span> ${ago(lastFix.recordedAt)} · ${time(lastFix.recordedAt)}<small class="muted">No new satellite fix: the tracker has no sky view (indoors or covered). It keeps repeating its last location.</small>`:`Fixed · ${ago(lastFix.recordedAt)}`):'No recent fix'}</dd>
+        <dt>Satellites (at that fix)</dt><dd>${sats?String(sats.v):na}</dd>
         <dt>HDOP / PDOP</dt><dd><span class="muted">Not reported by ${esc(d.model)}</span></dd>
         <dt>Last known place</dt><dd>${d.position?`${coords(d.position)}`:'—'}</dd></dl></div></div>`;
 }
