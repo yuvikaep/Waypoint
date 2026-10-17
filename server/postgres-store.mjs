@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { PgAdapter } from './pg-adapter.mjs';
 import { cleanExtra, alarmAlerts, hardBrake, overspeed, REPEAT, SPEED_REPEAT, shareHours, SHARE_STOPPED, shareSilent, PLACE_KINDS, parkBreach, cleanPhone } from './extra.mjs';
 import { cleanSetup, cleanVehicle } from './provision.mjs';
+import { addMonths, cleanCoupon, cleanRenewal, couponProblem, planState, priceWithCoupon, renewalFrom } from './billing.mjs';
 import { cleanGpsRequest, REQUEST_STATUS } from './buy.mjs';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 
@@ -56,6 +57,69 @@ export class PostgresTrackingStore {
   async addGpsRequest(tenantId,body){const r={id:randomUUID(),tenantId,...cleanGpsRequest(body),status:'new',createdAt:this.now()};(await this.db.prepare('INSERT INTO gps_requests(id,tenantId,name,phone,vehicles,product,note,status,createdAt) VALUES (?,?,?,?,?,?,?,?,?)').run(r.id,r.tenantId,r.name,r.phone,r.vehicles,r.product,r.note,r.status,r.createdAt));return r;}
   async gpsRequests(tenantId){const q="SELECT r.*,COALESCE(c.name,'') AS customerName FROM gps_requests r LEFT JOIN customers c ON c.id=r.tenantId";return tenantId?(await this.db.prepare(q+' WHERE r.tenantId=? ORDER BY r.createdAt DESC LIMIT 100').all(tenantId)):(await this.db.prepare(q+' ORDER BY r.createdAt DESC LIMIT 500').all());}
   async setGpsRequestStatus(id,status){if(!REQUEST_STATUS.includes(status))fail(400,'Unknown status.');if(!(await this.db.prepare('UPDATE gps_requests SET status=? WHERE id=?').run(status,id)).changes)fail(404,'Request not found.');}
+  /* ---------- Plans, renewals and coupons ---------- */
+  // Each device carries its own plan. Nothing is charged online: an admin records a payment made
+  // outside the app, which moves the device's expiry forward.
+  async coupon(code){return (await this.db.prepare('SELECT * FROM coupons WHERE code=?').get(String(code||'').trim().toUpperCase()))||null;}
+  async coupons(){return (await this.db.prepare('SELECT * FROM coupons ORDER BY createdAt DESC LIMIT 200').all());}
+  async saveCoupon(input){
+    const c=cleanCoupon(input),existing=(await this.coupon(c.code));
+    if(existing)(await this.db.prepare('UPDATE coupons SET kind=?,value=?,expiresAt=?,maxUses=?,note=? WHERE code=?').run(c.kind,c.value,c.expiresAt,c.maxUses,c.note,c.code));
+    else (await this.db.prepare('INSERT INTO coupons(code,kind,value,expiresAt,maxUses,used,note,enabled,createdAt) VALUES (?,?,?,?,?,0,?,1,?)').run(c.code,c.kind,c.value,c.expiresAt,c.maxUses,c.note,this.now()));
+    return (await this.coupon(c.code));
+  }
+  async setCouponEnabled(code,enabled){
+    if(!(await this.coupon(code)))fail(404,'Coupon not found.');
+    (await this.db.prepare('UPDATE coupons SET enabled=? WHERE code=?').run(Number(!!enabled),String(code).trim().toUpperCase()));
+    return (await this.coupon(code));
+  }
+  // What a code is worth on an amount, or why it cannot be used. Customers call this before paying.
+  async quoteCoupon(code,amount){
+    const coupon=(await this.coupon(code)),problem=couponProblem(coupon,this.now());
+    if(problem)fail(400,problem);
+    return {code:coupon.code,kind:coupon.kind,value:coupon.value,...priceWithCoupon(amount,coupon)};
+  }
+  // Records a payment and extends the plan. Paying early keeps the days already bought.
+  async renewDevice(id,input){
+    const device=(await this.raw(id)),r=cleanRenewal(input);
+    let coupon=null;
+    if(r.couponCode){coupon=(await this.coupon(r.couponCode));const problem=couponProblem(coupon,this.now());if(problem)fail(400,problem);}
+    const price=priceWithCoupon(r.amount,coupon);
+    const periodFrom=renewalFrom(device.planExpiresAt,this.now()),periodTo=addMonths(periodFrom,r.months);
+    (await this.db.prepare('INSERT INTO device_payments(id,deviceId,tenantId,months,amount,discount,couponCode,periodFrom,periodTo,note,paidAt) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+      .run(randomUUID(),id,device.tenantId,r.months,price.payable,price.discount,coupon?coupon.code:null,periodFrom,periodTo,r.note,this.now()));
+    (await this.db.prepare('UPDATE devices SET planStartedAt=COALESCE(planStartedAt,?),planExpiresAt=?,planMonths=?,planAmount=? WHERE id=?')
+      .run(this.now(),periodTo,r.months,price.payable,id));
+    if(coupon)(await this.db.prepare('UPDATE coupons SET used=used+1 WHERE code=?').run(coupon.code));
+    return {device:(await this.device(id)),payment:{months:r.months,...price,periodFrom,periodTo}};
+  }
+  async devicePayments(id){return (await this.db.prepare('SELECT * FROM device_payments WHERE deviceId=? ORDER BY paidAt DESC LIMIT 50').all(id));}
+  // Every vehicle with its plan, newest expiry first, for the admin's renewal list.
+  async planRows(tenantId){
+    const where=tenantId?' WHERE d.tenantId=?':'';
+    const rows=(await this.db.prepare(`SELECT d.id,d.name,d.model,d.tenantId,d.createdAt,d.planStartedAt,d.planExpiresAt,d.planMonths,d.planAmount,COALESCE(c.name,'') AS customerName
+      FROM devices d LEFT JOIN customers c ON c.id=d.tenantId${where} ORDER BY COALESCE(d.planExpiresAt,0) ASC LIMIT 1000`).all(...(tenantId?[tenantId]:[])));
+    return rows.map(row=>({...row,plan:planState(row,this.now())}));
+  }
+  // The numbers an admin runs the business on: how many are live, joining and due to renew.
+  async billing(){
+    const now=this.now(),rows=(await this.planRows());
+    const monthStart=new Date(now);monthStart.setUTCDate(1);monthStart.setUTCHours(0,0,0,0);
+    const since=monthStart.getTime(),prevStart=addMonths(since,-1);
+    const online=(await this.db.prepare('SELECT COUNT(*) AS n FROM devices WHERE lastSeen IS NOT NULL AND ?-lastSeen < offlineSeconds*1000').get(now))?.n??0;
+    const sum=async(from,to)=>(await this.db.prepare('SELECT COALESCE(SUM(amount),0) AS total,COUNT(*) AS n FROM device_payments WHERE paidAt>=? AND paidAt<?').get(from,to));
+    const thisMonth=(await sum(since,now+1)),lastMonth=(await sum(prevStart,since));
+    const by=state=>rows.filter(r=>r.plan.state===state);
+    return {
+      devices:{total:rows.length,online,assigned:rows.filter(r=>r.tenantId!=='owner').length,
+        onboardedThisMonth:rows.filter(r=>r.createdAt>=since).length,onboardedLastMonth:rows.filter(r=>r.createdAt>=prevStart&&r.createdAt<since).length},
+      plans:{active:by('active').length,due:by('due').length,expired:by('expired').length,none:by('none').length},
+      revenue:{thisMonth:thisMonth.total,thisMonthCount:thisMonth.n,lastMonth:lastMonth.total,lastMonthCount:lastMonth.n},
+      renewals:[...by('expired'),...by('due')].slice(0,100),
+      recentPayments:(await this.db.prepare(`SELECT p.*,d.name AS deviceName,COALESCE(c.name,'') AS customerName FROM device_payments p
+        LEFT JOIN devices d ON d.id=p.deviceId LEFT JOIN customers c ON c.id=p.tenantId ORDER BY p.paidAt DESC LIMIT 20`).all()),
+    };
+  }
   async landmarkTile(key){const row=(await this.db.prepare('SELECT value FROM landmark_tiles WHERE key=?').get(key));return row?JSON.parse(row.value):null;}
   async saveLandmarkTile(key,value){(await this.db.prepare('INSERT INTO landmark_tiles(key,value,fetchedAt) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,fetchedAt=excluded.fetchedAt').run(key,JSON.stringify(value),value.fetchedAt));}
   async workspaceData(tenantId,key){

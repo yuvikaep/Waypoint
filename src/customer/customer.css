@@ -703,7 +703,8 @@
 .we-buy-note{text-align:center}
 .we-new{font-style:normal;margin-left:auto;padding:1px 8px;border-radius:6px;background:var(--c-sos);color:#fff!important;font-size:12px!important;font-weight:700}
 .we-status{padding:3px 10px;border-radius:999px;font-size:13px;font-weight:600;background:#fdf3e3;color:#b45309}
-.we-status.contacted{background:var(--c-accent-soft);color:var(--c-accent)}.we-status.done{background:var(--c-run-soft);color:var(--c-run)}
+.we-status.contacted{background:var(--c-accent-soft);color:var(--c-accent)}.we-status.done,.we-status.ok{background:var(--c-run-soft);color:var(--c-run)}
+.we-status.bad{background:var(--c-sos-soft);color:var(--c-sos)}
 .cx #view>.documents-workspace{padding:14px 14px 100px;display:flex;flex-direction:column;gap:12px}
 
 .we-relay{display:flex;align-items:center;gap:12px;padding:14px;border-radius:14px;background:var(--c-run-soft);color:#15803d;margin-bottom:10px}
@@ -737,3 +738,8 @@
 .we-kind{display:inline-flex;align-items:center;gap:5px;margin-top:3px;font-size:12px;font-weight:600;color:var(--c-muted)}
 .we-kind svg{width:14px;height:14px}
 .we-vcard-main .we-kind{margin:2px 0 1px}
+
+.we-plan-alert{display:flex;align-items:center;gap:8px;margin:0 0 10px;padding:10px 12px;border-radius:14px;background:var(--c-stand-soft);color:#92400e;font-size:13px;font-weight:600}
+.we-plan-alert svg{width:16px;height:16px;flex:none}
+.we-status.off{background:var(--c-off-soft);color:#475569}
+.we-coupon-ok{margin:0;font-size:13px;font-weight:600;color:var(--c-run)}

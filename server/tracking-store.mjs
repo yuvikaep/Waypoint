@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { cleanExtra, alarmAlerts, hardBrake, overspeed, REPEAT, SPEED_REPEAT, shareHours, SHARE_STOPPED, shareSilent, PLACE_KINDS, parkBreach, cleanPhone } from './extra.mjs';
 import { cleanSetup, cleanVehicle } from './provision.mjs';
+import { addMonths, cleanCoupon, cleanRenewal, couponProblem, planState, priceWithCoupon, renewalFrom } from './billing.mjs';
 import { cleanGpsRequest, REQUEST_STATUS } from './buy.mjs';
 
 export const hash = value => createHash('sha256').update(value).digest('hex');
@@ -57,12 +58,15 @@ export class TrackingStore {
     if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name==='speedAlert'))this.db.exec('ALTER TABLE devices ADD COLUMN speedAlert INTEGER NOT NULL DEFAULT 1');
     for(const column of ['simOperator','simType','simNumber','apn','apnUser','apnPass'])
       if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name===column))this.db.exec(`ALTER TABLE devices ADD COLUMN ${column} TEXT`);
-    for(const [column,type] of [['vehicleType','TEXT'],['makeModel','TEXT'],['modelYear','INTEGER'],['fuelType','TEXT'],['capacityKg','INTEGER'],['registration','TEXT'],['chassisNumber','TEXT'],['engineNumber','TEXT'],['ownerName','TEXT'],['vehicleNotes','TEXT'],['driverPhone','TEXT'],['rssi','INTEGER'],['parkLock','INTEGER NOT NULL DEFAULT 0'],['parkLat','REAL'],['parkLon','REAL'],['parkAt','INTEGER'],['parkAlerted','INTEGER NOT NULL DEFAULT 0']])
+    for(const [column,type] of [['planStartedAt','INTEGER'],['planExpiresAt','INTEGER'],['planMonths','INTEGER'],['planAmount','INTEGER'],['vehicleType','TEXT'],['makeModel','TEXT'],['modelYear','INTEGER'],['fuelType','TEXT'],['capacityKg','INTEGER'],['registration','TEXT'],['chassisNumber','TEXT'],['engineNumber','TEXT'],['ownerName','TEXT'],['vehicleNotes','TEXT'],['driverPhone','TEXT'],['rssi','INTEGER'],['parkLock','INTEGER NOT NULL DEFAULT 0'],['parkLat','REAL'],['parkLon','REAL'],['parkAt','INTEGER'],['parkAlerted','INTEGER NOT NULL DEFAULT 0']])
       if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name===column))this.db.exec(`ALTER TABLE devices ADD COLUMN ${column} ${type}`);
     // Alerts already stored when phone push arrived count as sent, so phones never get old history.
     if(!this.db.prepare('PRAGMA table_info(alerts)').all().some(c=>c.name==='pushed')){this.db.exec('ALTER TABLE alerts ADD COLUMN pushed INTEGER NOT NULL DEFAULT 0');this.db.exec('UPDATE alerts SET pushed=1');}
     this.db.exec('CREATE TABLE IF NOT EXISTS push_subs (endpoint TEXT PRIMARY KEY,tenantId TEXT NOT NULL,p256dh TEXT NOT NULL,auth TEXT NOT NULL,lang TEXT NOT NULL,categories TEXT NOT NULL,createdAt INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE INDEX IF NOT EXISTS alerts_unpushed ON alerts(createdAt) WHERE pushed=0;');
     if(!this.db.prepare('PRAGMA table_info(fences)').all().some(c=>c.name==='kind'))this.db.exec("ALTER TABLE fences ADD COLUMN kind TEXT NOT NULL DEFAULT 'other'");
+    this.db.exec(`CREATE TABLE IF NOT EXISTS coupons (code TEXT PRIMARY KEY,kind TEXT NOT NULL,value INTEGER NOT NULL,expiresAt INTEGER,maxUses INTEGER,used INTEGER NOT NULL DEFAULT 0,note TEXT,enabled INTEGER NOT NULL DEFAULT 1,createdAt INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS device_payments (id TEXT PRIMARY KEY,deviceId TEXT NOT NULL,tenantId TEXT NOT NULL,months INTEGER NOT NULL,amount INTEGER NOT NULL,discount INTEGER NOT NULL DEFAULT 0,couponCode TEXT,periodFrom INTEGER NOT NULL,periodTo INTEGER NOT NULL,note TEXT,paidAt INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS payments_time ON device_payments(paidAt);`);
     this.db.exec('CREATE TABLE IF NOT EXISTS gps_requests (id TEXT PRIMARY KEY,tenantId TEXT NOT NULL,name TEXT NOT NULL,phone TEXT NOT NULL,vehicles INTEGER NOT NULL,product TEXT NOT NULL,note TEXT,status TEXT NOT NULL,createdAt INTEGER NOT NULL)');
     this.db.exec('CREATE TABLE IF NOT EXISTS landmark_tiles (key TEXT PRIMARY KEY,value TEXT NOT NULL,fetchedAt INTEGER NOT NULL)');
     this.db.exec('CREATE TABLE IF NOT EXISTS provision_steps (id TEXT PRIMARY KEY,deviceId TEXT NOT NULL,seq INTEGER NOT NULL,command TEXT NOT NULL,label TEXT NOT NULL,status TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,commandId TEXT,sentAt INTEGER,doneAt INTEGER,reply TEXT)');
@@ -97,6 +101,69 @@ export class TrackingStore {
   addGpsRequest(tenantId,body){const r={id:randomUUID(),tenantId,...cleanGpsRequest(body),status:'new',createdAt:this.now()};this.db.prepare('INSERT INTO gps_requests(id,tenantId,name,phone,vehicles,product,note,status,createdAt) VALUES (?,?,?,?,?,?,?,?,?)').run(r.id,r.tenantId,r.name,r.phone,r.vehicles,r.product,r.note,r.status,r.createdAt);return r;}
   gpsRequests(tenantId){const q="SELECT r.*,COALESCE(c.name,'') AS customerName FROM gps_requests r LEFT JOIN customers c ON c.id=r.tenantId";return tenantId?this.db.prepare(q+' WHERE r.tenantId=? ORDER BY r.createdAt DESC LIMIT 100').all(tenantId):this.db.prepare(q+' ORDER BY r.createdAt DESC LIMIT 500').all();}
   setGpsRequestStatus(id,status){if(!REQUEST_STATUS.includes(status))fail(400,'Unknown status.');if(!this.db.prepare('UPDATE gps_requests SET status=? WHERE id=?').run(status,id).changes)fail(404,'Request not found.');}
+  /* ---------- Plans, renewals and coupons ---------- */
+  // Each device carries its own plan. Nothing is charged online: an admin records a payment made
+  // outside the app, which moves the device's expiry forward.
+  coupon(code){return (this.db.prepare('SELECT * FROM coupons WHERE code=?').get(String(code||'').trim().toUpperCase()))||null;}
+  coupons(){return (this.db.prepare('SELECT * FROM coupons ORDER BY createdAt DESC LIMIT 200').all());}
+  saveCoupon(input){
+    const c=cleanCoupon(input),existing=(this.coupon(c.code));
+    if(existing)(this.db.prepare('UPDATE coupons SET kind=?,value=?,expiresAt=?,maxUses=?,note=? WHERE code=?').run(c.kind,c.value,c.expiresAt,c.maxUses,c.note,c.code));
+    else (this.db.prepare('INSERT INTO coupons(code,kind,value,expiresAt,maxUses,used,note,enabled,createdAt) VALUES (?,?,?,?,?,0,?,1,?)').run(c.code,c.kind,c.value,c.expiresAt,c.maxUses,c.note,this.now()));
+    return (this.coupon(c.code));
+  }
+  setCouponEnabled(code,enabled){
+    if(!(this.coupon(code)))fail(404,'Coupon not found.');
+    (this.db.prepare('UPDATE coupons SET enabled=? WHERE code=?').run(Number(!!enabled),String(code).trim().toUpperCase()));
+    return (this.coupon(code));
+  }
+  // What a code is worth on an amount, or why it cannot be used. Customers call this before paying.
+  quoteCoupon(code,amount){
+    const coupon=(this.coupon(code)),problem=couponProblem(coupon,this.now());
+    if(problem)fail(400,problem);
+    return {code:coupon.code,kind:coupon.kind,value:coupon.value,...priceWithCoupon(amount,coupon)};
+  }
+  // Records a payment and extends the plan. Paying early keeps the days already bought.
+  renewDevice(id,input){
+    const device=(this.raw(id)),r=cleanRenewal(input);
+    let coupon=null;
+    if(r.couponCode){coupon=(this.coupon(r.couponCode));const problem=couponProblem(coupon,this.now());if(problem)fail(400,problem);}
+    const price=priceWithCoupon(r.amount,coupon);
+    const periodFrom=renewalFrom(device.planExpiresAt,this.now()),periodTo=addMonths(periodFrom,r.months);
+    (this.db.prepare('INSERT INTO device_payments(id,deviceId,tenantId,months,amount,discount,couponCode,periodFrom,periodTo,note,paidAt) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+      .run(randomUUID(),id,device.tenantId,r.months,price.payable,price.discount,coupon?coupon.code:null,periodFrom,periodTo,r.note,this.now()));
+    (this.db.prepare('UPDATE devices SET planStartedAt=COALESCE(planStartedAt,?),planExpiresAt=?,planMonths=?,planAmount=? WHERE id=?')
+      .run(this.now(),periodTo,r.months,price.payable,id));
+    if(coupon)(this.db.prepare('UPDATE coupons SET used=used+1 WHERE code=?').run(coupon.code));
+    return {device:(this.device(id)),payment:{months:r.months,...price,periodFrom,periodTo}};
+  }
+  devicePayments(id){return (this.db.prepare('SELECT * FROM device_payments WHERE deviceId=? ORDER BY paidAt DESC LIMIT 50').all(id));}
+  // Every vehicle with its plan, newest expiry first, for the admin's renewal list.
+  planRows(tenantId){
+    const where=tenantId?' WHERE d.tenantId=?':'';
+    const rows=(this.db.prepare(`SELECT d.id,d.name,d.model,d.tenantId,d.createdAt,d.planStartedAt,d.planExpiresAt,d.planMonths,d.planAmount,COALESCE(c.name,'') AS customerName
+      FROM devices d LEFT JOIN customers c ON c.id=d.tenantId${where} ORDER BY COALESCE(d.planExpiresAt,0) ASC LIMIT 1000`).all(...(tenantId?[tenantId]:[])));
+    return rows.map(row=>({...row,plan:planState(row,this.now())}));
+  }
+  // The numbers an admin runs the business on: how many are live, joining and due to renew.
+  billing(){
+    const now=this.now(),rows=(this.planRows());
+    const monthStart=new Date(now);monthStart.setUTCDate(1);monthStart.setUTCHours(0,0,0,0);
+    const since=monthStart.getTime(),prevStart=addMonths(since,-1);
+    const online=(this.db.prepare('SELECT COUNT(*) AS n FROM devices WHERE lastSeen IS NOT NULL AND ?-lastSeen < offlineSeconds*1000').get(now))?.n??0;
+    const sum=(from,to)=>(this.db.prepare('SELECT COALESCE(SUM(amount),0) AS total,COUNT(*) AS n FROM device_payments WHERE paidAt>=? AND paidAt<?').get(from,to));
+    const thisMonth=(sum(since,now+1)),lastMonth=(sum(prevStart,since));
+    const by=state=>rows.filter(r=>r.plan.state===state);
+    return {
+      devices:{total:rows.length,online,assigned:rows.filter(r=>r.tenantId!=='owner').length,
+        onboardedThisMonth:rows.filter(r=>r.createdAt>=since).length,onboardedLastMonth:rows.filter(r=>r.createdAt>=prevStart&&r.createdAt<since).length},
+      plans:{active:by('active').length,due:by('due').length,expired:by('expired').length,none:by('none').length},
+      revenue:{thisMonth:thisMonth.total,thisMonthCount:thisMonth.n,lastMonth:lastMonth.total,lastMonthCount:lastMonth.n},
+      renewals:[...by('expired'),...by('due')].slice(0,100),
+      recentPayments:(this.db.prepare(`SELECT p.*,d.name AS deviceName,COALESCE(c.name,'') AS customerName FROM device_payments p
+        LEFT JOIN devices d ON d.id=p.deviceId LEFT JOIN customers c ON c.id=p.tenantId ORDER BY p.paidAt DESC LIMIT 20`).all()),
+    };
+  }
   landmarkTile(key){const row=this.db.prepare('SELECT value FROM landmark_tiles WHERE key=?').get(key);return row?JSON.parse(row.value):null;}
   saveLandmarkTile(key,value){this.db.prepare('INSERT OR REPLACE INTO landmark_tiles(key,value,fetchedAt) VALUES (?,?,?)').run(key,JSON.stringify(value),value.fetchedAt);}
   workspaceData(tenantId,key){

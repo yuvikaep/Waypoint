@@ -724,27 +724,57 @@ const PRODUCTS:[string,string,string,string[]][]=[
   ['portable','Portable GPS (magnetic)','battery',['No wiring, sticks anywhere on the vehicle','Rechargeable battery','Good for trailers, containers and hired vehicles']],
   ['phone','Driver phone tracking','smartphone',['No device needed — the driver shares location from the phone','Free with your account','Good for short trips and hired drivers']],
 ];
+type PlanVehicle={id:string;name:string;isMobile:boolean;planExpiresAt:number|null;planMonths:number|null;amount:number|null;plan:{state:'none'|'active'|'due'|'expired';expiresAt:number|null;days:number|null}};
+const PLAN_WORD:Record<PlanVehicle['plan']['state'],[string,string]>={active:['Active','ok'],due:['Renewal due','idle'],expired:['Expired','bad'],none:['No plan','off']};
+const rupees=(n:number)=>`₹${Number(n||0).toLocaleString('en-IN')}`;
 function renderBuy(){
   const draw=async()=>{
-    let mine:GpsRequest[]=[];try{mine=(await api<{requests:GpsRequest[]}>('/buy')).requests}catch{/* shown empty */}
+    let mine:GpsRequest[]=[],plans:PlanVehicle[]=[];
+    try{[{requests:mine},{vehicles:plans}]=await Promise.all([api<{requests:GpsRequest[]}>('/buy'),api<{vehicles:PlanVehicle[]}>('/plans')])}catch{/* shown empty */}
+    // A phone-tracked vehicle is free, so it never carries a plan.
+    const paid=plans.filter(v=>!v.isMobile),dueSoon=paid.filter(v=>v.plan.state==='due'||v.plan.state==='expired');
     $('#view').innerHTML=`<div class="we-page we-buy">
       <div class="we-buy-hero"><div><b>${t('Get GPS for your vehicles')}</b><p>${t('Live location, route history, alerts and reports — all in this app.')}</p></div><span class="we-buy-ico">${i('navigation')}</span></div>
       ${PRODUCTS.map(([k,l,ic,points])=>`<article class="we-buy-card"><div class="we-buy-head"><span class="we-feat-ico">${i(ic)}</span><b>${t(l)}</b>${k==='phone'?`<span class="we-free">${t('Free')}</span>`:''}</div><ul>${points.map(x=>`<li>${i('check')}${t(x)}</li>`).join('')}</ul><button class="cx-btn primary" data-buy="${k}">${t(k==='phone'?'Ask for driver tracking':'Request a call back')}</button></article>`).join('')}
       <p class="cx-hint we-buy-note">${t('Our team calls you back to share price, installation and delivery. Nothing is charged in the app.')}</p>
+      ${paid.length?`<h3 class="we-h">${t('My GPS plans')}</h3>
+        ${dueSoon.length?`<p class="we-plan-alert">${i('triangle-alert')}${t('{n} vehicle(s) need renewal. Tracking stops when a plan runs out.',{n:dueSoon.length})}</p>`:''}
+        <div class="cx-group">${paid.map(v=>{const [word,cls]=PLAN_WORD[v.plan.state];return `<div class="cx-item static"><span class="cx-ico">${i('shield-check')}</span><span class="cx-item-text"><b>${esc(v.name)}</b><small>${v.planExpiresAt?t('Valid until {t}',{t:when(v.planExpiresAt)}):t('No plan recorded yet')}${v.plan.days!=null&&v.plan.state!=='expired'?` · ${t('{n} days left',{n:v.plan.days})}`:''}</small></span><span class="we-status ${cls}">${t(word)}</span></div>`}).join('')}</div>
+        <button class="cx-btn primary" id="renew-ask">${i('shopping-cart')}${t('Ask for renewal')}</button>
+        <p class="cx-hint we-buy-note">${t('Pay by UPI or bank transfer after our call. We record the payment and your plan is extended at once. Have a coupon code? Check it below before you pay.')}</p>
+        <button class="cx-btn" id="check-coupon">${i('ticket')}${t('Check a coupon code')}</button>`:''}
       ${mine.length?`<h3 class="we-h">${t('My requests')}</h3><div class="cx-group">${mine.map(r=>`<div class="cx-item static"><span class="cx-ico">${i(PRODUCTS.find(p=>p[0]===r.product)?.[2]||'navigation')}</span><span class="cx-item-text"><b>${t(PRODUCTS.find(p=>p[0]===r.product)?.[1]||'GPS')} · ${r.vehicles}</b><small>${when(r.createdAt)} · ${esc(r.phone)}</small></span><span class="we-status ${r.status}">${t(r.status==='new'?'Received':r.status==='contacted'?'Contacted':'Completed')}</span></div>`).join('')}</div>`:''}
     </div>`;
-    on('[data-buy]',el=>buyForm(el.dataset.buy!,draw));icons();
+    on('[data-buy]',el=>buyForm(el.dataset.buy!,draw));
+    on('#renew-ask',()=>buyForm('wired',draw,t('Renewal for {n} vehicle(s)',{n:dueSoon.length||paid.length})));
+    on('#check-coupon',couponCheck);icons();
   };
   void draw();
 }
-function buyForm(product:string,done:()=>void){
+// The customer asks; an admin records the money and extends the plan.
+function couponCheck(){
+  modal(t('Check a coupon code'),`<form class="form" id="coupon-check">
+    <label class="field">${t('Coupon code')}<input class="input mono" name="code" maxlength="24" required placeholder="DIWALI20"></label>
+    <label class="field">${t('Plan amount (₹)')}<input class="input" type="number" name="amount" min="1" max="10000000" required placeholder="2000"></label>
+    <p class="hint">${t('This only checks the code. Our team applies it when they record your payment.')}</p>
+    <p class="error" id="coupon-check-error"></p><p id="coupon-check-ok" class="we-coupon-ok"></p>
+    <button class="btn btn-primary" type="submit">${t('Check code')}</button></form>`);
+  $('#coupon-check').addEventListener('submit',async e=>{
+    e.preventDefault();const f=new FormData(e.target as HTMLFormElement);
+    $('#coupon-check-error').textContent='';$('#coupon-check-ok').textContent='';
+    try{const q=await post<{discount:number;payable:number}>('/coupon',{code:f.get('code'),amount:Number(f.get('amount'))});
+      $('#coupon-check-ok').textContent=t('Code applies: {d} off. You pay {p}.',{d:rupees(q.discount),p:rupees(q.payable)});
+    }catch(err){$('#coupon-check-error').textContent=(err as Error).message}
+  });
+}
+function buyForm(product:string,done:()=>void,note=''){
   const p=prefs();
-  modal(t('Request a call back'),`<form class="form" id="buy-form">
+  modal(note?t('Ask for renewal'):t('Request a call back'),`<form class="form" id="buy-form">
     <label class="field">${t('GPS type')}<select class="input" name="product">${PRODUCTS.map(([k,l])=>`<option value="${k}" ${k===product?'selected':''}>${t(l)}</option>`).join('')}</select></label>
     <label class="field">${t('Your name')}<input class="input" name="name" required maxlength="100" value="${esc(p.name)}"></label>
     <label class="field">${t('Mobile number')}<input class="input" name="phone" required inputmode="tel" maxlength="14" placeholder="98765 43210"></label>
     <label class="field">${t('Number of vehicles')}<input class="input" name="vehicles" type="number" min="1" max="1000" value="1" required></label>
-    <label class="field">${t('City or note (optional)')}<input class="input" name="note" maxlength="500"></label>
+    <label class="field">${t('City or note (optional)')}<input class="input" name="note" maxlength="500" value="${esc(note)}"></label>
     <p class="error" id="buy-error"></p><button class="btn btn-primary" type="submit">${t('Send request')}</button></form>`);
   $('#buy-form').addEventListener('submit',async e=>{e.preventDefault();const v=Object.fromEntries(new FormData(e.target as HTMLFormElement));try{await post('/buy',{...v,vehicles:Number(v.vehicles)});closeModal();toast(t('Request sent. Our team will call you soon.'));done()}catch(err){$('#buy-error').textContent=(err as Error).message}});
 }

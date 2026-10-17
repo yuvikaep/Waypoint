@@ -7,12 +7,12 @@ import '../customer/customer.css';
 import './admin.css';
 import {showLogin} from '../auth';
 
-type View='requests'|'overview'|'devices'|'device'|'customers'|'admins'|'settings'|'more';
+type View='business'|'requests'|'overview'|'devices'|'device'|'customers'|'admins'|'settings'|'more';
 type Gateway={configured:boolean;connected:boolean;lastSync:number|null;error:string|null;trackerHost?:string;gt06Port?:number;gt06AlternativePort?:number;teltonikaPort?:number};
 type Step={id:string;seq:number;command:string;label:string;status:'pending'|'sent'|'ok'|'failed';attempts:number;reply:string|null;sentAt:number|null;doneAt:number|null};
 type Provisioning={steps:Step[];sms:{label:string;text:string}[];operators?:Record<string,{label:string;apn:Record<string,string>}>};
 const OPERATORS:Record<string,{label:string;apn:Record<string,string>}>={airtel:{label:'Airtel',apn:{personal:'airtelgprs.com'}},jio:{label:'Jio',apn:{personal:'jionet'}},bsnl:{label:'BSNL',apn:{personal:'bsnlnet'}},vi:{label:'Vi (Vodafone Idea)',apn:{}},other:{label:'Other',apn:{}}};
-type AdminDevice=Vehicle&{vehicleType?:string|null;makeModel?:string|null;modelYear?:number|null;fuelType?:string|null;capacityKg?:number|null;registration?:string|null;chassisNumber?:string|null;engineNumber?:string|null;ownerName?:string|null;vehicleNotes?:string|null;simOperator?:string|null;simType?:string|null;simNumber?:string|null;apn?:string|null;apnUser?:string|null;uniqueId:string;model:string;bridgeStatus:string|null;traccarId:number|null;offlineSeconds:number;customerId:string|null;customerName:string|null;createdAt:number};
+type AdminDevice=Vehicle&{planStartedAt?:number|null;planExpiresAt?:number|null;planMonths?:number|null;planAmount?:number|null;vehicleType?:string|null;makeModel?:string|null;modelYear?:number|null;fuelType?:string|null;capacityKg?:number|null;registration?:string|null;chassisNumber?:string|null;engineNumber?:string|null;ownerName?:string|null;vehicleNotes?:string|null;simOperator?:string|null;simType?:string|null;simNumber?:string|null;apn?:string|null;apnUser?:string|null;uniqueId:string;model:string;bridgeStatus:string|null;traccarId:number|null;offlineSeconds:number;customerId:string|null;customerName:string|null;createdAt:number};
 type Customer={id:string;name:string;email:string;enabled:number|boolean;createdAt:number;devices:number};
 type Overview={customers:{total:number;enabled:number};devices:{total:number;moving:number;stopped:number;offline:number;waiting:number;noFix:number;unassigned:number};gateway:Gateway;admins:string[];serverTime:number};
 
@@ -32,13 +32,13 @@ export async function startAdmin(identity:Identity){
   me=identity;
   whenUnauthorized(()=>{clearTimeout(poll);showLogin('Your session ended. Please sign in again.')});
   const requested=new URLSearchParams(location.search).get('view') as View|null;
-  view=requested&&(([...NAV,...TABS].some(([v])=>v===requested)||requested==='requests')||(requested==='device'&&detailId))?requested:'overview';
+  view=requested&&(([...NAV,...TABS].some(([v])=>v===requested)||requested==='requests'||requested==='business')||(requested==='device'&&detailId))?requested:'overview';
   window.addEventListener('popstate',()=>{const q=new URLSearchParams(location.search);view=(q.get('view') as View)||'overview';detailId=q.get('id')||'';shell()});
   shell();
 }
 function go(next:View,id=''){const url=new URL(location.href);url.searchParams.set('view',next);if(id)url.searchParams.set('id',id);else url.searchParams.delete('id');history.pushState(null,'',url);view=next;detailId=id;shell()}
-const SIDE:[string,[View,string,string][]][]=[['Overview',[['overview','Overview','layout-dashboard']]],['Fleet',[['devices','GPS devices','radio-tower'],['customers','Customers','users'],['requests','Buy GPS requests','shopping-cart']]],['Team',[['admins','Admins','shield-check']]],['Account',[['settings','Settings','settings']]]];
-const TITLE:Record<View,string>={requests:'Buy GPS requests',overview:'Overview',devices:'GPS devices',device:'Device details',customers:'Customers',admins:'Admins',settings:'Settings',more:'More'};
+const SIDE:[string,[View,string,string][]][]=[['Overview',[['overview','Overview','layout-dashboard']]],['Fleet',[['devices','GPS devices','radio-tower'],['customers','Customers','users']]],['Business',[['business','Plans & renewals','shopping-cart']]],['Team',[['admins','Admins','shield-check']]],['Account',[['settings','Settings','settings']]]];
+const TITLE:Record<View,string>={business:'Plans & renewals',requests:'Buy GPS requests',overview:'Overview',devices:'GPS devices',device:'Device details',customers:'Customers',admins:'Admins',settings:'Settings',more:'More'};
 // Same design system as the customer app (navy actions, lavender surfaces), in English.
 function shell(){
   clearTimeout(poll);detailMap?.map.remove();detailMap=undefined;clearInterval(terminalTimer);terminalOpen=false;
@@ -59,7 +59,7 @@ function shell(){
   on('[data-go]',el=>go(el.dataset.go as View));on('[data-logout]',logout);
   on('#add-device',()=>deviceForm());on('#add-customer',customerForm);
   icons();
-  void ({requests:renderRequests,overview:renderOverview,devices:renderDevices,device:renderDevice,customers:renderCustomers,admins:renderAdmins,settings:renderSettings,more:renderMore} as Record<View,()=>Promise<void>|void>)[view]();
+  void ({business:renderBusiness,requests:renderRequests,overview:renderOverview,devices:renderDevices,device:renderDevice,customers:renderCustomers,admins:renderAdmins,settings:renderSettings,more:renderMore} as Record<View,()=>Promise<void>|void>)[view]();
 }
 async function logout(){await api('/session',{method:'DELETE'}).catch(()=>{});location.href='/?live=1&auth=admin'}
 const fail=(e:unknown)=>{$('#view').innerHTML=`<div class="page"><div class="card empty">${i('triangle-alert')}<h3>Could not load</h3><p>${esc((e as Error).message)}</p></div></div>`;icons()};
@@ -260,7 +260,7 @@ async function renderDevice(){
     detailMap?.map.remove();detailMap=undefined;
     $('#view').innerHTML=`<div class="page" id="device-page"><div id="dp-head"></div><div class="dp-kpis" id="dp-kpi"></div>
       <nav class="dp-tabs" role="tablist">${DEVICE_TABS.map(([key,label,ic])=>`<button role="tab" data-tab="${key}" class="${deviceTab===key?'on':''}">${i(ic)}<span>${label}</span></button>`).join('')}</nav>
-      <section class="dp-pane" data-pane="overview"><div class="dp-cols"><div class="card"><div class="dp-map"><div class="map" id="dp-map"></div></div><div class="card-pad" id="dp-place"></div></div><div class="dp-side"><div class="card card-pad" id="dp-today"></div><div class="card card-pad" id="dp-vehicle"></div><div class="card card-pad" id="dp-tracker"></div></div></div></section>
+      <section class="dp-pane" data-pane="overview"><div class="dp-cols"><div class="card"><div class="dp-map"><div class="map" id="dp-map"></div></div><div class="card-pad" id="dp-place"></div></div><div class="dp-side"><div class="card card-pad" id="dp-plan"></div><div class="card card-pad" id="dp-today"></div><div class="card card-pad" id="dp-vehicle"></div><div class="card card-pad" id="dp-tracker"></div></div></div></section>
       <section class="dp-pane" data-pane="health"><div id="dp-health"></div></section>
       <section class="dp-pane" data-pane="setup"><div class="card card-pad" id="dp-provision"></div><div class="card card-pad" id="dp-commands"></div></section>
       <section class="dp-pane" data-pane="data"><div class="card" id="dp-terminal"></div><div class="card" id="dp-packets"></div></section>
@@ -287,6 +287,11 @@ async function renderDevice(){
   const t=data.today;
   $('#dp-today').innerHTML=`<div class="section-title"><h2>Today</h2><span class="chip neutral plain">IST</span></div>${t?`<div class="summary"><div><span>Distance</span><b>${t.distanceKm} km</b></div><div><span>Running</span><b>${hm(t.runningMinutes)}</b></div><div><span>Idle</span><b>${hm(t.idleMinutes)}</b></div><div><span>Max speed</span><b>${t.maxSpeed} km/h</b></div></div>${t.gaps.map(x=>`<p class="gap-note" style="margin-top:10px">${i('triangle-alert')}No data ${esc(clockOf(x.from))} – ${esc(clockOf(x.to))} (${x.minutes} min)${x.movedKm?` · moved ${x.movedKm} km`:''}</p>`).join('')}`:'<p class="muted" style="margin-top:8px">Nothing recorded today.</p>'}`;
   const gt06=['GT06','GT06N','PT06'].includes(d.model);
+  const plan=planStateOf(d);
+  $('#dp-plan').innerHTML=`<div class="section-title"><h2>Plan</h2>${planChip(plan)}</div>
+    <dl class="facts dp-facts"><dt>Expires</dt><dd>${d.planExpiresAt?`${time(d.planExpiresAt)}${plan.days!=null&&plan.state!=='expired'?` · ${plan.days} day${plan.days===1?'':'s'} left`:''}`:'<span class="muted">Never renewed</span>'}</dd>${d.planMonths?`<dt>Last plan</dt><dd>${d.planMonths} month${d.planMonths===1?'':'s'}${d.planAmount?` · ${rupees(d.planAmount)}`:''}</dd>`:''}${d.planStartedAt?`<dt>First paid</dt><dd>${time(d.planStartedAt)}</dd>`:''}</dl>
+    <button class="btn btn-primary btn-sm" style="margin-top:12px" id="dp-renew">${i('shopping-cart')}Record payment</button>`;
+  on('#dp-renew',()=>renewDialog(d.id,d.name,d.planExpiresAt??null));
   const vfact=(label:string,value:string|null|undefined)=>value?`<dt>${label}</dt><dd>${esc(String(value))}</dd>`:'';
   const vrows=vfact('Type',d.vehicleType?VEHICLE_TYPES[d.vehicleType]:'')+vfact('Make / model',d.makeModel)+vfact('Model year',d.modelYear?String(d.modelYear):'')+vfact('Fuel',d.fuelType?FUEL_TYPES[d.fuelType]:'')+vfact('Load capacity',d.capacityKg?`${d.capacityKg} kg`:'')+vfact('Registration',d.registration)+vfact('Registered owner',d.ownerName)+vfact('Chassis',d.chassisNumber)+vfact('Engine',d.engineNumber)+vfact('Notes',d.vehicleNotes);
   $('#dp-vehicle').innerHTML=`<div class="section-title"><h2>Vehicle</h2><button class="btn btn-ghost btn-sm" id="dp-edit2">${i('pencil')}Edit</button></div>${vrows?`<dl class="facts dp-facts">${vrows}</dl>`:'<p class="muted">No vehicle details recorded yet. Add them from Edit so the customer sees what this vehicle is.</p>'}`;
@@ -454,6 +459,122 @@ function renderSettings(){
     <button class="btn btn-ghost" data-logout style="align-self:flex-start">${i('log-out')}Sign out</button></div>`;
   document.querySelector('#password')?.addEventListener('submit',async e=>{e.preventDefault();const form=e.target as HTMLFormElement,f=new FormData(form);$('#password-error').textContent='';try{if(f.get('newPassword')!==f.get('confirmPassword'))throw Error('New passwords do not match.');await post('/account/password',{currentPassword:f.get('currentPassword'),newPassword:f.get('newPassword')});form.reset();toast('Password changed.')}catch(err){$('#password-error').textContent=(err as Error).message}});
   on('#view [data-logout]',logout);icons();
+}
+/* ---------- Plans, renewals and coupons ---------- */
+type Plan={state:'none'|'active'|'due'|'expired';expiresAt:number|null;days:number|null};
+type PlanRow={id:string;name:string;model:string;tenantId:string;customerName:string;createdAt:number;planStartedAt:number|null;planExpiresAt:number|null;planMonths:number|null;planAmount:number|null;plan:Plan};
+type Payment={id:string;deviceId:string;deviceName:string;customerName:string;months:number;amount:number;discount:number;couponCode:string|null;periodFrom:number;periodTo:number;note:string|null;paidAt:number};
+type Coupon={code:string;kind:'percent'|'amount';value:number;expiresAt:number|null;maxUses:number|null;used:number;note:string|null;enabled:number;createdAt:number};
+type Billing={devices:{total:number;online:number;assigned:number;onboardedThisMonth:number;onboardedLastMonth:number};plans:{active:number;due:number;expired:number;none:number};revenue:{thisMonth:number;thisMonthCount:number;lastMonth:number;lastMonthCount:number};renewals:PlanRow[];recentPayments:Payment[]};
+const rupees=(n:number)=>`₹${Number(n||0).toLocaleString('en-IN')}`;
+const PLAN_CHIP:Record<Plan['state'],[string,string]>={active:['Active','ok'],due:['Renewal due','idle'],expired:['Expired','bad'],none:['No plan','neutral']};
+// The same plan rule the server applies, so a device page agrees with the renewals list.
+const planStateOf=(d:{planExpiresAt?:number|null}):Plan=>{
+  const expiresAt=d.planExpiresAt??null;
+  if(!expiresAt)return {state:'none',expiresAt:null,days:null};
+  const days=Math.ceil((expiresAt-Date.now())/86400000);
+  return {state:expiresAt<=Date.now()?'expired':days<=30?'due':'active',expiresAt,days};
+};
+const planChip=(p:Plan)=>{const [label,cls]=PLAN_CHIP[p.state];return `<span class="chip ${cls} plain">${label}${p.days!=null&&p.state!=='expired'?` · ${p.days}d`:''}</span>`};
+const couponLabel=(c:Coupon)=>c.kind==='percent'?`${c.value}% off`:`${rupees(c.value)} off`;
+// How much the business moved month on month, as a readable line rather than a raw pair of numbers.
+const trend=(now:number,before:number,unit=(n:number)=>String(n))=>{
+  if(!before)return now?`${unit(now)} this month`:'nothing yet this month';
+  const change=Math.round((now-before)/before*100);
+  return `${unit(now)} this month · ${change>=0?'+':''}${change}% vs last month`;
+};
+let businessTab:'renewals'|'payments'|'coupons'|'requests'='renewals';
+async function renderBusiness(){
+  let b:Billing,coupons:Coupon[],requests:GpsRequest[];
+  try{[b,{coupons},{requests}]=await Promise.all([api<Billing>('/admin/billing'),api<{coupons:Coupon[]}>('/admin/coupons'),api<{requests:GpsRequest[]}>('/admin/requests')]);}
+  catch(e){fail(e);return}
+  if(view!=='business')return;
+  const kpi=(label:string,value:string,note:string,icon:string,cls='')=>`<div class="cx-kpi ${cls}"><span class="cx-kpi-label">${label}${i(icon)}</span><b>${value}</b><span class="cx-kpi-note">${note}</span></div>`;
+  const newRequests=requests.filter(r=>r.status==='new').length;
+  const TABS=[['renewals',`Renewals (${b.plans.due+b.plans.expired})`,'calendar'],['payments','Payments','file-text'],['coupons',`Coupons (${coupons.filter(c=>c.enabled).length})`,'ticket'],['requests',`Buy requests${newRequests?` (${newRequests})`:''}`,'shopping-cart']] as const;
+  $('#view').innerHTML=`<div class="page">
+    <div class="ax-kpis">
+      ${kpi('Live right now',String(b.devices.online),`of ${b.devices.total} devices`,'radio-tower',b.devices.online?'run':'warn')}
+      ${kpi('Onboarded',String(b.devices.onboardedThisMonth),trend(b.devices.onboardedThisMonth,b.devices.onboardedLastMonth,n=>`${n} device${n===1?'':'s'}`),'user-plus')}
+      ${kpi('Collected',rupees(b.revenue.thisMonth),trend(b.revenue.thisMonth,b.revenue.lastMonth,rupees),'chart-column')}
+      ${kpi('Renewal due',String(b.plans.due),'in the next 30 days','calendar',b.plans.due?'warn':'')}
+      ${kpi('Expired',String(b.plans.expired),'plan has run out','triangle-alert',b.plans.expired?'danger':'')}
+      ${kpi('No plan yet',String(b.plans.none),'never renewed','circle-alert',b.plans.none?'warn':'')}
+    </div>
+    <nav class="dp-tabs" role="tablist">${TABS.map(([key,label,ic])=>`<button role="tab" data-btab="${key}" class="${businessTab===key?'on':''}">${i(ic)}<span>${label}</span></button>`).join('')}</nav>
+    <div class="card" id="biz-pane"></div></div>`;
+  const pane=$('#biz-pane');
+  const drawPane=()=>{
+    if(businessTab==='renewals'){
+      pane.innerHTML=`<div class="card-pad section-title" style="margin:0"><h2>Renewals</h2><span class="small muted">Expired first, then due within 30 days</span></div>
+        ${b.renewals.length?`<div class="table-wrap"><table class="table"><thead><tr><th>Vehicle</th><th>Customer</th><th>Plan</th><th>Expires</th><th>Last paid</th><th></th></tr></thead><tbody>${b.renewals.map(r=>`<tr><td><a href="?live=1&view=device&id=${r.id}" data-detail="${r.id}"><b>${esc(r.name)}</b></a><small>${esc(r.model)}</small></td><td>${r.customerName?esc(r.customerName):'<span class="chip idle plain">Unassigned</span>'}</td><td>${planChip(r.plan)}</td><td class="nowrap">${r.planExpiresAt?time(r.planExpiresAt):'—'}</td><td>${r.planAmount?rupees(r.planAmount):'—'}</td><td><button class="btn btn-primary btn-sm" data-renew="${r.id}">${i('shopping-cart')}Record payment</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty"><h3>Nothing to chase</h3><p>No plan is expired or due in the next 30 days.</p></div>'}`;
+    } else if(businessTab==='payments'){
+      pane.innerHTML=`<div class="card-pad section-title" style="margin:0"><h2>Recent payments</h2><span class="small muted">${b.revenue.thisMonthCount} this month</span></div>
+        ${b.recentPayments.length?`<div class="table-wrap"><table class="table"><thead><tr><th>Paid on</th><th>Vehicle</th><th>Customer</th><th>Plan</th><th>Covers</th><th>Amount</th></tr></thead><tbody>${b.recentPayments.map(p=>`<tr><td class="nowrap">${time(p.paidAt)}</td><td><b>${esc(p.deviceName||'—')}</b></td><td>${esc(p.customerName||'—')}</td><td>${p.months} month${p.months===1?'':'s'}</td><td class="nowrap">${time(p.periodFrom)} → ${time(p.periodTo)}</td><td><b>${rupees(p.amount)}</b>${p.discount?`<small>${rupees(p.discount)} off${p.couponCode?` · ${esc(p.couponCode)}`:''}</small>`:''}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty"><h3>No payments recorded</h3><p>Record one from the Renewals tab once a customer pays.</p></div>'}`;
+    } else if(businessTab==='coupons'){
+      pane.innerHTML=`<div class="card-pad section-title" style="margin:0"><h2>Coupons</h2><button class="btn btn-primary btn-sm" id="add-coupon">${i('plus')}New coupon</button></div>
+        ${coupons.length?`<div class="table-wrap"><table class="table"><thead><tr><th>Code</th><th>Discount</th><th>Used</th><th>Valid until</th><th>Note</th><th></th></tr></thead><tbody>${coupons.map(c=>`<tr><td><b class="mono">${esc(c.code)}</b></td><td>${couponLabel(c)}</td><td>${c.used}${c.maxUses?` / ${c.maxUses}`:''}</td><td class="nowrap">${c.expiresAt?time(c.expiresAt):'No end date'}</td><td>${esc(c.note||'—')}</td><td><span class="chip ${c.enabled?'ok':'neutral'} plain">${c.enabled?'Active':'Off'}</span> <button class="btn btn-ghost btn-sm" data-coupon-toggle="${esc(c.code)}" data-on="${c.enabled}">${c.enabled?'Turn off':'Turn on'}</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty"><h3>No coupons yet</h3><p>Create one to give a customer a discount at renewal.</p></div>'}`;
+    } else {
+      pane.innerHTML=`<div class="card-pad section-title" style="margin:0"><h2>Buy GPS requests</h2><span class="small muted">${newRequests} waiting for a call</span></div>
+        ${requests.length?`<div class="table-wrap"><table class="table"><thead><tr><th>Received</th><th>Customer</th><th>Contact</th><th>GPS type</th><th>Vehicles</th><th>Note</th><th>Status</th></tr></thead><tbody>${requests.map(r=>`<tr><td class="nowrap">${time(r.createdAt)}</td><td><b>${esc(r.customerName||r.name)}</b></td><td class="mono">${esc(r.phone)}</td><td>${esc(PRODUCT_LABEL[r.product]||r.product)}</td><td>${r.vehicles}</td><td>${esc(r.note||'—')}</td><td><select class="input" data-status="${r.id}">${['new','contacted','done'].map(v=>`<option ${r.status===v?'selected':''}>${v}</option>`).join('')}</select></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty"><h3>No requests</h3><p>Customers asking for GPS from their app appear here.</p></div>'}`;
+      $$<HTMLSelectElement>('[data-status]').forEach(sel=>sel.onchange=async()=>{try{await api(`/admin/requests/${sel.dataset.status}`,{method:'PATCH',body:JSON.stringify({status:sel.value})});toast('Saved.')}catch(e){toast((e as Error).message,true)}});
+    }
+    on('[data-detail]',el=>go('device',el.dataset.detail),pane);
+    on('[data-renew]',el=>{const row=b.renewals.find(x=>x.id===el.dataset.renew)!;renewDialog(row.id,row.name,row.plan.expiresAt)},pane);
+    on('#add-coupon',()=>couponForm(),pane);
+    on('[data-coupon-toggle]',async el=>{await api(`/admin/coupons/${el.dataset.couponToggle}`,{method:'PATCH',body:JSON.stringify({enabled:el.dataset.on!=='1'})});toast('Saved.');void renderBusiness()},pane);
+    icons();
+  };
+  on('#view [data-btab]',el=>{businessTab=el.dataset.btab as typeof businessTab;$$<HTMLElement>('#view [data-btab]').forEach(b2=>b2.classList.toggle('on',b2===el));drawPane()});
+  drawPane();icons();
+}
+// Records a payment taken outside the app and moves the plan's expiry forward.
+function renewDialog(id:string,name:string,expiresAt:number|null){
+  const running=!!expiresAt&&expiresAt>Date.now();
+  modal(`${name} · Record payment`,`<form class="form" id="renew-form">
+    <p class="hint">${running?`The plan runs to ${esc(time(expiresAt))}. The new months are added to that date, so paying early loses nothing.`:'The plan starts from today.'}</p>
+    <div class="form-row"><label class="field">Plan length<select class="input" name="months">${[[1,'1 month'],[3,'3 months'],[6,'6 months'],[12,'1 year'],[24,'2 years']].map(([v,l])=>`<option value="${v}" ${v===12?'selected':''}>${l}</option>`).join('')}</select></label>
+      <label class="field">Amount collected (₹)<input class="input" type="number" name="amount" min="0" max="10000000" value="0" required></label></div>
+    <div class="form-row"><label class="field">Coupon code (optional)<input class="input mono" name="couponCode" maxlength="24" placeholder="DIWALI20"></label>
+      <label class="field">Note (optional)<input class="input" name="note" maxlength="200" placeholder="UPI reference"></label></div>
+    <p class="hint" id="renew-quote"></p><p class="error" id="renew-error"></p>
+    <button class="btn btn-primary" type="submit">Record payment and extend plan</button></form>`);
+  const form=$<HTMLFormElement>('#renew-form');
+  // Shows what the coupon is worth before anything is stored.
+  const quote=async()=>{
+    const f=new FormData(form),code=String(f.get('couponCode')||'').trim(),amount=Number(f.get('amount')||0);
+    if(!code||!amount){$('#renew-quote').textContent='';return}
+    try{const q=await post<{discount:number;payable:number}>('/coupon',{code,amount});$('#renew-quote').textContent=`Coupon applies: ${rupees(q.discount)} off, customer pays ${rupees(q.payable)}.`}
+    catch(e){$('#renew-quote').textContent=(e as Error).message}
+  };
+  form.querySelector('[name=couponCode]')!.addEventListener('blur',quote);
+  form.querySelector('[name=amount]')!.addEventListener('change',quote);
+  form.addEventListener('submit',async e=>{
+    e.preventDefault();const f=new FormData(form),button=form.querySelector<HTMLButtonElement>('button')!;button.disabled=true;$('#renew-error').textContent='';
+    try{
+      await post(`/admin/devices/${id}/renew`,{months:Number(f.get('months')),amount:Number(f.get('amount')),couponCode:String(f.get('couponCode')||'')||null,note:f.get('note')});
+      closeModal();toast('Payment recorded.');if(view==='business')void renderBusiness();else if(view==='device')void renderDevice();
+    }catch(err){$('#renew-error').textContent=(err as Error).message;button.disabled=false}
+  });
+}
+function couponForm(){
+  modal('New coupon',`<form class="form" id="coupon-form">
+    <label class="field">Code<input class="input mono" name="code" maxlength="24" placeholder="DIWALI20" required></label>
+    <div class="form-row"><label class="field">Discount type<select class="input" name="kind"><option value="percent">Percentage off</option><option value="amount">Rupees off</option></select></label>
+      <label class="field">Value<input class="input" type="number" name="value" min="1" value="10" required></label></div>
+    <div class="form-row"><label class="field">Valid until (optional)<input class="input" type="date" name="expiresAt"></label>
+      <label class="field">Usage limit (optional)<input class="input" type="number" name="maxUses" min="1" max="100000" placeholder="No limit"></label></div>
+    <label class="field">Note (optional)<input class="input" name="note" maxlength="200" placeholder="Festival offer"></label>
+    <p class="error" id="coupon-error"></p><button class="btn btn-primary" type="submit">Save coupon</button></form>`);
+  $('#coupon-form').addEventListener('submit',async e=>{
+    e.preventDefault();const f=new FormData(e.target as HTMLFormElement);$('#coupon-error').textContent='';
+    const date=String(f.get('expiresAt')||'');
+    try{
+      await post('/admin/coupons',{code:f.get('code'),kind:f.get('kind'),value:Number(f.get('value')),
+        expiresAt:date?new Date(`${date}T23:59:59+05:30`).getTime():null,maxUses:f.get('maxUses')?Number(f.get('maxUses')):null,note:f.get('note')});
+      closeModal();toast('Coupon saved.');void renderBusiness();
+    }catch(err){$('#coupon-error').textContent=(err as Error).message}
+  });
 }
 /* ---------- Buy GPS requests ---------- */
 type GpsRequest={id:string;tenantId:string;customerName:string;name:string;phone:string;vehicles:number;product:string;note:string;status:string;createdAt:number};

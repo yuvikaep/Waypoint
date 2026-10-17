@@ -228,6 +228,13 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
         try{return json(res,200,await landmarks(store,url.searchParams.get('tile')))}
         catch(e){if(e.status)throw e;fail(503,'Nearby places are unavailable right now.')}
       }
+      if(path==='/api/gps/plans'&&method==='GET')
+        return json(res,200,{vehicles:(await store.planRows(session.tenantId)).map(({tenantId,customerName,model,planAmount,...v})=>({...v,isMobile:model==='Mobile',amount:planAmount??null}))});
+      if(path==='/api/gps/coupon'&&method==='POST'){
+        await limited(`coupon:${session.tenantId}`,20);
+        const input=await body(req);
+        return json(res,200,await store.quoteCoupon(input.code,Number(input.amount??0)));
+      }
       if(path==='/api/gps/buy'&&method==='GET')return json(res,200,{requests:(await store.gpsRequests(session.tenantId)).map(({tenantId,customerName,...r})=>r)});
       if(path==='/api/gps/buy'&&method==='POST'){await limited(`buy:${session.tenantId}`,5);return json(res,201,await store.addGpsRequest(session.tenantId,await body(req)))}
       if(path==='/api/gps/fuel'&&method==='GET'){await limited(`fuel:${session.tenantId}`,60);return json(res,200,await dieselPrices(store))}
@@ -319,6 +326,13 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
           return json(res,200,{...updated,...(await store.device(adminDevice[1]))});
         }
         if(adminDevice&&method==='DELETE'){await store.deleteDevice(adminDevice[1]);return json(res,200,{ok:true});}
+        if(path==='/api/gps/admin/billing'&&method==='GET')return json(res,200,await store.billing());
+        if(path==='/api/gps/admin/coupons'&&method==='GET')return json(res,200,{coupons:await store.coupons()});
+        if(path==='/api/gps/admin/coupons'&&method==='POST')return json(res,201,await store.saveCoupon(await body(req)));
+        const couponMatch=path.match(/^\/api\/gps\/admin\/coupons\/([A-Za-z0-9_-]{3,24})$/);
+        if(couponMatch&&method==='PATCH')return json(res,200,await store.setCouponEnabled(couponMatch[1],(await body(req)).enabled));
+        const renewMatch=path.match(/^\/api\/gps\/admin\/devices\/([\w-]+)\/renew$/);
+        if(renewMatch&&method==='POST')return json(res,200,await store.renewDevice(renewMatch[1],await body(req)));
         if(path==='/api/gps/admin/requests'&&method==='GET')return json(res,200,{requests:await store.gpsRequests()});
         const requestMatch=path.match(/^\/api\/gps\/admin\/requests\/([\w-]+)$/);
         if(requestMatch&&method==='PATCH'){await store.setGpsRequestStatus(requestMatch[1],(await body(req)).status);return json(res,200,{ok:true})}
