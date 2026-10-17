@@ -28,4 +28,6 @@ export default defineConfig(({mode})=>{const env=loadEnv(mode,process.cwd(),'');
 }],server:{proxy:{
   '/api/gps':{target:`http://127.0.0.1:${process.env.GPS_PORT||env.GPS_PORT||5180}`},
   '/api':{target:'http://127.0.0.1:5174',changeOrigin:true}
-}}};});
+}},
+// `--mode app` builds the bundle packaged in the Android app; its API calls go to the cloud deployment.
+...(mode==='app'?{build:{outDir:'dist-app',emptyOutDir:true},define:{'import.meta.env.VITE_API_ORIGIN':JSON.stringify(env.VITE_API_ORIGIN||'https://waypoint-eta-pied.vercel.app')}}:{})};});

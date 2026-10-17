@@ -20,10 +20,12 @@ export const brand=(href='/?live=1')=>`<a class="brand" href="${href}"><span cla
 // Session expiry is handled by whichever screen is showing (login is re-rendered).
 let onUnauthorized=()=>{};
 export function whenUnauthorized(callback:()=>void){onUnauthorized=callback}
+// The Android app bundles the UI on https://localhost, so its API calls name the cloud origin explicitly.
+export const API=`${import.meta.env.VITE_API_ORIGIN||''}/api/gps`;
 const noRedirect=['/session','/customers/session','/customers/register','/admin/session','/account/password'];
 export async function api<T=any>(path:string,options:RequestInit={}):Promise<T>{
   if(DEMO_MODE)return demoRequest(path,options);
-  const response=await fetch('/api/gps'+path,{...options,headers:{'Content-Type':'application/json',...options.headers},signal:AbortSignal.timeout(20000)});
+  const response=await fetch(API+path,{...options,headers:{'Content-Type':'application/json',...options.headers},signal:AbortSignal.timeout(20000)});
   const body=await response.json().catch(()=>({error:'Tracking service is temporarily unavailable. Please try again shortly.'}));
   if(!response.ok){if(response.status===401&&!path.startsWith('/sender/')&&!noRedirect.includes(path))onUnauthorized();throw new Error(body.error||'Request failed.');}
   return body;

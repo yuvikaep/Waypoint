@@ -22,7 +22,8 @@ export async function mobileSender(){
   const report=(reason:'stopped'|'permission'|'closed',beacon=false)=>{
     if(!deviceId||DEMO_MODE)return;
     const body=JSON.stringify({deviceId,reason});
-    if(beacon&&navigator.sendBeacon){navigator.sendBeacon('/api/gps/sender/stopped',new Blob([body],{type:'application/json'}));return}
+    // A beacon cannot carry the app's native session cookie, so the Android app always uses api().
+    if(beacon&&navigator.sendBeacon&&!import.meta.env.VITE_API_ORIGIN){navigator.sendBeacon('/api/gps/sender/stopped',new Blob([body],{type:'application/json'}));return}
     void api('/sender/stopped',{method:'POST',body}).catch(()=>{});
   };
   const stop=()=>{generation++;sharing=false;if(watch!==undefined)navigator.geolocation.clearWatch(watch);watch=undefined;if(timer)clearInterval(timer);timer=undefined;$('#sender-status').textContent='Location sharing band hai';$('#stop-sender').hidden=true;$<HTMLButtonElement>('#start-sender').disabled=!deviceId};

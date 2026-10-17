@@ -1,4 +1,6 @@
 import { upload } from '@vercel/blob/client';
+// Same API origin as shared/core (kept local: core imports this module).
+const API=`${import.meta.env.VITE_API_ORIGIN||''}/api/gps`;
 export const DEMO_MODE=new URLSearchParams(location.search).has('demo')&&['localhost','127.0.0.1'].includes(location.hostname);
 let storageTenant='owner';
 export function setWorkspaceTenant(tenant:string){storageTenant=tenant}
@@ -23,7 +25,7 @@ async function cloudAttachments(value:unknown,tenant:string,uploaded:Map<string,
         const blob=new Blob([Uint8Array.from(binary,c=>c.charCodeAt(0))],{type:match[1]});
         const prefix=`tenants/${tenant}/files/`;
         try{
-          const saved=await upload(`${prefix}${crypto.randomUUID()}.${attachmentTypes[match[1]]}`,blob,{access:'private',contentType:match[1],handleUploadUrl:'/api/gps/files/upload',abortSignal:AbortSignal.timeout(60000)});
+          const saved=await upload(`${prefix}${crypto.randomUUID()}.${attachmentTypes[match[1]]}`,blob,{access:'private',contentType:match[1],handleUploadUrl:`${API}/files/upload`,abortSignal:AbortSignal.timeout(60000)});
           if(!saved.pathname.startsWith(prefix)||saved.pathname.slice(prefix.length).includes('/'))throw new Error('Invalid uploaded attachment path.');
           fileUrl=`/api/gps/files/download?pathname=${encodeURIComponent(saved.pathname)}`;
           uploaded.set(item,fileUrl);
@@ -37,7 +39,7 @@ async function cloudAttachments(value:unknown,tenant:string,uploaded:Map<string,
 export async function loadWorkspaceData(){
   if(DEMO_MODE)return;
   for(const [key,kind] of Object.entries(cloudKeys)){
-    const response=await fetch(`/api/gps/workspace/${kind}`,{signal:AbortSignal.timeout(15000)});
+    const response=await fetch(`${API}/workspace/${kind}`,{signal:AbortSignal.timeout(15000)});
     if(!response.ok)throw new Error('Could not load cloud workspace data.');
     const {value}=await response.json();
     if(value!==null)cloudCache.set(key,JSON.stringify(value));else cloudCache.delete(key);
@@ -55,7 +57,7 @@ export const workspaceStorage={
     const parsed=JSON.parse(value);
     const transformed=kind==='documents'||kind==='bills'?await cloudAttachments(parsed,tenant,new Map()):parsed;
     if(storageTenant!==tenant)throw new Error('Workspace changed during save. Please try again.');
-    const response=await fetch(`/api/gps/workspace/${kind}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:transformed}),signal:AbortSignal.timeout(30000)});
+    const response=await fetch(`${API}/workspace/${kind}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:transformed}),signal:AbortSignal.timeout(30000)});
     if(!response.ok){const result=await response.json().catch(()=>({}));throw new Error(result.error||'Could not save cloud workspace data.')}
     if(storageTenant===tenant)cloudCache.set(key,JSON.stringify(transformed));
     return JSON.stringify(transformed);

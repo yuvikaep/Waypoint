@@ -8,4 +8,6 @@ if(params.get('workspace')==='documents'){
 }
 if(!params.has('live')&&!params.has('sender')&&!params.has('demo'))params.set('live','1');
 window.history.replaceState(null,'',location.pathname+'?'+params+location.hash);
+// Only the Android app build sets an API origin; the website never loads the native plugins.
+if(import.meta.env.VITE_API_ORIGIN)void import('./shared/native').then(m=>m.startNative()).catch(()=>{});
 void import('./live');
