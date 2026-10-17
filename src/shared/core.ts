@@ -20,7 +20,7 @@ export const brand=(href='/?live=1')=>`<a class="brand" href="${href}"><span cla
 // Session expiry is handled by whichever screen is showing (login is re-rendered).
 let onUnauthorized=()=>{};
 export function whenUnauthorized(callback:()=>void){onUnauthorized=callback}
-const noRedirect=['/session','/customers/session','/customers/register','/admin/session','/account/password'];
+const noRedirect=['/session','/customers/session','/customers/register','/admin/session','/admin/reset-password','/account/password'];
 export async function api<T=any>(path:string,options:RequestInit={}):Promise<T>{
   if(DEMO_MODE)return demoRequest(path,options);
   const response=await fetch('/api/gps'+path,{...options,headers:{'Content-Type':'application/json',...options.headers},signal:AbortSignal.timeout(20000)});

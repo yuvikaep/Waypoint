@@ -154,13 +154,22 @@ export class TrackingStore {
     return account;
   }
   // Recovery with the server maintenance key: give the admin a temporary password to change after login.
-  resetAdminPassword(email){
+  resetAdminPassword(email,chosen){
     const admins=this.db.prepare('SELECT email FROM admins WHERE enabled=1 ORDER BY createdAt').all();
-    const target=email==null?(admins.length===1?admins[0].email:fail(409,'Specify which admin email to reset.')):String(email).trim().toLowerCase();
+    const target=email==null||email===''?(admins.length===1?admins[0].email:fail(409,'Specify which admin email to reset.')):String(email).trim().toLowerCase();
     if(!admins.some(a=>a.email===target))fail(404,'Admin not found.');
-    const password=randomBytes(12).toString('base64url'),salt=randomBytes(16).toString('hex');
+    // The owner can choose the new password; otherwise a random one is returned once.
+    if(chosen!=null&&(typeof chosen!=='string'||chosen.length<12||chosen.length>128))fail(400,'New password must be 12 to 128 characters.');
+    const password=chosen??randomBytes(12).toString('base64url'),salt=randomBytes(16).toString('hex');
     this.db.prepare('UPDATE admins SET salt=?,passwordHash=? WHERE email=?').run(salt,scryptSync(password,salt,64).toString('hex'),target);
-    return {email:target,password};
+    return chosen==null?{email:target,password}:{email:target};
+  }
+  // Removes an admin; the last active admin can never be removed.
+  removeAdmin(email){
+    const target=String(email||'').trim().toLowerCase(),admins=this.db.prepare('SELECT email,enabled FROM admins').all();
+    if(!admins.some(a=>a.email===target))fail(404,'Admin not found.');
+    if(!admins.some(a=>a.email!==target&&a.enabled))fail(409,'This is the only admin, so it cannot be removed.');
+    this.db.prepare('DELETE FROM admins WHERE email=?').run(target);return {ok:true};
   }
   setCustomerEnabled(id,enabled){this.customer(id);this.db.prepare('UPDATE customers SET enabled=? WHERE id=?').run(Number(enabled),id);return this.customer(id);}
   raw(id) { return this.db.prepare('SELECT * FROM devices WHERE id=?').get(id) || fail(404, 'Device not found.'); }

@@ -111,7 +111,7 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
         await limited(`login:${clientAddress}`,10);
         const input=await body(req);
         if(typeof input.token!=='string'||hash(input.token)!==hash(adminToken))fail(401,'Incorrect workspace access key.');
-        return json(res,200,await store.resetAdminPassword(input.email));
+        return json(res,200,await store.resetAdminPassword(input.email,input.newPassword));
       }
       if(path==='/api/gps/admin/session'&&method==='POST'){
         await limited(`admin-login:${clientAddress}`,10);
@@ -321,6 +321,12 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
         if(requestMatch&&method==='PATCH'){await store.setGpsRequestStatus(requestMatch[1],(await body(req)).status);return json(res,200,{ok:true})}
         if(path==='/api/gps/admin/admins'&&method==='GET')return json(res,200,{admins:await store.admins()});
         if(path==='/api/gps/admin/admins'&&method==='POST')return json(res,201,await store.createAdmin((await body(req)).email));
+        const adminMatch=path.match(/^\/api\/gps\/admin\/admins\/([^/]+)$/);
+        if(adminMatch&&method==='DELETE'){
+          const target=decodeURIComponent(adminMatch[1]).toLowerCase();
+          if(session.email&&target===session.email.toLowerCase())fail(409,'You cannot remove the account you are signed in with.');
+          return json(res,200,await store.removeAdmin(target));
+        }
         fail(404,'Endpoint not found.');
       }
       if (path==='/api/gps/devices' && method==='POST') {if(session.role!=='admin')fail(403,'Only your fleet administrator can add devices.');const result=await store.createDevice(await body(req),session.tenantId);if(backgroundTasks)void bridge.sync();return json(res,201,result);}

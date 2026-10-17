@@ -108,13 +108,20 @@ export class PostgresTrackingStore {
     return account;
   }
   // Recovery with the server maintenance key: give the admin a temporary password to change after login.
-  async resetAdminPassword(email){
+  async resetAdminPassword(email,chosen){
     const admins=(await this.db.prepare('SELECT email FROM admins WHERE enabled=1 ORDER BY createdAt').all());
-    const target=email==null?(admins.length===1?admins[0].email:fail(409,'Specify which admin email to reset.')):String(email).trim().toLowerCase();
+    const target=email==null||email===''?(admins.length===1?admins[0].email:fail(409,'Specify which admin email to reset.')):String(email).trim().toLowerCase();
     if(!admins.some(a=>a.email===target))fail(404,'Admin not found.');
-    const password=randomBytes(12).toString('base64url'),salt=randomBytes(16).toString('hex');
+    if(chosen!=null&&(typeof chosen!=='string'||chosen.length<12||chosen.length>128))fail(400,'New password must be 12 to 128 characters.');
+    const password=chosen??randomBytes(12).toString('base64url'),salt=randomBytes(16).toString('hex');
     (await this.db.prepare('UPDATE admins SET salt=?,passwordHash=? WHERE email=?').run(salt,scryptSync(password,salt,64).toString('hex'),target));
-    return {email:target,password};
+    return chosen==null?{email:target,password}:{email:target};
+  }
+  async removeAdmin(email){
+    const target=String(email||'').trim().toLowerCase(),admins=(await this.db.prepare('SELECT email,enabled FROM admins').all());
+    if(!admins.some(a=>a.email===target))fail(404,'Admin not found.');
+    if(!admins.some(a=>a.email!==target&&Number(a.enabled)))fail(409,'This is the only admin, so it cannot be removed.');
+    (await this.db.prepare('DELETE FROM admins WHERE email=?').run(target));return {ok:true};
   }
   async resetCustomer(id){
     (await this.customer(id));const password=token(),salt=randomBytes(16).toString('hex');

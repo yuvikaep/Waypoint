@@ -23,7 +23,7 @@ export function showLogin(error=''){
       ${fields}
       <p class="error" role="alert">${esc(error)}</p>
       <button class="btn btn-primary btn-block" type="submit" id="login-submit">${t(mode==='signup'?'Create account':'Sign in')}${i('chevron-right')}</button>
-      <p class="small muted" style="text-align:center">${admin?'<a href="/?live=1&auth=customer">Customer sign in</a>':`<a href="/?live=1&auth=admin">${t('Admin sign in')}</a>`}</p>
+      <p class="small muted" style="text-align:center">${admin?'<a href="#" id="forgot">Forgot password?</a> · <a href="/?live=1&auth=customer">Customer sign in</a>':`<a href="/?live=1&auth=admin">${t('Admin sign in')}</a>`}</p>
     </form></section></div>`;
   $('#login').addEventListener('submit',async event=>{
     event.preventDefault();const button=$<HTMLButtonElement>('#login-submit');button.disabled=true;
@@ -35,5 +35,36 @@ export function showLogin(error=''){
     }catch(e){$('.auth-card .error').textContent=(e as Error).message;button.disabled=false}
   });
   on('[data-lang]',el=>{setLang(el.dataset.lang as Lang);showLogin(error)});
+  document.querySelector('#forgot')?.addEventListener('click',e=>{e.preventDefault();showForgot()});
+  icons();
+}
+
+// Admin recovery: the server maintenance key (WAYPOINT_SESSION_SECRET in Vercel) proves who is asking,
+// and the owner picks the new password. There is no email service, so nothing is sent anywhere.
+function showForgot(done=''){
+  $('#app').innerHTML=`<div class="auth">
+    <section class="auth-hero"><div class="road"></div>${brand()}<div><h1>Reset admin password</h1><p>Use the server maintenance key to set a new password.</p></div><small style="opacity:.7">© Waypoint</small></section>
+    <section class="auth-panel"><form class="auth-card form" id="forgot-form">
+      <span class="chip neutral plain">Admin</span>
+      <div><h1>Forgot password</h1><p class="muted">The maintenance key is the <b>WAYPOINT_SESSION_SECRET</b> value in your Vercel project settings.</p></div>
+      <label class="field">Maintenance key<input class="input" name="token" type="password" required autocomplete="off"></label>
+      <label class="field">Admin email <small class="muted">(leave empty if there is only one admin)</small><input class="input" name="email" type="email" autocomplete="username"></label>
+      <label class="field">New password<input class="input" name="password" type="password" required minlength="12" maxlength="128" autocomplete="new-password"></label>
+      <label class="field">Confirm new password<input class="input" name="confirm" type="password" required minlength="12" maxlength="128" autocomplete="new-password"></label>
+      <p class="hint">At least 12 characters.</p>
+      <p class="error" role="alert">${esc(done)}</p>
+      <button class="btn btn-primary btn-block" type="submit" id="forgot-submit">Set new password${i('chevron-right')}</button>
+      <p class="small muted" style="text-align:center"><a href="/?live=1&auth=admin">Back to sign in</a></p>
+    </form></section></div>`;
+  $('#forgot-form').addEventListener('submit',async event=>{
+    event.preventDefault();const button=$<HTMLButtonElement>('#forgot-submit'),err=$('#forgot-form .error');err.textContent='';
+    const data=new FormData(event.target as HTMLFormElement);
+    if(data.get('password')!==data.get('confirm')){err.textContent='Passwords do not match.';return}
+    button.disabled=true;
+    try{
+      const r=await api<{email:string}>('/admin/reset-password',{method:'POST',body:JSON.stringify({token:data.get('token'),email:String(data.get('email')||'').trim()||undefined,newPassword:data.get('password')})});
+      showLogin(`Password changed for ${r.email}. Sign in with the new password.`);
+    }catch(e){err.textContent=(e as Error).message;button.disabled=false}
+  });
   icons();
 }

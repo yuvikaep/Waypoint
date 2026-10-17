@@ -433,3 +433,39 @@ test('owners rename a place and fix its type, only in their own fleet',t=>{
   const r=store.updateFence(f.id,'tenant-a',{kind:'other',name:'Mayank home'});
   assert.equal(r.kind,'other');assert.equal(store.fences('tenant-a')[0].name,'Mayank home');assert.equal(store.fences('tenant-a')[0].radius,150);
 });
+
+test('admin can reset to a chosen password with the maintenance key; the last admin cannot be removed',async t=>{
+  const {store}=fixture(t);
+  const first=store.createAdmin('Owner@Example.test');
+  assert.throws(()=>store.resetAdminPassword('owner@example.test','short'),/12 to 128/);
+  const r=store.resetAdminPassword(null,'my-own-new-password-1');
+  assert.deepEqual(r,{email:'owner@example.test'},'a chosen password is never echoed back');
+  assert.throws(()=>store.adminLogin('owner@example.test',first.password),/Incorrect/);
+  assert.equal(store.adminLogin('owner@example.test','my-own-new-password-1').email,'owner@example.test');
+  assert.match(store.resetAdminPassword('owner@example.test').password,/^[\w-]{16}$/,'without a chosen password a random one is returned');
+  assert.throws(()=>store.removeAdmin('owner@example.test'),/only admin/);
+  store.createAdmin('second@example.test');
+  assert.throws(()=>store.resetAdminPassword(null,'my-own-new-password-1'),/Specify which admin/);
+  assert.deepEqual(store.removeAdmin('OWNER@example.test'),{ok:true});
+  assert.deepEqual(store.admins().map(a=>a.email),['second@example.test']);
+  assert.throws(()=>store.removeAdmin('owner@example.test'),/not found/);
+});
+
+test('admin routes: reset needs the key, remove needs an admin session and never removes yourself',async t=>{
+  const store=new TrackingStore(':memory:');t.after(()=>store.close());
+  const key='maintenance-key-at-least-24-characters';
+  store.createAdmin('a@example.test');store.createAdmin('b@example.test');
+  const server=createTrackingServer({store,adminToken:key,bridge:{state:{},sync:async()=>{}}});
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));
+  t.after(()=>new Promise(r=>{server.close(r);server.closeAllConnections()}));
+  const base=`http://127.0.0.1:${server.address().port}/api/gps`,json={'Content-Type':'application/json'};
+  const post=(p,b,h={})=>fetch(base+p,{method:'POST',headers:{...json,...h},body:JSON.stringify(b)});
+  assert.equal((await post('/admin/reset-password',{token:'wrong',email:'a@example.test',newPassword:'my-own-new-password-1'})).status,401);
+  const ok=await post('/admin/reset-password',{token:key,email:'a@example.test',newPassword:'my-own-new-password-1'});
+  assert.equal(ok.status,200);assert.deepEqual(await ok.json(),{email:'a@example.test'});
+  const login=await post('/admin/session',{email:'a@example.test',password:'my-own-new-password-1'});assert.equal(login.status,200);
+  const cookie={cookie:login.headers.get('set-cookie').split(';')[0]};
+  assert.equal((await fetch(base+'/admin/admins/b%40example.test',{method:'DELETE'})).status,401);
+  assert.equal((await fetch(base+'/admin/admins/a%40example.test',{method:'DELETE',headers:cookie})).status,409,'cannot remove yourself');
+  assert.equal((await fetch(base+'/admin/admins/b%40example.test',{method:'DELETE',headers:cookie})).status,200);
+});
