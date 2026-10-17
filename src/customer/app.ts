@@ -243,7 +243,7 @@ function vehicleCard(d:Vehicle){
       <span class="we-ign ${d.ignition?'on':''}"><b>${d.ignition==null?'—':d.ignition?'ON':'OFF'}</b><small>${t('Ignition')}</small></span>
     </button>
     <button class="we-kebab" data-menu="${d.id}" aria-label="${t('More options')}">${i('ellipsis-vertical')}</button>
-    <div class="we-addr"><p>${mine?`<button class="we-mine" data-efence="${mineFence(p!)?.id}">${esc(mine)} ${i('pencil')}</button><br>`:''}${placeSpan(p,d.id)}</p>${p?`<button class="we-link" data-save="${d.id}">${t('Save location')}</button>`:''}</div>
+    <div class="we-addr"><p>${mine?`<button class="we-mine" data-efence="${mineFence(p!)?.id}">${esc(mine)} ${i('pencil')}</button><br>`:''}${placeSpan(p,d.id)}</p></div>
     ${line?`<p class="we-line">${esc(line)}</p>`:''}
     ${!d.isMobile&&p&&d.online&&Date.now()-p.recordedAt>10*60000?`<p class="we-stale">${i('satellite')} ${t('Last GPS fix {t}. The tracker has no satellite signal, so this place may be a little off.',{t:ago(p.recordedAt)})}</p>`:''}
     <div class="we-acts">
@@ -261,7 +261,6 @@ function bindCards(root:HTMLElement){
   on('[data-share]',el=>shareVehicle(vehicle(el.dataset.share!)!),root);
   on('[data-park]',el=>parkLock(vehicle(el.dataset.park!)!),root);
   on('[data-efence]',el=>editFence(el.dataset.efence!),root);
-  on('[data-save]',el=>{const p=vehicle(el.dataset.save!)?.position;if(p)addFence({latitude:p.latitude,longitude:p.longitude,radius:150})},root);
   on('[data-menu]',el=>vehicleMenu(vehicle(el.dataset.menu!)!),root);
 }
 // Mobile network of the tracker's SIM as 4 bars; an offline tracker has none.
@@ -459,7 +458,7 @@ function renderVehicle(){
     if(p&&!mine&&!nearCache.has(placeKey(p))){const key=placeKey(p);nearCache.set(key,'');void nearest(p.latitude,p.longitude).then(n=>{if(n){nearCache.set(key,nearText(n));if(vehicleId===d.id)drawSheet()}})}
     const near=mine||(p?nearCache.get(placeKey(p)):'');
     $('#vsheet').innerHTML=`<div class="cx-grab"></div>
-      <div class="we-addr big"><p>${near?mine?`<button class="we-mine" data-efence="${mineFence(p!)?.id}">${esc(near)} ${i('pencil')}</button><br>`:`<b>${esc(near)}</b><br>`:''}${placeSpan(p,d.id)}</p>${p?`<button class="we-link" id="vsave">${t('Save location')}</button>`:''}</div>
+      <div class="we-addr big"><p>${near?mine?`<button class="we-mine" data-efence="${mineFence(p!)?.id}">${esc(near)} ${i('pencil')}</button><br>`:`<b>${esc(near)}</b><br>`:''}${placeSpan(p,d.id)}</p></div>
       <h3 class="we-h">${t('Features')}</h3>
       <div class="we-feat2"><button id="vhistory"><span class="we-feat-ico">${i('route')}</span>${t('Route history')}</button><button id="vnearby"><span class="we-feat-ico">${i('search')}</span>${t('Find nearby')}</button></div>
       <div class="we-grid">
@@ -479,7 +478,6 @@ function renderVehicle(){
       </div>`;
     const sh=$('#vsheet');
     on('[data-efence]',el=>editFence(el.dataset.efence!),sh);
-    on('#vsave',()=>addFence({latitude:p!.latitude,longitude:p!.longitude,radius:150}),sh);
     on('#vhistory',()=>{historyVehicle=d.id;go('history',d.id)},sh);
     on('#vnearby',()=>{setVehicleGoogle(!vehicleGoogle);$('#vgtoggle').classList.toggle('on',vehicleGoogle);drawMap();window.scrollTo({top:0,behavior:'smooth'})},sh);
     on('#vplaces',()=>go('geofences'),sh);
