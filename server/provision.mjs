@@ -36,11 +36,11 @@ export function buildPlan(device, options = {}) {
     const steps = [
       { command: 'VERSION#', label: 'Read firmware version' },
       { command: 'GMT,E,5,30#', label: 'Set time zone to IST' },
-      // PT06 reads the parked value of TIMER in minutes (its TIMER:20,10 reports every 10 minutes when
-      // parked), so a value meant as seconds would silence it for an hour. Only read it there.
-      device.model === 'PT06'
-        ? { command: 'TIMER#', label: 'Read upload interval (PT06 units differ, so it is not changed automatically)' }
-        : { command: `TIMER,${moving},${parked}#`, label: `Upload every ${moving} s moving, ${parked} s parked` },
+      // Both TIMER values are seconds; the firmware ignores anything under 5 and then uploads nothing
+      // while the ignition is off, which looks exactly like a tracker that has lost GPS.
+      { command: `TIMER,${moving},${parked}#`, label: `Upload every ${moving} s with ignition on, ${parked} s with it off` },
+      // Minutes the GPS runs after a wake-up. 0 keeps it on, so a standing vehicle still reports.
+      { command: 'SENDS,0#', label: 'Keep GPS on even when the vehicle stands still' },
       { command: 'ACCREP,ON#', label: 'Report ignition changes immediately' },
       { command: 'BATCH,OFF#', label: 'Send every fix at once (no batching)' },
       { command: 'GPRSON,1#', label: 'Keep mobile data on' },

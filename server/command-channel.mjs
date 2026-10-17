@@ -9,13 +9,13 @@ const fail=(status,message)=>{throw Object.assign(Error(message),{status});};
 // cloud secret cannot be used to push arbitrary text (or relay cuts) to vehicles.
 const GT06_SECONDS='(?:[5-9]|[1-9]\\d{1,3}|1[0-7]\\d{3}|18000)';
 export const ALLOWED_COMMANDS=[
-  /^(?:RESET|STATUS|PARAM|GPRSSET|VERSION|WHERE|TIMER|APN|SERVER|GPRSON|ACCREP|BATCH|HBT)#$/,
+  /^(?:RESET|STATUS|PARAM|GPRSSET|VERSION|WHERE|TIMER|APN|SERVER|GPRSON|ACCREP|BATCH|HBT|SENDS)#$/,
   /^BATCH,OFF#$/,
-  // Parked value may be minutes on PT06, so 1-4 is allowed there.
-  new RegExp(`^TIMER,(?:0|${GT06_SECONDS}),(?:[1-4]|${GT06_SECONDS})#$`),
+  // Both values are seconds. The firmware ignores anything under 5, which silently stops uploads.
+  new RegExp(`^TIMER,(?:0|${GT06_SECONDS}),${GT06_SECONDS}#$`),
   /^ACCREP,(?:ON|OFF)#$/,/^GPRSON,[01]#$/,
-  // Battery-powered trackers sleep their GPS when the vehicle stands still; SLEEP,OFF keeps it awake.
-  /^SLEEP,(?:OFF|ON|TIME|SHOCK)#$/,/^SLEEP#$/,/^GMT,[EW],(?:\d|1[0-2]),(?:0|15|30|45)#$/,
+  // SENDS is the minutes the GPS runs after a wake-up; SENDS,0 keeps it on permanently.
+  /^SENDS,(?:0|[1-9]\d{0,2}|300)#$/,/^SENDS#$/,/^GMT,[EW],(?:\d|1[0-2]),(?:0|15|30|45)#$/,
   /^APN,[A-Za-z0-9._-]{1,40}(?:,[A-Za-z0-9._@-]{0,40},[A-Za-z0-9._@-]{0,40})?#$/,
   /^SERVER,[01],[A-Za-z0-9.-]{3,100},\d{2,5},[01]#$/,
   /^(?:getinfo|getver|getstatus|getgps|cpureset)$/,

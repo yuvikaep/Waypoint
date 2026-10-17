@@ -56,8 +56,9 @@ test('maintenance commands: only approved text reaches an online tracker; packet
   const send=data=>fetch(base+'/api/commands/send',{method:'POST',headers,body:JSON.stringify({deviceId:3,type:'custom',textChannel:false,attributes:{data}})});
   assert.equal((await send('TIMER,10,60#')).status,200);
   assert.deepEqual(sent[0],{deviceId:3,type:'custom',textChannel:false,attributes:{data:'TIMER,10,60#'}},'maintenance text may queue');
-  assert.equal((await send('TIMER,20,1#')).status,200,'PT06 parked minutes');sent.pop();
-  for(const bad of ['RELAY,1#','FACTORY#','TIMER,1,60#','SERVER,1,evil host,1,0#'])assert.equal((await send(bad)).status,403,bad);
+  assert.equal((await send('SENDS,0#')).status,200,'GPS always on');sent.pop();
+  // Under 5 seconds the firmware stops uploading while the ignition is off, so it is refused here.
+  for(const bad of ['RELAY,1#','FACTORY#','TIMER,1,60#','TIMER,20,1#','SERVER,1,evil host,1,0#'])assert.equal((await send(bad)).status,403,bad);
   assert.equal(sent.length,1);
   const packets=await (await fetch(base+'/api/packets?uniqueId=867111062240426&limit=10',{headers})).json();
   assert.deepEqual(packets.packets.map(p=>p.tag),['connected','Login','Server ack · Login','Location','id: 867111062240426, time: 2026-10-15 10:54:30, lat: 25.54839, lon: 82.76842']);
