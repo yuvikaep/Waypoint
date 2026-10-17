@@ -535,7 +535,7 @@ function renderAlerts(){
 }
 
 /* ---------- Trip maths shared by history and reports ---------- */
-type Segment={kind:'run'|'stop';from:number;to:number;km:number;at:Fix;maxSpeed:number};
+type Segment={kind:'run'|'stop';from:number;to:number;km:number;at:Fix;end:Fix;maxSpeed:number};
 const STOP_MIN=5*60000;
 function km(a:{latitude:number;longitude:number},b:{latitude:number;longitude:number}){
   const r=Math.PI/180,h=Math.sin((b.latitude-a.latitude)*r/2)**2+Math.cos(a.latitude*r)*Math.cos(b.latitude*r)*Math.sin((b.longitude-a.longitude)*r/2)**2;
@@ -548,12 +548,12 @@ function segments(track:Fix[]):Segment[]{
   for(let n=0;n<track.length;n++){
     const p=track[n],prev=track[n-1],kind:Segment['kind']=p.speed>=3?'run':'stop';
     let step=0;if(prev){const dt=(p.recordedAt-prev.recordedAt)/3600000,d=km(prev,p);if(dt>0&&d/dt<=150&&(kind==='run'||prev.speed>=3||d>=0.1))step=d}
-    if(!cur||cur.kind!==kind){if(cur){cur.to=p.recordedAt;cur.km+=step;step=0}cur={kind,from:p.recordedAt,to:p.recordedAt,km:0,at:p,maxSpeed:p.speed};out.push(cur)}
-    cur.to=p.recordedAt;cur.km+=step;cur.maxSpeed=Math.max(cur.maxSpeed,p.speed);
+    if(!cur||cur.kind!==kind){if(cur){cur.to=p.recordedAt;cur.end=p;cur.km+=step;step=0}cur={kind,from:p.recordedAt,to:p.recordedAt,km:0,at:p,end:p,maxSpeed:p.speed};out.push(cur)}
+    cur.to=p.recordedAt;cur.end=p;cur.km+=step;cur.maxSpeed=Math.max(cur.maxSpeed,p.speed);
   }
   // Short halts inside a run are part of the run.
   const merged:Segment[]=[];
-  for(const s of out){const last=merged.at(-1);if(s.kind==='stop'&&s.to-s.from<STOP_MIN&&last){last.to=s.to;last.km+=s.km;continue}if(last&&last.kind===s.kind){last.to=s.to;last.km+=s.km;last.maxSpeed=Math.max(last.maxSpeed,s.maxSpeed);continue}merged.push({...s})}
+  for(const s of out){const last=merged.at(-1);if(s.kind==='stop'&&s.to-s.from<STOP_MIN&&last){last.to=s.to;last.end=s.end;last.km+=s.km;continue}if(last&&last.kind===s.kind){last.to=s.to;last.end=s.end;last.km+=s.km;last.maxSpeed=Math.max(last.maxSpeed,s.maxSpeed);continue}merged.push({...s})}
   return merged;
 }
 async function loadTrack(id:string,from:Date,to:Date){
@@ -622,7 +622,7 @@ function renderHistory(){
       <div class="we-hhead"><b>${placeSpan(last,'history-last',{short:true})}</b><button class="we-round" id="csv" aria-label="${t('Download CSV')}">${i('download')}</button><button class="we-soft-btn" data-go="reports">${t('More reports')}</button></div>
       <div class="we-sum"><div class="run"><span>${t('Run-time')}</span><b>${total} ${t('km')}</b><small>(${dur(runMs)})</small></div><div class="stop"><span>${t('Stop-time')}</span><b>${t('{n} stops',{n:stops.length})}</b><small>(${dur(stopMs)})</small></div></div>
       <div class="we-tabs2"><button data-tab="all" class="${tab==='all'?'on':''}">${t('All')} (${total} ${t('km')})</button><button data-tab="stops" class="${tab==='stops'?'on':''}">${t('Stops')} (${stops.length})</button></div>
-      <div class="we-timeline">${shown.map((s,n)=>`<button class="we-seg ${s.kind}" data-seg="${segs.indexOf(s)}"><span class="we-seg-dot">${i(s.kind==='run'?'navigation':'circle-parking')}</span><span class="we-seg-body"><span class="we-seg-head"><b>${t(s.kind==='run'?'Running':'Stopped')}</b><em>${dur(s.to-s.from)}</em></span><small>${when(s.from)} – ${clock(s.to)}</small>${s.kind==='run'?`<small>${t('Covered {n} km',{n:Math.round(s.km*10)/10})} · ${t('Max speed')} ${Math.round(s.maxSpeed)} km/h</small>`:`<small>${placeSpan(s.at,'seg-'+n,{short:true,lookup:n<15})}</small>`}</span></button>`).join('')||`<p class="cx-hint">${t('No movement recorded in this period.')}</p>`}</div>`;
+      <div class="we-timeline">${shown.map((s,n)=>`<button class="we-seg ${s.kind}" data-seg="${segs.indexOf(s)}"><span class="we-seg-dot">${i(s.kind==='run'?'navigation':'circle-parking')}</span><span class="we-seg-body"><span class="we-seg-head"><b>${t(s.kind==='run'?'Running':'Stopped')}</b><em>${dur(s.to-s.from)}</em></span><small>${when(s.from)} – ${clock(s.to)}</small>${s.kind==='run'?`<small class="we-route"><b>${t('From')}</b> ${placeSpan(s.at,'segfrom-'+n,{short:true,lookup:n<12})}<br><b>${t('To')}</b> ${placeSpan(s.end,'segto-'+n,{short:true,lookup:n<12})}</small><small>${t('Covered {n} km',{n:Math.round(s.km*10)/10})} · ${t('Max speed')} ${Math.round(s.maxSpeed)} km/h</small>`:`<small>${placeSpan(s.at,'seg-'+n,{short:true,lookup:n<15})}</small>`}</span></button>`).join('')||`<p class="cx-hint">${t('No movement recorded in this period.')}</p>`}</div>`;
     const sh=$('#hsheet');
     on('[data-tab]',b=>{tab=b.dataset.tab as typeof tab;drawSheet(segs)},sh);
     on('[data-go]',b=>go(b.dataset.go as View),sh);

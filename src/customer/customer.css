@@ -731,3 +731,5 @@
 
 .we-id small.we-upd{display:flex;flex-direction:column;line-height:1.25}
 .we-upd em{font-style:normal;font-size:12px;font-weight:600;letter-spacing:.02em;text-transform:uppercase;color:var(--c-muted);opacity:.85}
+
+.we-seg small.we-route{color:var(--c-ink-2);line-height:1.5}.we-seg small.we-route b{color:var(--c-muted);font-weight:600;font-size:12.5px;text-transform:uppercase;letter-spacing:.03em;margin-right:4px}
