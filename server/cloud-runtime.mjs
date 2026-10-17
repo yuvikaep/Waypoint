@@ -5,6 +5,7 @@ import { PostgresTrackingStore } from './postgres-store.mjs';
 import { fail, hash } from './tracking-store.mjs';
 import { TraccarBridge } from './traccar.mjs';
 import { provisionTick } from './provision.mjs';
+import { locationTick } from './locate.mjs';
 
 let pool, initialized;
 export function databasePool(){
@@ -105,6 +106,11 @@ export async function gatewayRequest(req,res,store,client,bridge){
     for(const incoming of data.devices){
       try{const fresh=await store.raw(incoming.id);if(fresh.model!=='Mobile')await provisionTick(store,bridge,fresh)}
       catch(e){console.error('Provisioning step failed:',e.message)}
+    // A parked tracker stops uploading location; ask it for its position while its last fix is stale.
+    for(const incoming of data.devices){
+      try{const fresh=await store.raw(incoming.id);if(fresh.model!=='Mobile')await locationTick(store,bridge,fresh)}
+      catch(e){console.error('Location refresh failed:',e.message)}
+    }
     }
     // Alerts from these positions (and silent trackers) reach phones even when no app is open.
     try{await store.tick();await deliverPushes(store,{origin:`https://${req.headers.host}`});}catch(e){console.warn('Push delivery failed:',e.message);}

@@ -1,3 +1,4 @@
+import { parseWhere } from './locate.mjs';
 export class TraccarBridge {
   constructor(store, { url, token, fetcher = fetch } = {}) {
     this.store=store; this.url=url?.replace(/\/$/,''); this.token=token; this.fetcher=fetcher;
@@ -48,6 +49,18 @@ export class TraccarBridge {
     finally { this.busy=false; }
   }
   async ingest(id,p) {
+    const attrs0=p?.attributes || {};
+    // A parked tracker answers WHERE# with its current GPS position in text; that is a fresh fix.
+    if (p?.id && typeof attrs0.result === 'string') {
+      const where=parseWhere(attrs0.result);
+      if (where) {
+        const at=Math.min(Date.parse(p.serverTime) || this.store.now(),this.store.now());
+        try {
+          await this.store.ingest(id,{eventId:`traccar-where:${p.id}`,recordedAt:new Date(at).toISOString(),latitude:where.latitude,longitude:where.longitude,
+            speed:where.speed,heading:where.heading,valid:true,extra:{type:'where',result:attrs0.result}},{receivedAt:at,heartbeat:false});
+        } catch (e) { if (e.status!==400) throw e; }
+      }
+    }
     if (!p.id || !Number.isFinite(p.latitude) || !Number.isFinite(p.longitude) || (p.latitude === 0 && p.longitude === 0)) return;
     const attrs=p.attributes || {};
     const receivedAt=Date.parse(p.serverTime) || this.store.now();
