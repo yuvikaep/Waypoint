@@ -422,4 +422,6 @@ export const HG:Record<string,string>={
   "LPG":"LPG",
   "Electric":"Electric",
   "Hybrid":"Hybrid",
+  "Last GPS fix":"Aakhri GPS location",
+  "The tracker is connected but has not sent a new location since {t}. This place may be out of date.":"Tracker juda hua hai, par {t} ke baad koi nayi location nahi bheji. Yeh jagah purani ho sakti hai.",
 };

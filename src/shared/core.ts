@@ -72,9 +72,11 @@ export const mapsLink=(p:{latitude:number;longitude:number})=>`https://www.googl
 // datetime-local fields hold IST wall time.
 export const localInput=(date:Date)=>new Date(date.getTime()+IST_MS).toISOString().slice(0,16);
 export const fromLocalInput=(value:string)=>new Date(`${value}:00+05:30`);
-// A parked hardware tracker sends a heartbeat every minute from where it stands, so while it is
-// online and parked its location counts as updated at the latest heartbeat.
-export const updatedAt=(v:Vehicle)=>{const p=v.position;if(!p)return v.lastSeen;return !v.isMobile&&v.model!=='Mobile'&&v.online&&v.status==='Stopped'&&v.lastSeen?Math.max(p.recordedAt,v.lastSeen):p.recordedAt};
+// When the vehicle's position itself was last measured. A heartbeat proves the tracker is alive, not
+// where it is, so it never counts as a location update.
+export const fixAt=(v:Vehicle)=>v.position?v.position.recordedAt:v.lastSeen;
+// A tracker that is connected but whose last fix has gone old: it is reporting in, without a location.
+export const fixStale=(v:Vehicle,minutes=10)=>!!v.position&&v.online&&Date.now()-v.position.recordedAt>minutes*60000;
 
 // One status vocabulary for chips, markers and filters, in the way Indian fleet apps show it.
 export type StatusKey='running'|'idle'|'stopped'|'offline'|'nofix'|'waiting';

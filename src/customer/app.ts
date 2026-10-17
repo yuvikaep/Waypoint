@@ -1,4 +1,4 @@
-import {$,$$,api,post,clock,closeModal,coords,esc,fromLocalInput,hm,i,icons,IST,IST_OFFSET,istDayStart,localInput,updatedAt,vehicleKind,vehicleLine,FUEL_TYPES,VEHICLE_TYPES,mapsLink,modal,on,since,statusLabel,statusOf,time,ago,toast,whenUnauthorized,type Alert,type Fence,type Fix,type Identity,type StatusKey,type Vehicle} from '../shared/core';
+import {$,$$,api,post,clock,closeModal,coords,esc,fromLocalInput,hm,i,icons,IST,IST_OFFSET,istDayStart,localInput,fixAt,fixStale,vehicleKind,vehicleLine,FUEL_TYPES,VEHICLE_TYPES,mapsLink,modal,on,since,statusLabel,statusOf,time,ago,toast,whenUnauthorized,type Alert,type Fence,type Fix,type Identity,type StatusKey,type Vehicle} from '../shared/core';
 import {bearing,createMap,drawRoute,fleetIcon,glide,markerHtml,playbackIcon,point,L} from '../shared/map';
 import {place,placeSpan,placeText,places,placeKey,placeFallback} from '../shared/places';
 import {nearest,nearText,nearSaved,placeIcon,PLACE_KIND} from '../shared/poi';
@@ -240,13 +240,13 @@ function vehicleCard(d:Vehicle){
   return `<article class="we-card ${over?'over':''}">
     <button class="we-card-top" data-open="${d.id}">
       <span class="we-speed ${over?'sos':speed?'run':'zero'}"><b>${speed}</b><small>kmph</small></span>
-      <span class="we-id"><b class="cx-plate">${esc(d.name)}</b>${kindTag(d)}<small class="we-upd"><em>${t(p?'Location updated':'Last signal')}</em>${when(updatedAt(d))}</small></span>
+      <span class="we-id"><b class="cx-plate">${esc(d.name)}</b>${kindTag(d)}<small class="we-upd"><em>${t(p?fixStale(d)?'Last GPS fix':'Location updated':'Last signal')}</em>${when(fixAt(d))}</small></span>
       <span class="we-ign ${d.ignition?'on':''}"><b>${d.ignition==null?'—':d.ignition?'ON':'OFF'}</b><small>${t('Ignition')}</small></span>
     </button>
     <button class="we-kebab" data-menu="${d.id}" aria-label="${t('More options')}">${i('ellipsis-vertical')}</button>
     <div class="we-addr"><p>${mine?`<b>${esc(mine)}</b><br>`:''}${placeSpan(p,d.id)}</p></div>
     ${line?`<p class="we-line">${esc(line)}</p>`:''}
-    ${!d.isMobile&&p&&d.online&&Date.now()-updatedAt(d)!>10*60000?`<p class="we-stale">${i('satellite')} ${t('Last GPS fix {t}. The tracker has no satellite signal, so this place may be a little off.',{t:ago(p.recordedAt)})}</p>`:''}
+    ${!d.isMobile&&fixStale(d)?`<p class="we-stale">${i('satellite')} ${t('The tracker is connected but has not sent a new location since {t}. This place may be out of date.',{t:when(p!.recordedAt)})}</p>`:''}
     <div class="we-acts">
       ${d.driverPhone?`<a href="tel:${esc(d.driverPhone)}"><span class="we-act-ico">${i('phone')}</span>${t('Call driver')}</a>`:`<button data-phone="${d.id}"><span class="we-act-ico">${i('phone')}</span>${t('Call driver')}</button>`}
       <button data-signal="${d.id}"><span class="we-act-ico">${bars(d.signal)}</span>${signalLabel(d)}</button>
@@ -447,7 +447,7 @@ function renderVehicle(){
     const d=vehicle(vehicleId);if(!d)return;
     const p=d.position,km=kmToday.get(d.id),s=statusOf(d);
     $('#vcard').innerHTML=`<button class="we-back" data-back aria-label="${t('Back')}">${i('arrow-left')}</button>
-      <div class="we-vcard-main"><b class="cx-plate">${esc(d.name)}<i class="we-dot ${overspeeding(d)?'sos':group(s)}"></i></b>${kindTag(d)}<small>${t('Last updated on {t}',{t:when(updatedAt(d))})}</small>
+      <div class="we-vcard-main"><b class="cx-plate">${esc(d.name)}<i class="we-dot ${overspeeding(d)?'sos':group(s)}"></i></b>${kindTag(d)}<small>${t('Last updated on {t}',{t:when(fixAt(d))})}</small>
       <div class="we-vcard-line"><span>${km==null?'—':t('{n} km today',{n:km})}</span><span>${t('Ignition')}: <b class="${d.ignition?'on':'off'}">${d.ignition==null?'—':d.ignition?t('On'):t('Off')}</b></span></div></div>`;
     on('[data-back]',back,$('#vcard'));icons();
   };
@@ -496,7 +496,7 @@ function renderVehicle(){
 }
 function vehicleInfo(d:Vehicle){
   const s=statusOf(d);
-  modal(`${d.name} · ${t('Information')}`,`<dl class="facts"><dt>${t('Status')}</dt><dd>${statusLabel(s)}</dd>${d.vehicleType?`<dt>${t('Vehicle type')}</dt><dd>${t(VEHICLE_TYPES[d.vehicleType]?.[0]||'Vehicle')}</dd>`:''}${d.makeModel?`<dt>${t('Make and model')}</dt><dd>${esc(d.makeModel)}${d.modelYear?` · ${d.modelYear}`:''}</dd>`:''}${d.fuelType?`<dt>${t('Fuel')}</dt><dd>${t(FUEL_TYPES[d.fuelType]||d.fuelType)}</dd>`:''}${d.capacityKg?`<dt>${t('Load capacity')}</dt><dd>${d.capacityKg} kg</dd>`:''}${d.registration?`<dt>${t('Registration')}</dt><dd>${esc(d.registration)}</dd>`:''}${d.ownerName?`<dt>${t('Registered owner')}</dt><dd>${esc(d.ownerName)}</dd>`:''}<dt>${t('Driver')}</dt><dd>${esc(d.driver||'—')}</dd><dt>${t('Speed limit')}</dt><dd>${d.speedLimit} km/h${d.speedAlert===false?` (${t('alert off')})`:''}</dd><dt>${t('Last updated')}</dt><dd>${when(updatedAt(d))}</dd>${d.stoppedSince?`<dt>${t('Standing since')}</dt><dd>${when(d.stoppedSince)}</dd>`:''}<dt>${t('Tracker')}</dt><dd>${d.isMobile?t('Driver phone'):'GPS'}</dd></dl>`);
+  modal(`${d.name} · ${t('Information')}`,`<dl class="facts"><dt>${t('Status')}</dt><dd>${statusLabel(s)}</dd>${d.vehicleType?`<dt>${t('Vehicle type')}</dt><dd>${t(VEHICLE_TYPES[d.vehicleType]?.[0]||'Vehicle')}</dd>`:''}${d.makeModel?`<dt>${t('Make and model')}</dt><dd>${esc(d.makeModel)}${d.modelYear?` · ${d.modelYear}`:''}</dd>`:''}${d.fuelType?`<dt>${t('Fuel')}</dt><dd>${t(FUEL_TYPES[d.fuelType]||d.fuelType)}</dd>`:''}${d.capacityKg?`<dt>${t('Load capacity')}</dt><dd>${d.capacityKg} kg</dd>`:''}${d.registration?`<dt>${t('Registration')}</dt><dd>${esc(d.registration)}</dd>`:''}${d.ownerName?`<dt>${t('Registered owner')}</dt><dd>${esc(d.ownerName)}</dd>`:''}<dt>${t('Driver')}</dt><dd>${esc(d.driver||'—')}</dd><dt>${t('Speed limit')}</dt><dd>${d.speedLimit} km/h${d.speedAlert===false?` (${t('alert off')})`:''}</dd><dt>${t('Last updated')}</dt><dd>${when(fixAt(d))}</dd>${d.stoppedSince?`<dt>${t('Standing since')}</dt><dd>${when(d.stoppedSince)}</dd>`:''}<dt>${t('Tracker')}</dt><dd>${d.isMobile?t('Driver phone'):'GPS'}</dd></dl>`);
 }
 
 /* ---------- Notifications ---------- */

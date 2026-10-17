@@ -1,4 +1,4 @@
-import {$,$$,api,post,brand,chip,closeModal,coords,esc,hm,i,icons,mapsLink,modal,on,showSecret,statusLine,time,ago,toast,updatedAt,whenUnauthorized,wireCopy,type Identity,type Vehicle} from '../shared/core';
+import {$,$$,api,post,brand,chip,closeModal,coords,esc,hm,i,icons,mapsLink,modal,on,showSecret,statusLine,time,ago,toast,fixAt,fixStale,whenUnauthorized,wireCopy,type Identity,type Vehicle} from '../shared/core';
 import {createMap,point,truckIcon,L} from '../shared/map';
 import {placeSpan} from '../shared/places';
 import {googleLive} from '../shared/gview';
@@ -277,7 +277,7 @@ async function renderDevice(){
     <div class="actions"><button class="btn btn-ghost btn-sm" id="dp-edit">${i('pencil')}Edit / assign</button><button class="btn btn-ghost btn-sm" id="dp-setup">${i('info')}Setup</button><button class="btn btn-danger btn-sm" id="dp-delete">${i('trash-2')}Delete</button></div></div>`;
   const k=(icon:string,tone:string,label:string,value:string,sub='')=>`<div class="dp-kpi ${tone}"><span class="dp-kpi-ico">${i(icon)}</span><div><small>${label}</small><b>${value}</b>${sub?`<em>${sub}</em>`:''}</div></div>`;
   const fresh=(at:number|null)=>at!=null&&Date.now()-at<=10*60000?'ok':'warn';
-  $('#dp-kpi').innerHTML=k('map-pin',p?fresh(updatedAt(d)):'warn','Location updated',p?ago(updatedAt(d)):'Never',p?time(updatedAt(d)):'')
+  $('#dp-kpi').innerHTML=k('map-pin',p?fresh(fixAt(d)):'warn','Last GPS fix',p?ago(fixAt(d)):'Never',p?time(fixAt(d)):'')
     +k('activity',d.online?'ok':'bad','Last heartbeat',ago(d.lastSeen),time(d.lastSeen))
     +k('gauge',p&&p.speed>=3?'ok':'','Speed',p?`${Math.round(p.speed)} km/h`:'—',p?.heading!=null?`heading ${Math.round(p.heading)}°`:'')
     +k('key-round',d.ignition?'ok':'','Ignition',d.ignition==null?'—':d.ignition?'On':'Off')
@@ -331,12 +331,12 @@ function renderHealth(data:Detail){
     :data.power.connected?`Connected${lastEvent&&lastEvent.connected?` since ${time(lastEvent.at)}`:''}`:`<b style="color:var(--stopped)">CUT since ${lastEvent?time(lastEvent.at):'—'}</b> · running on backup battery${lastEvent?` (${hm(Math.round((Date.now()-lastEvent.at)/60000))})`:''}`;
   const na='<span class="muted">Not reported</span>';
   // The newest fix is the device's own position; the packet list is mostly heartbeats and may not reach back to it.
-  const fix=d.position&&d.position.valid!==0?d.position:lastFix||null,upd=updatedAt(d);
-  const fixAge=fix?Date.now()-fix.recordedAt:Infinity,parkedFresh=upd!=null&&Date.now()-upd<=10*60000;
+  const fix=d.position&&d.position.valid!==0?d.position:lastFix||null;
+  const fixAge=fix?Date.now()-fix.recordedAt:Infinity;
   const fixState=!fix?['bad','No fix yet','The tracker has not sent a satellite location yet.']
     :fixAge<=10*60000?['ok','Live GPS',`Fixed ${ago(fix.recordedAt).toLowerCase()} · ${time(fix.recordedAt)}`]
-    :parkedFresh&&d.status==='Stopped'?['ok','Parked',`Location confirmed by heartbeat ${ago(upd).toLowerCase()} · last fix ${time(fix.recordedAt)}`]
-    :['warn','Old fix',`${ago(fix.recordedAt)} · ${time(fix.recordedAt)}. No new satellite fix: the tracker may be indoors or covered.`];
+    :d.online?['bad','No location being sent',`The tracker is connected and heartbeating, but its last position is from ${time(fix.recordedAt)} (${ago(fix.recordedAt).toLowerCase()}). It is not uploading a new fix.`]
+    :['warn','Old fix',`${ago(fix.recordedAt)} · ${time(fix.recordedAt)}`];
   const sig=rssi?Number(rssi.v):null,sigTone=sig==null?'':sig>=3?'ok':sig>=2?'warn':'bad';
   const powerTone=data.power.connected==null?(charge?(charge.v?'ok':'bad'):''):data.power.connected?'ok':'bad';
   const row=(icon:string,label:string,value:string,note='',tone='')=>`<div class="hx-row"><span class="hx-ico ${tone}">${i(icon)}</span><div class="hx-body"><small>${label}</small><b>${value}</b>${note?`<em>${note}</em>`:''}</div></div>`;

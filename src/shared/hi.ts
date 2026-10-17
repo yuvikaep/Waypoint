@@ -422,4 +422,6 @@ export const HI:Record<string,string>={
   "LPG":"एलपीजी",
   "Electric":"इलेक्ट्रिक",
   "Hybrid":"हाइब्रिड",
+  "Last GPS fix":"आख़िरी GPS लोकेशन",
+  "The tracker is connected but has not sent a new location since {t}. This place may be out of date.":"ट्रैकर जुड़ा है, लेकिन {t} के बाद से कोई नई लोकेशन नहीं भेजी। यह जगह पुरानी हो सकती है।",
 };
