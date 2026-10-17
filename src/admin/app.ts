@@ -217,6 +217,14 @@ type CommandRow={id:string;status:string;detail:string;createdAt:number;updatedA
 type RawPacket={at:string;session:string;direction:'in'|'out'|'event'|'decoded';remote:string;hex:string;tag:string};
 type PowerEvent={at:number;connected:boolean;battery:number|null};
 type Detail={device:AdminDevice;provisioning:Provisioning;commands:CommandRow[];power:{connected:boolean|null;events:PowerEvent[]};sim:{iccid:string|null};packets:Packet[];alerts:{id:string;type:string;message:string;createdAt:number;acknowledged:number}[];today:{distanceKm:number;runningMinutes:number;idleMinutes:number;maxSpeed:number;gaps:{from:number;to:number;minutes:number;movedKm:number|null}[]}|null;gateway:Gateway};
+const DEVICE_TABS=[['overview','Overview','layout-dashboard'],['health','Health','activity'],['setup','Setup & commands','sliders-horizontal'],['data','Data log','list'],['alerts','Alerts','bell']] as const;
+let deviceTab:string=(()=>{try{return localStorage.getItem('waypoint-device-tab')||'overview'}catch{return 'overview'}})();
+if(!DEVICE_TABS.some(([key])=>key===deviceTab))deviceTab='overview';
+function showDeviceTab(){
+  $$<HTMLElement>('#device-page [data-tab]').forEach(b=>b.classList.toggle('on',b.dataset.tab===deviceTab));
+  $$<HTMLElement>('#device-page [data-pane]').forEach(p=>p.hidden=p.dataset.pane!==deviceTab);
+  if(deviceTab==='overview')requestAnimationFrame(()=>detailMap?.map.invalidateSize());
+}
 let detailMap:{map:ReturnType<typeof createMap>;marker:ReturnType<typeof L.marker>}|undefined;
 // Heartbeats are stored as copies of the last fix: a row repeating an earlier row's GPS time and place,
 // or arriving long after its GPS time, is a heartbeat rather than a new location.
@@ -238,30 +246,43 @@ async function renderDevice(){
   const first=!document.querySelector('#device-page');
   if(first){
     detailMap?.map.remove();detailMap=undefined;
-    $('#view').innerHTML=`<div class="page" id="device-page"><div id="dp-head"></div><div class="grid-kpi" id="dp-kpi"></div>
-      <div style="display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:14px" class="dp-cols"><div class="card"><div style="height:300px;border-radius:16px 16px 0 0;overflow:hidden;position:relative"><div class="map" id="dp-map"></div></div><div class="card-pad" id="dp-place"></div></div><div class="card card-pad" id="dp-today"></div></div>
-      <div class="card card-pad" id="dp-health"></div><div class="card card-pad" id="dp-provision"></div><div class="card card-pad" id="dp-commands"></div><div class="card card-pad" id="dp-tracker"></div><div class="card" id="dp-terminal"></div><div class="card" id="dp-packets"></div><div class="card" id="dp-alerts"></div></div>`;
+    $('#view').innerHTML=`<div class="page" id="device-page"><div id="dp-head"></div><div class="dp-kpis" id="dp-kpi"></div>
+      <nav class="dp-tabs" role="tablist">${DEVICE_TABS.map(([key,label,ic])=>`<button role="tab" data-tab="${key}" class="${deviceTab===key?'on':''}">${i(ic)}<span>${label}</span></button>`).join('')}</nav>
+      <section class="dp-pane" data-pane="overview"><div class="dp-cols"><div class="card"><div class="dp-map"><div class="map" id="dp-map"></div></div><div class="card-pad" id="dp-place"></div></div><div class="dp-side"><div class="card card-pad" id="dp-today"></div><div class="card card-pad" id="dp-tracker"></div></div></div></section>
+      <section class="dp-pane" data-pane="health"><div id="dp-health"></div></section>
+      <section class="dp-pane" data-pane="setup"><div class="card card-pad" id="dp-provision"></div><div class="card card-pad" id="dp-commands"></div></section>
+      <section class="dp-pane" data-pane="data"><div class="card" id="dp-terminal"></div><div class="card" id="dp-packets"></div></section>
+      <section class="dp-pane" data-pane="alerts"><div class="card" id="dp-alerts"></div></section></div>`;
     on('#view [data-go]',el=>go(el.dataset.go as View));
+    on('#device-page [data-tab]',el=>{deviceTab=el.dataset.tab!;try{localStorage.setItem('waypoint-device-tab',deviceTab)}catch{/* per-viewer only */}showDeviceTab()});
+    showDeviceTab();
   }
   const kinds=packetKinds(data.packets),kind=data.packets[0]?kinds.get(data.packets[0].id)!:['—',''];
   // Heartbeats carry no satellite count; show the latest packet that reported each value.
   const latest=<K extends keyof Packet>(key:K)=>data.packets.find(x=>x[key]!=null)?.[key]??null;
   const battery=latest('battery'),sats=latest('satellites');
-  $('#dp-head').innerHTML=`<div class="card card-pad" style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center"><div><div style="display:flex;gap:10px;align-items:center"><h1>${esc(d.name)}</h1>${chip(d)}</div><p class="muted" style="margin-top:4px">${d.customerName?esc(d.customerName):'Unassigned'}${d.driver?` · Driver ${esc(d.driver)}`:''} · <span class="mono">${esc(d.uniqueId)}</span></p><p class="small" style="margin-top:4px">${esc(statusLine(d))}</p></div>
+  $('#dp-head').innerHTML=`<div class="card dp-head"><div class="dp-avatar ${d.online?'on':''}">${i(d.model==='Mobile'?'smartphone':'truck')}</div><div class="dp-id"><div class="dp-title"><h1>${esc(d.name)}</h1>${chip(d)}</div><p class="dp-sub">${esc(statusLine(d))}</p><div class="dp-tags"><span>${i('users')}${d.customerName?esc(d.customerName):'Unassigned'}</span>${d.driver?`<span>${i('user-round')}${esc(d.driver)}</span>`:''}<span>${i('radio-tower')}${esc(d.model)}</span><span class="mono">${i('scan')}${esc(d.uniqueId)}</span></div></div>
     <div class="actions"><button class="btn btn-ghost btn-sm" id="dp-edit">${i('pencil')}Edit / assign</button><button class="btn btn-ghost btn-sm" id="dp-setup">${i('info')}Setup</button><button class="btn btn-danger btn-sm" id="dp-delete">${i('trash-2')}Delete</button></div></div>`;
-  const k=(label:string,value:string,sub='')=>`<div class="card kpi"><span>${label}</span><strong style="font-size:20px">${value}</strong>${sub?`<small class="muted small">${sub}</small>`:''}</div>`;
-  $('#dp-kpi').innerHTML=k('Last heartbeat',ago(d.lastSeen),time(d.lastSeen))+k('Location updated',p?ago(updatedAt(d)):'Never',p?(p.valid===0?'no satellite fix':time(updatedAt(d))):'')+k('Speed',p?`${Math.round(p.speed)} km/h`:'—',p?.heading!=null?`heading ${Math.round(p.heading)}°`:'')+k('Ignition',d.ignition==null?'—':d.ignition?'On':'Off')+k('Battery',battery!=null?`${Math.round(Number(battery))}%`:'—')+k('Satellites',sats!=null?String(sats):'—',`last packet: ${kind[0]}`);
+  const k=(icon:string,tone:string,label:string,value:string,sub='')=>`<div class="dp-kpi ${tone}"><span class="dp-kpi-ico">${i(icon)}</span><div><small>${label}</small><b>${value}</b>${sub?`<em>${sub}</em>`:''}</div></div>`;
+  const fresh=(at:number|null)=>at!=null&&Date.now()-at<=10*60000?'ok':'warn';
+  $('#dp-kpi').innerHTML=k('map-pin',p?fresh(updatedAt(d)):'warn','Location updated',p?ago(updatedAt(d)):'Never',p?time(updatedAt(d)):'')
+    +k('activity',d.online?'ok':'bad','Last heartbeat',ago(d.lastSeen),time(d.lastSeen))
+    +k('gauge',p&&p.speed>=3?'ok':'','Speed',p?`${Math.round(p.speed)} km/h`:'—',p?.heading!=null?`heading ${Math.round(p.heading)}°`:'')
+    +k('key-round',d.ignition?'ok':'','Ignition',d.ignition==null?'—':d.ignition?'On':'Off')
+    +k('battery',battery!=null&&Number(battery)<20?'bad':'','Battery',battery!=null?`${Math.round(Number(battery))}%`:'—')
+    +k('satellite','','Satellites',(p?.satellites??sats)!=null?String(p?.satellites??sats):'—',`last packet: ${kind[0].toLowerCase()}`);
   $('#dp-place').innerHTML=p?`<div style="display:flex;gap:8px;font-weight:600">${i('map-pin')}${placeSpan(p,'detail-'+d.id)}</div><p class="small muted" style="margin-top:4px">${esc(coords(p))}</p><a class="btn btn-blue btn-sm" style="margin-top:10px" href="${mapsLink(p)}" target="_blank" rel="noopener">${i('external-link')}Open in Google Maps</a>`:'<p class="muted">No location received yet.</p>';
   const t=data.today;
-  $('#dp-today').innerHTML=`<h2>Today</h2>${t?`<div class="summary" style="margin-top:12px"><div><span>Distance</span><b>${t.distanceKm} km</b></div><div><span>Running</span><b>${hm(t.runningMinutes)}</b></div><div><span>Idle</span><b>${hm(t.idleMinutes)}</b></div><div><span>Max speed</span><b>${t.maxSpeed} km/h</b></div></div>${t.gaps.map(x=>`<p class="gap-note" style="margin-top:10px">${i('triangle-alert')}No data ${esc(clockOf(x.from))} – ${esc(clockOf(x.to))} (${x.minutes} min)${x.movedKm?` · moved ${x.movedKm} km`:''}</p>`).join('')}`:'<p class="muted" style="margin-top:8px">Nothing recorded today.</p>'}`;
+  $('#dp-today').innerHTML=`<div class="section-title"><h2>Today</h2><span class="chip neutral plain">IST</span></div>${t?`<div class="summary"><div><span>Distance</span><b>${t.distanceKm} km</b></div><div><span>Running</span><b>${hm(t.runningMinutes)}</b></div><div><span>Idle</span><b>${hm(t.idleMinutes)}</b></div><div><span>Max speed</span><b>${t.maxSpeed} km/h</b></div></div>${t.gaps.map(x=>`<p class="gap-note" style="margin-top:10px">${i('triangle-alert')}No data ${esc(clockOf(x.from))} – ${esc(clockOf(x.to))} (${x.minutes} min)${x.movedKm?` · moved ${x.movedKm} km`:''}</p>`).join('')}`:'<p class="muted" style="margin-top:8px">Nothing recorded today.</p>'}`;
   const gt06=['GT06','GT06N','PT06'].includes(d.model);
-  $('#dp-tracker').innerHTML=`<h2>Tracker</h2><dl class="facts" style="margin-top:12px"><dt>Model / protocol</dt><dd>${esc(d.model)} · ${protocolOf(d.model)}</dd><dt>IMEI</dt><dd class="mono">${esc(d.uniqueId)}</dd><dt>SIM (ICCID)</dt><dd class="mono">${data.sim?.iccid?esc(data.sim.iccid):'<span class="muted">Not reported yet</span>'}</dd><dt>Receiver</dt><dd>${d.traccarId?`Linked (#${d.traccarId})`:'Not yet linked'} · ${esc(d.bridgeStatus||'—')}</dd>${d.model==='Mobile'?'':`<dt>Server</dt><dd class="mono">${esc(g.trackerHost||'—')} : ${gt06?(g.gt06Port??5023):(g.teltonikaPort??5027)}</dd>`}<dt>Speed limit</dt><dd>${d.speedLimit} km/h</dd><dt>Offline after</dt><dd>${Math.round(d.offlineSeconds/60)} min without a packet</dd><dt>Registered</dt><dd>${time(d.createdAt)}</dd></dl>`;
+  $('#dp-tracker').innerHTML=`<h2>Tracker</h2><dl class="facts dp-facts" style="margin-top:12px"><dt>Model / protocol</dt><dd>${esc(d.model)} · ${protocolOf(d.model)}</dd><dt>IMEI</dt><dd class="mono">${esc(d.uniqueId)}</dd><dt>SIM (ICCID)</dt><dd class="mono">${data.sim?.iccid?esc(data.sim.iccid):'<span class="muted">Not reported yet</span>'}</dd><dt>Receiver</dt><dd>${d.traccarId?`Linked (#${d.traccarId})`:'Not yet linked'} · ${esc(d.bridgeStatus||'—')}</dd>${d.model==='Mobile'?'':`<dt>Server</dt><dd class="mono">${esc(g.trackerHost||'—')} : ${gt06?(g.gt06Port??5023):(g.teltonikaPort??5027)}</dd>`}<dt>Speed limit</dt><dd>${d.speedLimit} km/h</dd><dt>Offline after</dt><dd>${Math.round(d.offlineSeconds/60)} min without a packet</dd><dt>Registered</dt><dd>${time(d.createdAt)}</dd></dl>`;
   renderHealth(data);
   on('[data-clockfix]',async el=>{const m=Number(el.dataset.clockfix);if(!confirm(`Move this tracker's stored positions that are ${hm(m)} behind forward by ${hm(m)}?`))return;const r=await post<{shifted:number}>(`/admin/devices/${d.id}/clock-fix`,{minutes:m});toast(`${r.shifted} positions corrected.`);void renderDevice()},$('#dp-health'));
   renderProvisioningCard(data);renderCommands(data);renderTerminal(d);
   $('#dp-packets').innerHTML=`<div class="card-pad section-title" style="margin:0"><h2>Last ${data.packets.length} packets</h2><span class="small muted">Newest first · refreshes every 10 s</span></div>${data.packets.length?`<div class="table-wrap" style="max-height:460px"><table class="table"><thead><tr><th>Received</th><th>GPS time</th><th>Type</th><th>Speed</th><th>Ignition</th><th>Sats</th><th>Battery</th><th>Position</th></tr></thead><tbody>${data.packets.map(x=>{const [label,cls]=kinds.get(x.id)!;return `<tr><td class="nowrap">${hhmmss(x.receivedAt)}<small>${new Date(x.receivedAt).toLocaleDateString('en-IN',{day:'2-digit',month:'short',timeZone:'Asia/Kolkata'})}</small></td><td class="nowrap">${hhmmss(x.recordedAt)}</td><td><span class="chip ${cls} plain">${label}</span></td><td>${Math.round(x.speed)} km/h</td><td>${x.ignition==null?'—':x.ignition?'On':'Off'}</td><td>${x.satellites??'—'}</td><td>${x.battery!=null?Math.round(x.battery)+'%':'—'}</td><td class="mono">${x.latitude.toFixed(5)}, ${x.longitude.toFixed(5)}</td></tr>`}).join('')}</tbody></table></div>`:'<div class="empty"><p>No packets stored yet.</p></div>'}`;
   $('#dp-alerts').innerHTML=`<div class="card-pad section-title" style="margin:0"><h2>Recent alerts</h2></div>${data.alerts.length?data.alerts.map(a=>`<div class="alert-item ${a.acknowledged?'done':''}"><div class="body"><b>${esc(a.type)}</b><p>${esc(a.message)}</p><span class="small muted">${time(a.createdAt)}</span></div></div>`).join(''):'<div class="empty"><p>No alerts.</p></div>'}`;
   if(p){
+    if(detailMap&&deviceTab==='overview')detailMap.map.invalidateSize();
     if(!detailMap){const map=createMap($('#dp-map'),point(p),16);detailMap={map,marker:L.marker(point(p),{icon:truckIcon(d,true)}).addTo(map)}}
     else{detailMap.marker.setLatLng(point(p)).setIcon(truckIcon(d,true))}
   }
@@ -292,27 +313,37 @@ function renderHealth(data:Detail){
   const events=data.power.events,lastEvent=events[0];
   const powerNow=data.power.connected==null?(charge?(charge.v?'Connected (charging)':'Cut — running on backup battery'):'<span class="muted">Not reported by this tracker</span>')
     :data.power.connected?`Connected${lastEvent&&lastEvent.connected?` since ${time(lastEvent.at)}`:''}`:`<b style="color:var(--stopped)">CUT since ${lastEvent?time(lastEvent.at):'—'}</b> · running on backup battery${lastEvent?` (${hm(Math.round((Date.now()-lastEvent.at)/60000))})`:''}`;
-  const powerLog=events.map(e=>`<span class="chip ${e.connected?'ok':'bad'} plain">${e.connected?'Power restored':'Power cut'}</span> ${time(e.at)}${e.battery!=null?` · battery ${Math.round(e.battery)}%`:''}`).join('<br>');
-  const na='<span class="muted">Not reported by this tracker</span>';
-  $('#dp-health').innerHTML=`<div class="section-title"><h2>Device health</h2><span class="chip ${d.online?'ok':'bad'}">${d.online?'Online':'No signal from tracker'}</span></div>
-    <div class="health-grid">
-      <div><h3>Network</h3><dl class="facts">
-        <dt>GSM signal</dt><dd>${rssi?`${SIGNAL[Math.min(4,Math.max(0,Number(rssi.v)))]||rssi.v} (${rssi.v}/4)`:na}</dd>
-        <dt>Last packet</dt><dd>${ago(d.lastSeen)} · ${time(d.lastSeen)}<small class="muted">Heartbeat: the tracker is connected. It does not carry a location.</small></dd>
-        <dt>Heartbeats (last hour)</dt><dd>${hbHour}</dd>
-        ${clockNote?`<dt>GPS clock</dt><dd>${clockNote}</dd>`:''}
-        <dt>Timeout setting</dt><dd>${limit} min${gap!=null&&gap>limit?` <span class="chip bad plain">missed ${Math.max(1,Math.floor(gap/Math.max(1,limit)))}×</span>`:''}</dd></dl></div>
-      <div><h3>Power</h3><dl class="facts">
-        <dt>Vehicle power</dt><dd>${powerNow}</dd>
-        ${powerLog.length?`<dt>Power log</dt><dd>${powerLog}</dd>`:''}
-        <dt>Backup battery</dt><dd>${battery?`${Math.round(Number(battery.v))}%`:na}</dd>
-        <dt>Voltage (V)</dt><dd><span class="muted">Not reported by ${esc(d.model)} (only % is sent)</span></dd>
-        <dt>Tamper / alarms</dt><dd>${alarms.length?alarms.map(a=>`<span class="chip bad plain">${esc(alarmWords(String(extraOf(a).alarm)))}</span> ${time(a.receivedAt)}`).join('<br>'):'None reported'}</dd></dl></div>
-      <div><h3>GPS quality</h3><dl class="facts">
-        <dt>Fix status</dt><dd>${lastFix?(Date.now()-updatedAt(d)!<=10*60000&&Date.now()-lastFix.recordedAt>10*60000?`Parked · updated ${ago(updatedAt(d))}`:Date.now()-lastFix.recordedAt>10*60000?`<span class="chip idle plain">Old fix</span> ${ago(lastFix.recordedAt)} · ${time(lastFix.recordedAt)}<small class="muted">No new satellite fix: the tracker has no sky view (indoors or covered). It keeps repeating its last location.</small>`:`Fixed · ${ago(lastFix.recordedAt)}`):'No recent fix'}</dd>
-        <dt>Satellites (at that fix)</dt><dd>${sats?String(sats.v):na}</dd>
-        <dt>HDOP / PDOP</dt><dd><span class="muted">Not reported by ${esc(d.model)}</span></dd>
-        <dt>Last known place</dt><dd>${d.position?`${coords(d.position)}`:'—'}</dd></dl></div></div>`;
+  const na='<span class="muted">Not reported</span>';
+  // The newest fix is the device's own position; the packet list is mostly heartbeats and may not reach back to it.
+  const fix=d.position&&d.position.valid!==0?d.position:lastFix||null,upd=updatedAt(d);
+  const fixAge=fix?Date.now()-fix.recordedAt:Infinity,parkedFresh=upd!=null&&Date.now()-upd<=10*60000;
+  const fixState=!fix?['bad','No fix yet','The tracker has not sent a satellite location yet.']
+    :fixAge<=10*60000?['ok','Live GPS',`Fixed ${ago(fix.recordedAt).toLowerCase()} · ${time(fix.recordedAt)}`]
+    :parkedFresh&&d.status==='Stopped'?['ok','Parked',`Location confirmed by heartbeat ${ago(upd).toLowerCase()} · last fix ${time(fix.recordedAt)}`]
+    :['warn','Old fix',`${ago(fix.recordedAt)} · ${time(fix.recordedAt)}. No new satellite fix: the tracker may be indoors or covered.`];
+  const sig=rssi?Number(rssi.v):null,sigTone=sig==null?'':sig>=3?'ok':sig>=2?'warn':'bad';
+  const powerTone=data.power.connected==null?(charge?(charge.v?'ok':'bad'):''):data.power.connected?'ok':'bad';
+  const row=(icon:string,label:string,value:string,note='',tone='')=>`<div class="hx-row"><span class="hx-ico ${tone}">${i(icon)}</span><div class="hx-body"><small>${label}</small><b>${value}</b>${note?`<em>${note}</em>`:''}</div></div>`;
+  const group=(icon:string,title:string,tone:string,status:string,rows:string)=>`<div class="card hx-card"><div class="hx-head"><span class="hx-badge ${tone}">${i(icon)}</span><h3>${title}</h3><span class="chip ${tone==='warn'?'idle':tone||'neutral'} plain">${status}</span></div>${rows}</div>`;
+  const timeline=events.slice(0,6).map(e=>`<li class="${e.connected?'ok':'bad'}"><b>${e.connected?'Power restored':'Power cut'}</b><span>${time(e.at)}${e.battery!=null?` · battery ${Math.round(e.battery)}%`:''}</span></li>`).join('');
+  $('#dp-health').innerHTML=`<div class="hx-grid">
+    ${group('radio-tower','Network',d.online?'ok':'bad',d.online?'Online':'No signal',
+      row('smartphone','GSM signal',sig!=null?`${SIGNAL[Math.min(4,Math.max(0,sig))]||sig} · ${sig}/4`:na,'',sigTone)
+      +row('activity','Last packet',`${ago(d.lastSeen)}`,time(d.lastSeen),d.online?'ok':'bad')
+      +row('refresh-cw','Heartbeats in the last hour',String(hbHour),'',hbHour?'ok':'warn')
+      +row('timer','Offline after',`${limit} min without a packet`,gap!=null&&gap>limit?`Missed ${Math.max(1,Math.floor(gap/Math.max(1,limit)))}×`:'',gap!=null&&gap>limit?'bad':'')
+      +(clockNote?`<div class="hx-row"><span class="hx-ico">${i('clock')}</span><div class="hx-body"><small>GPS clock</small><div class="hx-clock">${clockNote}</div></div></div>`:''))}
+    ${group('zap','Power',powerTone==='bad'?'bad':powerTone==='ok'?'ok':'',powerTone==='bad'?'Power cut':powerTone==='ok'?'Connected':'Unknown',
+      row('plug','Vehicle power',powerNow,'',powerTone)
+      +row('battery','Backup battery',battery?`${Math.round(Number(battery.v))}%`:na,'',battery&&Number(battery.v)<20?'bad':battery?'ok':'')
+      +row('siren','Tamper / alarms',alarms.length?alarms.map(a=>`<span class="chip bad plain">${esc(alarmWords(String(extraOf(a).alarm)))}</span>`).join(' '):'None reported',alarms.length?time(alarms[0].receivedAt):'',alarms.length?'bad':'ok')
+      +(timeline?`<div class="hx-sub">Power log</div><ul class="hx-timeline">${timeline}</ul>`:''))}
+    ${group('satellite','GPS',fixState[0],fixState[1],
+      row('locate-fixed','Fix status',fixState[1],fixState[2],fixState[0])
+      +row('satellite','Satellites',(fix?.satellites??sats?.v)!=null?String(fix?.satellites??sats!.v):na,'','')
+      +row('map-pin','Last known place',d.position?`<a href="${mapsLink(d.position)}" target="_blank" rel="noopener">${coords(d.position)}</a>`:'—','','')
+      +row('gauge','HDOP / PDOP',`<span class="muted">Not sent by ${esc(d.model)}</span>`,'',''))}
+  </div>`;
 }
 const SMS_TEXT:Record<string,(i:Record<string,string>)=>string>={
   reboot:()=>'RESET#',status:()=>'STATUS#',settings:()=>'PARAM#',version:()=>'VERSION#',where:()=>'WHERE#',network:()=>'GPRSSET#',gprsOn:()=>'GPRSON,1#',batchOff:()=>'BATCH,OFF#',
