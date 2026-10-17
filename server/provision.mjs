@@ -125,3 +125,26 @@ export function cleanIntervals(input = {}) {
   const num = (v, d) => { const n = Number(v ?? d); if (!Number.isInteger(n) || n < 5 || n > 18000) bad('Upload intervals must be 5-18000 seconds.'); return n; };
   return { moving: num(input.moving, 10), parked: num(input.parked, 60) };
 }
+
+// What the vehicle itself is, collected when it is onboarded. Shown to the customer on the card.
+export const VEHICLE_TYPES = {
+  truck: 'Truck / Lorry', trailer: 'Trailer', tipper: 'Tipper / Dumper', tanker: 'Tanker',
+  bus: 'Bus', van: 'Van / Tempo', pickup: 'Pickup', car: 'Car', auto: 'Auto rickshaw',
+  bike: 'Bike / Scooter', tractor: 'Tractor', jcb: 'JCB / Excavator', ambulance: 'Ambulance', other: 'Other',
+};
+export const FUEL_TYPES = { diesel: 'Diesel', petrol: 'Petrol', cng: 'CNG', lpg: 'LPG', electric: 'Electric', hybrid: 'Hybrid' };
+const VEHICLE_TEXT = { makeModel: ['Make and model', 120], registration: ['Registration number', 20], chassisNumber: ['Chassis number', 25], engineNumber: ['Engine number', 25], ownerName: ['Registered owner', 120], vehicleNotes: ['Vehicle notes', 300] };
+// Only the fields that were supplied are returned, so a partial edit never clears the rest.
+export function cleanVehicle(input = {}) {
+  const out = {};
+  if (input.vehicleType !== undefined) { const v = input.vehicleType || null; if (v && !VEHICLE_TYPES[v]) bad('Choose a vehicle type from the list.'); out.vehicleType = v; }
+  if (input.fuelType !== undefined) { const v = input.fuelType || null; if (v && !FUEL_TYPES[v]) bad('Choose a fuel type from the list.'); out.fuelType = v; }
+  for (const [key, [label, max]] of Object.entries(VEHICLE_TEXT)) if (input[key] !== undefined) {
+    const v = String(input[key] ?? '').trim();
+    if (v.length > max) bad(`${label} may be at most ${max} characters.`);
+    out[key] = v || null;
+  }
+  if (input.modelYear !== undefined) { const v = input.modelYear === '' || input.modelYear === null ? null : Number(input.modelYear); if (v !== null && (!Number.isInteger(v) || v < 1950 || v > new Date().getFullYear() + 1)) bad('Enter a model year between 1950 and next year.'); out.modelYear = v; }
+  if (input.capacityKg !== undefined) { const v = input.capacityKg === '' || input.capacityKg === null ? null : Number(input.capacityKg); if (v !== null && (!Number.isInteger(v) || v < 0 || v > 200000)) bad('Load capacity must be 0-200000 kg.'); out.capacityKg = v; }
+  return out;
+}

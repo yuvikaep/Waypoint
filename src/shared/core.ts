@@ -1,15 +1,15 @@
-import {createIcons,Navigation,Map,Truck,Route,Bell,FileText,Files,Settings,LogOut,Search,X,ChevronRight,ChevronLeft,MapPin,Clock,Gauge,KeyRound,Power,Plus,Trash2,Pencil,Users,RadioTower,Server,ShieldCheck,Copy,Share2,Play,Pause,Download,Calendar,ChartColumn,Ellipsis,LocateFixed,Scan,UserRound,ExternalLink,Smartphone,TriangleAlert,Activity,WifiOff,Check,CircleParking,Menu,Save,Timer,Milestone,Battery,Satellite,Eye,RefreshCw,Info,House,Landmark,Siren,OctagonAlert,Layers,History,Mail,MessageSquare,Volume2,BellRing,Languages,SlidersHorizontal,ArrowLeft,LayoutGrid,CheckCheck,LayoutDashboard,Mic,ArrowRight,MoonStar,CircleAlert,UserPlus,Plug,CirclePlay,EllipsisVertical,Zap,ShoppingCart,List,Phone,Lock,LockOpen} from 'lucide';
+import {createIcons,Navigation,Map,Truck,Bus,Car,Bike,Tractor,Construction,Ambulance,Route,Bell,FileText,Files,Settings,LogOut,Search,X,ChevronRight,ChevronLeft,MapPin,Clock,Gauge,KeyRound,Power,Plus,Trash2,Pencil,Users,RadioTower,Server,ShieldCheck,Copy,Share2,Play,Pause,Download,Calendar,ChartColumn,Ellipsis,LocateFixed,Scan,UserRound,ExternalLink,Smartphone,TriangleAlert,Activity,WifiOff,Check,CircleParking,Menu,Save,Timer,Milestone,Battery,Satellite,Eye,RefreshCw,Info,House,Landmark,Siren,OctagonAlert,Layers,History,Mail,MessageSquare,Volume2,BellRing,Languages,SlidersHorizontal,ArrowLeft,LayoutGrid,CheckCheck,LayoutDashboard,Mic,ArrowRight,MoonStar,CircleAlert,UserPlus,Plug,CirclePlay,EllipsisVertical,Zap,ShoppingCart,List,Phone,Lock,LockOpen} from 'lucide';
 import {DEMO_MODE,demoRequest} from '../demo';
 import {t,locale} from './i18n';
 import './theme.css';
 
 export type Fix={id:number;recordedAt:number;latitude:number;longitude:number;speed:number;heading:number|null;ignition:number|null;battery:number|null;satellites:number|null;valid?:number;accuracy?:number|null;receivedAt?:number};
-export type Vehicle={id:string;name:string;driver:string;status:string;online:boolean;fresh:boolean;lastSeen:number|null;speedLimit:number;speedAlert?:boolean;driverPhone?:string;parkLock?:boolean;parkAlerted?:boolean;signal?:number|null;ignition:number|null;stoppedSince:number|null;position:Fix|null;isMobile?:boolean;model?:string};
+export type Vehicle={id:string;name:string;driver:string;vehicleType?:string|null;makeModel?:string|null;modelYear?:number|null;fuelType?:string|null;capacityKg?:number|null;registration?:string|null;ownerName?:string|null;vehicleNotes?:string|null;status:string;online:boolean;fresh:boolean;lastSeen:number|null;speedLimit:number;speedAlert?:boolean;driverPhone?:string;parkLock?:boolean;parkAlerted?:boolean;signal?:number|null;ignition:number|null;stoppedSince:number|null;position:Fix|null;isMobile?:boolean;model?:string};
 export type Fence={id:string;name:string;latitude:number;longitude:number;radius:number;kind?:string};
 export type Alert={id:string;deviceId:string;deviceName:string;type:string;message:string;createdAt:number;acknowledged:number};
 export type Identity={role:'admin'|'customer';tenantId:string;name:string;email:string|null};
 
-const iconSet={Navigation,Map,Truck,Route,Bell,FileText,Files,Settings,LogOut,Search,X,ChevronRight,ChevronLeft,MapPin,Clock,Gauge,KeyRound,Power,Plus,Trash2,Pencil,Users,RadioTower,Server,ShieldCheck,Copy,Share2,Play,Pause,Download,Calendar,ChartColumn,Ellipsis,LocateFixed,Scan,UserRound,ExternalLink,Smartphone,TriangleAlert,Activity,WifiOff,Check,CircleParking,Menu,Save,Timer,Milestone,Battery,Satellite,Eye,RefreshCw,Info,House,Landmark,Siren,OctagonAlert,Layers,History,Mail,MessageSquare,Volume2,BellRing,Languages,SlidersHorizontal,ArrowLeft,LayoutGrid,CheckCheck,LayoutDashboard,Mic,ArrowRight,MoonStar,CircleAlert,UserPlus,Plug,CirclePlay,EllipsisVertical,Zap,ShoppingCart,List,Phone,Lock,LockOpen};
+const iconSet={Navigation,Map,Truck,Bus,Car,Bike,Tractor,Construction,Ambulance,Route,Bell,FileText,Files,Settings,LogOut,Search,X,ChevronRight,ChevronLeft,MapPin,Clock,Gauge,KeyRound,Power,Plus,Trash2,Pencil,Users,RadioTower,Server,ShieldCheck,Copy,Share2,Play,Pause,Download,Calendar,ChartColumn,Ellipsis,LocateFixed,Scan,UserRound,ExternalLink,Smartphone,TriangleAlert,Activity,WifiOff,Check,CircleParking,Menu,Save,Timer,Milestone,Battery,Satellite,Eye,RefreshCw,Info,House,Landmark,Siren,OctagonAlert,Layers,History,Mail,MessageSquare,Volume2,BellRing,Languages,SlidersHorizontal,ArrowLeft,LayoutGrid,CheckCheck,LayoutDashboard,Mic,ArrowRight,MoonStar,CircleAlert,UserPlus,Plug,CirclePlay,EllipsisVertical,Zap,ShoppingCart,List,Phone,Lock,LockOpen};
 export const i=(name:string)=>`<i data-lucide="${name}"></i>`;
 export const icons=()=>createIcons({icons:iconSet});
 export const esc=(value:unknown)=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
@@ -97,3 +97,10 @@ export function statusLine(v:Vehicle){
   if(s==='nofix')return p?t('GPS signal weak · showing last known place'):t('Waiting for GPS location');
   return '';
 }
+
+// What the vehicle is, as chosen when it was onboarded. The icon is what people recognise on a card.
+export const VEHICLE_TYPES:Record<string,[string,string]>={truck:['Truck','truck'],trailer:['Trailer','truck'],tipper:['Tipper','truck'],tanker:['Tanker','truck'],bus:['Bus','bus'],van:['Tempo / Van','truck'],pickup:['Pickup','truck'],car:['Car','car'],auto:['Auto','car'],bike:['Bike','bike'],tractor:['Tractor','tractor'],jcb:['JCB','construction'],ambulance:['Ambulance','ambulance'],other:['Vehicle','truck']};
+export const FUEL_TYPES:Record<string,string>={diesel:'Diesel',petrol:'Petrol',cng:'CNG',lpg:'LPG',electric:'Electric',hybrid:'Hybrid'};
+export const vehicleKind=(v:Vehicle)=>VEHICLE_TYPES[v.vehicleType||'']||null;
+// "Truck · Tata 1109g" — what the plate alone does not say.
+export const vehicleLine=(v:Vehicle)=>[vehicleKind(v)?.[0],v.makeModel,v.capacityKg?`${v.capacityKg>=1000&&v.capacityKg%100===0?`${v.capacityKg/1000} T`:`${v.capacityKg} kg`}`:''].filter(Boolean).join(' · ');

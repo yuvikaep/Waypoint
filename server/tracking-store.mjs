@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { cleanExtra, alarmAlerts, hardBrake, overspeed, REPEAT, SPEED_REPEAT, shareHours, SHARE_STOPPED, shareSilent, PLACE_KINDS, parkBreach, cleanPhone } from './extra.mjs';
-import { cleanSetup } from './provision.mjs';
+import { cleanSetup, cleanVehicle } from './provision.mjs';
 import { cleanGpsRequest, REQUEST_STATUS } from './buy.mjs';
 
 export const hash = value => createHash('sha256').update(value).digest('hex');
@@ -57,7 +57,7 @@ export class TrackingStore {
     if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name==='speedAlert'))this.db.exec('ALTER TABLE devices ADD COLUMN speedAlert INTEGER NOT NULL DEFAULT 1');
     for(const column of ['simOperator','simType','simNumber','apn','apnUser','apnPass'])
       if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name===column))this.db.exec(`ALTER TABLE devices ADD COLUMN ${column} TEXT`);
-    for(const [column,type] of [['driverPhone','TEXT'],['rssi','INTEGER'],['parkLock','INTEGER NOT NULL DEFAULT 0'],['parkLat','REAL'],['parkLon','REAL'],['parkAt','INTEGER'],['parkAlerted','INTEGER NOT NULL DEFAULT 0']])
+    for(const [column,type] of [['vehicleType','TEXT'],['makeModel','TEXT'],['modelYear','INTEGER'],['fuelType','TEXT'],['capacityKg','INTEGER'],['registration','TEXT'],['chassisNumber','TEXT'],['engineNumber','TEXT'],['ownerName','TEXT'],['vehicleNotes','TEXT'],['driverPhone','TEXT'],['rssi','INTEGER'],['parkLock','INTEGER NOT NULL DEFAULT 0'],['parkLat','REAL'],['parkLon','REAL'],['parkAt','INTEGER'],['parkAlerted','INTEGER NOT NULL DEFAULT 0']])
       if(!this.db.prepare('PRAGMA table_info(devices)').all().some(c=>c.name===column))this.db.exec(`ALTER TABLE devices ADD COLUMN ${column} ${type}`);
     // Alerts already stored when phone push arrived count as sent, so phones never get old history.
     if(!this.db.prepare('PRAGMA table_info(alerts)').all().some(c=>c.name==='pushed')){this.db.exec('ALTER TABLE alerts ADD COLUMN pushed INTEGER NOT NULL DEFAULT 0');this.db.exec('UPDATE alerts SET pushed=1');}
@@ -187,6 +187,8 @@ export class TrackingStore {
       this.db.prepare('INSERT INTO devices (id,name,uniqueId,model,driver,tokenHash,createdAt,offlineSeconds,speedLimit,tenantId) VALUES (?,?,?,?,?,?,?,?,?,?)')
         .run(id,name,uniqueId,body.model,driver,secret ? hash(secret) : null,this.now(),offlineSeconds,speedLimit,tenantId);
     } catch (e) { if (String(e).includes('UNIQUE')) fail(409, 'This device identifier is already registered.'); throw e; }
+    const vehicle=cleanVehicle(body),keys=Object.keys(vehicle).filter(k=>vehicle[k]!==null);
+    if(keys.length)(this.db.prepare(`UPDATE devices SET ${keys.map(k=>`${k}=?`).join(',')} WHERE id=?`).run(...keys.map(k=>vehicle[k]),id));
     return { device: this.device(id), token: secret };
   }
   // Admin edits a vehicle or moves it to another customer ('owner' = unassigned).
@@ -199,6 +201,8 @@ export class TrackingStore {
     let tenantId=device.tenantId;
     if(body.customerId!==undefined){tenantId=body.customerId?String(body.customerId):'owner';if(tenantId!=='owner')this.customer(tenantId);}
     this.db.prepare('UPDATE devices SET name=?,driver=?,offlineSeconds=?,speedLimit=?,tenantId=? WHERE id=?').run(name,driver,offlineSeconds,speedLimit,tenantId,id);
+    const vehicle=cleanVehicle(body),vkeys=Object.keys(vehicle);
+    if(vkeys.length)(this.db.prepare(`UPDATE devices SET ${vkeys.map(k=>`${k}=?`).join(',')} WHERE id=?`).run(...vkeys.map(k=>vehicle[k]),id));
     if(body.speedAlert!==undefined)this.db.prepare('UPDATE devices SET speedAlert=? WHERE id=?').run(body.speedAlert?1:0,id);
     // A vehicle changing hands must not keep the previous owner's geofence state or driver links.
     if(tenantId!==device.tenantId){this.db.prepare('DELETE FROM fence_state WHERE deviceId=?').run(id);this.revokeDriverLinks(id);}

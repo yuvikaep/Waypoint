@@ -37,7 +37,7 @@ export function commandText(model,action,input={}){
 }
 // Customers see their vehicles, never tracker identifiers, receiver state or command plumbing.
 const customerPosition=p=>p&&{id:p.id,recordedAt:p.recordedAt,latitude:p.latitude,longitude:p.longitude,speed:p.speed,heading:p.heading,ignition:p.ignition,battery:p.battery,satellites:p.satellites,valid:p.valid};
-export const customerDevice=d=>({id:d.id,name:d.name,driver:d.driver,status:d.status,online:d.online,fresh:d.fresh,lastSeen:d.lastSeen,speedLimit:d.speedLimit,speedAlert:Number(d.speedAlert??1)!==0,driverPhone:d.driverPhone||'',parkLock:Number(d.parkLock||0)!==0,parkAlerted:Number(d.parkAlerted||0)!==0,signal:d.online?signalBars(d.rssi):0,ignition:d.ignition,stoppedSince:d.stoppedSince,isMobile:d.model==='Mobile',position:customerPosition(d.position)});
+export const customerDevice=d=>({id:d.id,name:d.name,driver:d.driver,vehicleType:d.vehicleType||null,makeModel:d.makeModel||null,modelYear:d.modelYear??null,fuelType:d.fuelType||null,capacityKg:d.capacityKg??null,registration:d.registration||null,ownerName:d.ownerName||null,vehicleNotes:d.vehicleNotes||null,status:d.status,online:d.online,fresh:d.fresh,lastSeen:d.lastSeen,speedLimit:d.speedLimit,speedAlert:Number(d.speedAlert??1)!==0,driverPhone:d.driverPhone||'',parkLock:Number(d.parkLock||0)!==0,parkAlerted:Number(d.parkAlerted||0)!==0,signal:d.online?signalBars(d.rssi):0,ignition:d.ignition,stoppedSince:d.stoppedSince,isMobile:d.model==='Mobile',position:customerPosition(d.position)});
 async function body(req,maxBytes=16384) {
   if (!req.headers['content-type']?.startsWith('application/json')) fail(415,'Send application/json.');
   if(req.body!==undefined){

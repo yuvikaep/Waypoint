@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { PgAdapter } from './pg-adapter.mjs';
 import { cleanExtra, alarmAlerts, hardBrake, overspeed, REPEAT, SPEED_REPEAT, shareHours, SHARE_STOPPED, shareSilent, PLACE_KINDS, parkBreach, cleanPhone } from './extra.mjs';
-import { cleanSetup } from './provision.mjs';
+import { cleanSetup, cleanVehicle } from './provision.mjs';
 import { cleanGpsRequest, REQUEST_STATUS } from './buy.mjs';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 
@@ -144,6 +144,8 @@ export class PostgresTrackingStore {
       (await this.db.prepare('INSERT INTO devices (id,name,uniqueId,model,driver,tokenHash,createdAt,offlineSeconds,speedLimit,tenantId) VALUES (?,?,?,?,?,?,?,?,?,?)')
         .run(id,name,uniqueId,body.model,driver,secret ? hash(secret) : null,this.now(),offlineSeconds,speedLimit,tenantId));
     } catch (e) { if (e.code === '23505') fail(409, 'This device identifier is already registered.'); throw e; }
+    const vehicle=cleanVehicle(body),keys=Object.keys(vehicle).filter(k=>vehicle[k]!==null);
+    if(keys.length)(await this.db.prepare(`UPDATE devices SET ${keys.map(k=>`${k}=?`).join(',')} WHERE id=?`).run(...keys.map(k=>vehicle[k]),id));
     return { device: (await this.device(id)), token: secret };
   }
   // Admin edits a vehicle or moves it to another customer ('owner' = unassigned).
@@ -156,6 +158,8 @@ export class PostgresTrackingStore {
     let tenantId=device.tenantId;
     if(body.customerId!==undefined){tenantId=body.customerId?String(body.customerId):'owner';if(tenantId!=='owner')(await this.customer(tenantId));}
     (await this.db.prepare('UPDATE devices SET name=?,driver=?,offlineSeconds=?,speedLimit=?,tenantId=? WHERE id=?').run(name,driver,offlineSeconds,speedLimit,tenantId,id));
+    const vehicle=cleanVehicle(body),vkeys=Object.keys(vehicle);
+    if(vkeys.length)(await this.db.prepare(`UPDATE devices SET ${vkeys.map(k=>`${k}=?`).join(',')} WHERE id=?`).run(...vkeys.map(k=>vehicle[k]),id));
     if(body.speedAlert!==undefined)(await this.db.prepare('UPDATE devices SET speedAlert=? WHERE id=?').run(body.speedAlert?1:0,id));
     // A vehicle changing hands must not keep the previous owner's geofence state or driver links.
     if(tenantId!==device.tenantId){(await this.db.prepare('DELETE FROM fence_state WHERE deviceId=?').run(id));(await this.revokeDriverLinks(id));}
