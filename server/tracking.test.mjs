@@ -469,3 +469,18 @@ test('admin routes: reset needs the key, remove needs an admin session and never
   assert.equal((await fetch(base+'/admin/admins/a%40example.test',{method:'DELETE',headers:cookie})).status,409,'cannot remove yourself');
   assert.equal((await fetch(base+'/admin/admins/b%40example.test',{method:'DELETE',headers:cookie})).status,200);
 });
+
+test('parking lock: an engine-on heartbeat that repeats an old fix time still alerts; old movement from before the lock does not',t=>{
+  const {store,device,position,advance}=fixture(t);
+  let n=0;
+  const fixAt=new Date(store.now()).toISOString();
+  store.ingest(device.id,position({eventId:`h${n++}`,recordedAt:fixAt,speed:0,ignition:false}));
+  advance(600000);store.setParkLock(device.id,true);advance(60000);
+  const locks=()=>store.alerts().filter(a=>a.type==='parking_lock');
+  // Old fix replayed after the lock, 500 m away: not movement.
+  store.ingest(device.id,position({eventId:`h${n++}`,recordedAt:fixAt,latitude:18.53,speed:0}),{receivedAt:store.now()});
+  assert.equal(locks().length,0);
+  // Heartbeat: same old fix time, ignition now on.
+  advance(30000);store.ingest(device.id,position({eventId:`h${n++}`,recordedAt:fixAt,speed:0,ignition:true}),{receivedAt:store.now()});
+  assert.equal(locks().length,1);assert.match(locks()[0].message,/engine started/);
+});

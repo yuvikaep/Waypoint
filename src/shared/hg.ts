@@ -396,4 +396,5 @@ export const HG:Record<string,string>={
   "Preparing the file…":"File taiyar ho rahi hai…",
   "Start place":"Shuru ki jagah",
   "End place":"Ant ki jagah",
+  "This tracker has no GPS signal right now (last location {t}). Movement will be noticed only once it gets GPS again; the engine starting is noticed at once.":"Is tracker ko abhi GPS signal nahi mil raha (aakhri location {t} ki). Hilne ka pata tabhi chalega jab use dobara GPS mile; engine chalu hone ka pata turant chal jayega.",
 };

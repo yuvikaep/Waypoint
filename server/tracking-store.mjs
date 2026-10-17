@@ -360,7 +360,9 @@ export class TrackingStore {
           .run(this.now(),id,recordedAt,this.now()-120000);
       }
       if (inserted && typeof info.rssi === 'number') this.db.prepare('UPDATE devices SET rssi=? WHERE id=?').run(Math.round(info.rssi),id);
-      const breach = inserted && recordedAt >= Number(device.parkAt || 0) ? parkBreach(device, { ignition: values[2], valid, latitude, longitude }, distance) : null;
+      // Engine state is judged by when the packet ARRIVED (a GT06 heartbeat repeats an old fix time), movement by the fix time.
+      const lockedAt = Number(device.parkAt || 0);
+      const breach = inserted ? parkBreach(device, { ignition: receivedAt >= lockedAt ? values[2] : null, valid: valid && recordedAt >= lockedAt, latitude, longitude }, distance) : null;
       if (breach) { this.alert(id,'parking_lock',breach,Math.min(receivedAt,this.now())); this.db.prepare('UPDATE devices SET parkAlerted=1 WHERE id=?').run(id); }
       if (body.commandId && inserted && recordedAt >= this.now()-60000) this.db.prepare("UPDATE commands SET status='answered',detail='Mobile sender answered with a fresh GPS fix.',updatedAt=? WHERE id=? AND status IN ('queued','sent','location received')").run(this.now(),body.commandId);
       if (inserted && lastIgnition && receivedAt >= lastIgnition.receivedAt && lastIgnition.ignition !== values[2])

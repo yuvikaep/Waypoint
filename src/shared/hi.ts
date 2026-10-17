@@ -396,4 +396,5 @@ export const HI:Record<string,string>={
   "Preparing the file…":"फ़ाइल तैयार हो रही है…",
   "Start place":"शुरू की जगह",
   "End place":"अंत की जगह",
+  "This tracker has no GPS signal right now (last location {t}). Movement will be noticed only once it gets GPS again; the engine starting is noticed at once.":"इस ट्रैकर को अभी GPS सिग्नल नहीं मिल रहा (आख़िरी लोकेशन {t} की)। हिलने का पता तभी चलेगा जब उसे दोबारा GPS मिले; इंजन चालू होने का पता तुरंत चल जाएगा।",
 };
