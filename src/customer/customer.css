@@ -743,3 +743,34 @@
 .we-plan-alert svg{width:16px;height:16px;flex:none}
 .we-status.off{background:var(--c-off-soft);color:#475569}
 .we-coupon-ok{margin:0;font-size:13px;font-weight:600;color:var(--c-run)}
+
+/* Buy / plans page */
+.we-plan-sum{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+.we-plan-sum>div{background:#fff;border:1px solid var(--c-line);border-radius:16px;padding:12px;text-align:center}
+.we-plan-sum b{display:block;font-family:'Baloo 2',system-ui,sans-serif;font-size:26px;font-weight:800;line-height:1.1}
+.we-plan-sum small{font-size:12px;font-weight:600;color:var(--c-muted)}
+.we-plan-sum .warn b{color:var(--c-stand)}
+.we-seg{display:flex;gap:4px;padding:4px;background:var(--c-fill);border-radius:14px;margin-bottom:14px}
+.we-seg button{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:9px 6px;border-radius:10px;font-size:13px;font-weight:700;color:var(--c-muted)}
+.we-seg button svg{width:16px;height:16px}
+.we-seg button.on{background:#fff;color:var(--c-ink);box-shadow:0 1px 3px rgba(15,23,42,.08)}
+.we-seg button i{font-style:normal;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--c-stand-soft);color:#b45309;font-size:11px;line-height:18px}
+.we-seg button.on i{background:var(--c-accent-soft);color:var(--c-accent)}
+.we-plan-list{display:flex;flex-direction:column;gap:10px}
+.we-plan{background:#fff;border:1px solid var(--c-line);border-radius:18px;padding:14px}
+.we-plan.expired{border-left:4px solid var(--c-sos)}
+.we-plan.due{border-left:4px solid var(--c-stand)}
+.we-plan-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.we-plan-top b{font-size:16px;font-weight:800;letter-spacing:.02em}
+.we-plan-when{display:flex;align-items:center;gap:6px;margin:8px 0 0;font-size:13px;color:var(--c-ink-2)}
+.we-plan-when svg{width:14px;height:14px;color:var(--c-muted);flex:none}
+.we-plan-bar{height:6px;border-radius:999px;background:var(--c-fill);margin-top:10px;overflow:hidden}
+.we-plan-bar i{display:block;height:100%;border-radius:999px;background:var(--c-run)}
+.cx-btn.sm{margin-top:12px;min-height:40px;font-size:14px}
+.we-empty{text-align:center;padding:36px 20px;background:#fff;border:1px solid var(--c-line);border-radius:18px}
+.we-empty svg{width:28px;height:28px;color:var(--c-muted);margin-bottom:8px}
+.we-empty.ok svg{color:var(--c-run)}
+.we-empty b{display:block;font-size:16px;font-weight:800}
+.we-empty p{margin:4px 0 0;font-size:13px;color:var(--c-muted)}
+.we-steps{margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:6px;font-size:13.5px;color:var(--c-ink-2)}
+.we-status.new{background:var(--c-stand-soft);color:#b45309}

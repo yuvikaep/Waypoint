@@ -727,27 +727,68 @@ const PRODUCTS:[string,string,string,string[]][]=[
 type PlanVehicle={id:string;name:string;isMobile:boolean;planExpiresAt:number|null;planMonths:number|null;amount:number|null;plan:{state:'none'|'active'|'due'|'expired';expiresAt:number|null;days:number|null}};
 const PLAN_WORD:Record<PlanVehicle['plan']['state'],[string,string]>={active:['Active','ok'],due:['Renewal due','idle'],expired:['Expired','bad'],none:['No plan','off']};
 const rupees=(n:number)=>`₹${Number(n||0).toLocaleString('en-IN')}`;
+let buyTab:'plans'|'renew'|'new'='plans';
 function renderBuy(){
   const draw=async()=>{
     let mine:GpsRequest[]=[],plans:PlanVehicle[]=[];
     try{[{requests:mine},{vehicles:plans}]=await Promise.all([api<{requests:GpsRequest[]}>('/buy'),api<{vehicles:PlanVehicle[]}>('/plans')])}catch{/* shown empty */}
     // A phone-tracked vehicle is free, so it never carries a plan.
-    const paid=plans.filter(v=>!v.isMobile),dueSoon=paid.filter(v=>v.plan.state==='due'||v.plan.state==='expired');
+    const paid=plans.filter(v=>!v.isMobile),phones=plans.filter(v=>v.isMobile);
+    const due=paid.filter(v=>v.plan.state==='due'||v.plan.state==='expired'),active=paid.filter(v=>v.plan.state==='active');
+    const open=mine.filter(r=>r.status!=='done');
+    if(!paid.length&&buyTab!=='new')buyTab='new';
+    const TABS=[['plans',t('My vehicles'),'truck',paid.length+phones.length],['renew',t('Renewal'),'calendar',due.length],['new',t('New GPS'),'shopping-cart',0]] as const;
+    // One row per vehicle: what it is, how long its plan runs, and what to do about it.
+    const planRow=(v:PlanVehicle)=>{
+      const [word,cls]=PLAN_WORD[v.plan.state];
+      const line=v.planExpiresAt?t('Valid until {t}',{t:when(v.planExpiresAt)}):t('No plan recorded yet');
+      const left=v.plan.days!=null&&v.plan.state!=='expired'?t('{n} days left',{n:v.plan.days}):'';
+      return `<article class="we-plan ${v.plan.state}">
+        <div class="we-plan-top"><b>${esc(v.name)}</b><span class="we-status ${cls}">${t(word)}</span></div>
+        <p class="we-plan-when">${i('calendar')}${esc(line)}${left?` · ${esc(left)}`:''}</p>
+        ${v.plan.state==='active'&&v.plan.days!=null?`<div class="we-plan-bar"><i style="width:${Math.max(4,Math.min(100,Math.round(v.plan.days/365*100)))}%"></i></div>`:''}
+        ${v.plan.state!=='active'?`<button class="cx-btn primary sm" data-renew-one="${v.id}">${i('shopping-cart')}${t('Ask for renewal')}</button>`:''}
+      </article>`;
+    };
     $('#view').innerHTML=`<div class="we-page we-buy">
-      <div class="we-buy-hero"><div><b>${t('Get GPS for your vehicles')}</b><p>${t('Live location, route history, alerts and reports — all in this app.')}</p></div><span class="we-buy-ico">${i('navigation')}</span></div>
-      ${PRODUCTS.map(([k,l,ic,points])=>`<article class="we-buy-card"><div class="we-buy-head"><span class="we-feat-ico">${i(ic)}</span><b>${t(l)}</b>${k==='phone'?`<span class="we-free">${t('Free')}</span>`:''}</div><ul>${points.map(x=>`<li>${i('check')}${t(x)}</li>`).join('')}</ul><button class="cx-btn primary" data-buy="${k}">${t(k==='phone'?'Ask for driver tracking':'Request a call back')}</button></article>`).join('')}
-      <p class="cx-hint we-buy-note">${t('Our team calls you back to share price, installation and delivery. Nothing is charged in the app.')}</p>
-      ${paid.length?`<h3 class="we-h">${t('My GPS plans')}</h3>
-        ${dueSoon.length?`<p class="we-plan-alert">${i('triangle-alert')}${t('{n} vehicle(s) need renewal. Tracking stops when a plan runs out.',{n:dueSoon.length})}</p>`:''}
-        <div class="cx-group">${paid.map(v=>{const [word,cls]=PLAN_WORD[v.plan.state];return `<div class="cx-item static"><span class="cx-ico">${i('shield-check')}</span><span class="cx-item-text"><b>${esc(v.name)}</b><small>${v.planExpiresAt?t('Valid until {t}',{t:when(v.planExpiresAt)}):t('No plan recorded yet')}${v.plan.days!=null&&v.plan.state!=='expired'?` · ${t('{n} days left',{n:v.plan.days})}`:''}</small></span><span class="we-status ${cls}">${t(word)}</span></div>`}).join('')}</div>
-        <button class="cx-btn primary" id="renew-ask">${i('shopping-cart')}${t('Ask for renewal')}</button>
-        <p class="cx-hint we-buy-note">${t('Pay by UPI or bank transfer after our call. We record the payment and your plan is extended at once. Have a coupon code? Check it below before you pay.')}</p>
-        <button class="cx-btn" id="check-coupon">${i('ticket')}${t('Check a coupon code')}</button>`:''}
-      ${mine.length?`<h3 class="we-h">${t('My requests')}</h3><div class="cx-group">${mine.map(r=>`<div class="cx-item static"><span class="cx-ico">${i(PRODUCTS.find(p=>p[0]===r.product)?.[2]||'navigation')}</span><span class="cx-item-text"><b>${t(PRODUCTS.find(p=>p[0]===r.product)?.[1]||'GPS')} · ${r.vehicles}</b><small>${when(r.createdAt)} · ${esc(r.phone)}</small></span><span class="we-status ${r.status}">${t(r.status==='new'?'Received':r.status==='contacted'?'Contacted':'Completed')}</span></div>`).join('')}</div>`:''}
-    </div>`;
-    on('[data-buy]',el=>buyForm(el.dataset.buy!,draw));
-    on('#renew-ask',()=>buyForm('wired',draw,t('Renewal for {n} vehicle(s)',{n:dueSoon.length||paid.length})));
-    on('#check-coupon',couponCheck);icons();
+      <div class="we-buy-hero"><div><b>${t('GPS plans and devices')}</b><p>${t('See every vehicle, renew before it stops, or add a new GPS.')}</p></div><span class="we-buy-ico">${i('navigation')}</span></div>
+      ${paid.length?`<div class="we-plan-sum">
+        <div><b>${active.length}</b><small>${t('Active')}</small></div>
+        <div class="${due.length?'warn':''}"><b>${due.length}</b><small>${t('Renewal due')}</small></div>
+        <div><b>${phones.length}</b><small>${t('Phone tracking')}</small></div></div>`:''}
+      <nav class="we-seg" role="tablist">${TABS.map(([key,label,ic,n])=>`<button role="tab" data-btab="${key}" class="${buyTab===key?'on':''}">${i(ic)}<span>${label}</span>${n?`<i>${n}</i>`:''}</button>`).join('')}</nav>
+      <div id="buy-pane"></div></div>`;
+    const pane=$('#buy-pane');
+    const drawPane=()=>{
+      if(buyTab==='plans'){
+        pane.innerHTML=paid.length||phones.length?`
+          ${due.length?`<p class="we-plan-alert">${i('triangle-alert')}${t('{n} vehicle(s) need renewal. Tracking stops when a plan runs out.',{n:due.length})}</p>`:''}
+          ${paid.length?`<h3 class="we-h">${t('Vehicles with a GPS plan')}</h3><div class="we-plan-list">${[...due,...active,...paid.filter(v=>v.plan.state==='none')].map(planRow).join('')}</div>`:''}
+          ${phones.length?`<h3 class="we-h">${t('Phone tracking (free)')}</h3><div class="cx-group">${phones.map(v=>`<div class="cx-item static"><span class="cx-ico">${i('smartphone')}</span><span class="cx-item-text"><b>${esc(v.name)}</b><small>${t('No plan needed')}</small></span></div>`).join('')}</div>`:''}`
+          :`<div class="we-empty">${i('truck')}<b>${t('No vehicles yet')}</b><p>${t('Once a GPS is fitted, its plan shows here.')}</p></div>`;
+      } else if(buyTab==='renew'){
+        pane.innerHTML=`${due.length?`
+          <p class="we-plan-alert">${i('triangle-alert')}${t('{n} vehicle(s) need renewal. Tracking stops when a plan runs out.',{n:due.length})}</p>
+          <div class="we-plan-list">${due.map(planRow).join('')}</div>
+          <button class="cx-btn primary" id="renew-ask">${i('shopping-cart')}${t('Ask for renewal for all')}</button>`
+          :`<div class="we-empty ok">${i('check')}<b>${t('Nothing to renew')}</b><p>${t('Every plan is running. We tell you 30 days before one ends.')}</p></div>`}
+        <h3 class="we-h">${t('How renewal works')}</h3>
+        <ol class="we-steps"><li>${t('You ask for renewal here.')}</li><li>${t('Our team calls you with the amount.')}</li><li>${t('You pay by UPI or bank transfer.')}</li><li>${t('We record it and your plan is extended at once.')}</li></ol>
+        <button class="cx-btn" id="check-coupon">${i('ticket')}${t('Check a coupon code')}</button>
+        <p class="cx-hint we-buy-note">${t('Nothing is charged inside the app. A coupon is applied when we record your payment.')}</p>`;
+      } else {
+        pane.innerHTML=`${PRODUCTS.map(([k,l,ic,points])=>`<article class="we-buy-card"><div class="we-buy-head"><span class="we-feat-ico">${i(ic)}</span><b>${t(l)}</b>${k==='phone'?`<span class="we-free">${t('Free')}</span>`:''}</div><ul>${points.map(x=>`<li>${i('check')}${t(x)}</li>`).join('')}</ul><button class="cx-btn primary" data-buy="${k}">${t(k==='phone'?'Ask for driver tracking':'Request a call back')}</button></article>`).join('')}
+          <p class="cx-hint we-buy-note">${t('Our team calls you back to share price, installation and delivery. Nothing is charged in the app.')}</p>
+          ${mine.length?`<h3 class="we-h">${t('My requests')}${open.length?` · ${open.length}`:''}</h3><div class="cx-group">${mine.map(r=>`<div class="cx-item static"><span class="cx-ico">${i(PRODUCTS.find(p=>p[0]===r.product)?.[2]||'navigation')}</span><span class="cx-item-text"><b>${t(PRODUCTS.find(p=>p[0]===r.product)?.[1]||'GPS')} · ${r.vehicles}</b><small>${when(r.createdAt)} · ${esc(r.phone)}</small></span><span class="we-status ${esc(r.status)}">${t(r.status==='new'?'Waiting for a call':r.status==='contacted'?'Called':'Done')}</span></div>`).join('')}</div>`:''}`;
+      }
+      on('[data-buy]',el=>buyForm(el.dataset.buy!,draw),pane);
+      on('[data-renew-one]',el=>{const v=paid.find(x=>x.id===el.dataset.renewOne)!;buyForm('wired',draw,t('Renewal for {name}',{name:v.name}))},pane);
+      on('#renew-ask',()=>buyForm('wired',draw,t('Renewal for {n} vehicle(s)',{n:due.length})),pane);
+      on('#check-coupon',couponCheck,pane);
+      icons();
+    };
+    on('#view [data-btab]',el=>{buyTab=el.dataset.btab as typeof buyTab;$$<HTMLElement>('#view [data-btab]').forEach(b=>b.classList.toggle('on',b===el));drawPane()});
+    drawPane();icons();
   };
   void draw();
 }
