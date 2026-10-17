@@ -728,3 +728,6 @@
 
 .we-stale{display:flex;align-items:flex-start;gap:8px;margin:2px 0 6px;padding:8px 10px;border-radius:10px;background:#fff4e5;color:#92400e;font-size:13px;line-height:1.35}
 .we-stale svg.lucide{width:16px;height:16px;flex:none;margin-top:1px}
+
+.we-id small.we-upd{display:flex;flex-direction:column;line-height:1.25}
+.we-upd em{font-style:normal;font-size:12px;font-weight:600;letter-spacing:.02em;text-transform:uppercase;color:var(--c-muted);opacity:.85}

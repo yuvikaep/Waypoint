@@ -239,7 +239,7 @@ function vehicleCard(d:Vehicle){
   return `<article class="we-card ${over?'over':''}">
     <button class="we-card-top" data-open="${d.id}">
       <span class="we-speed ${over?'sos':speed?'run':'zero'}"><b>${speed}</b><small>kmph</small></span>
-      <span class="we-id"><b class="cx-plate">${esc(d.name)}</b><small>${when(p?.recordedAt??d.lastSeen)}</small></span>
+      <span class="we-id"><b class="cx-plate">${esc(d.name)}</b><small class="we-upd"><em>${t(p?'Location updated':'Last signal')}</em>${when(p?.recordedAt??d.lastSeen)}</small></span>
       <span class="we-ign ${d.ignition?'on':''}"><b>${d.ignition==null?'—':d.ignition?'ON':'OFF'}</b><small>${t('Ignition')}</small></span>
     </button>
     <button class="we-kebab" data-menu="${d.id}" aria-label="${t('More options')}">${i('ellipsis-vertical')}</button>

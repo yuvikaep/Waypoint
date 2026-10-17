@@ -391,4 +391,6 @@ export const HI:Record<string,string>={
   "Finding place name…":"जगह का नाम ढूँढ रहे हैं…",
   "Place name not available yet":"जगह का नाम अभी नहीं मिला",
   "Last GPS fix {t}. The tracker has no satellite signal, so this place may be a little off.":"आख़िरी GPS लोकेशन {t} की है। ट्रैकर को सैटेलाइट सिग्नल नहीं मिल रहा, इसलिए यह जगह थोड़ी अलग हो सकती है।",
+  "Location updated":"लोकेशन अपडेट",
+  "Last signal":"आख़िरी सिग्नल",
 };

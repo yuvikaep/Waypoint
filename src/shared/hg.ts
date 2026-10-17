@@ -391,4 +391,6 @@ export const HG:Record<string,string>={
   "Finding place name…":"Jagah ka naam dhoondh rahe hain…",
   "Place name not available yet":"Jagah ka naam abhi nahi mila",
   "Last GPS fix {t}. The tracker has no satellite signal, so this place may be a little off.":"Aakhri GPS location {t} ki hai. Tracker ko satellite signal nahi mil raha, isliye ye jagah thodi alag ho sakti hai.",
+  "Location updated":"Location update",
+  "Last signal":"Aakhri signal",
 };
