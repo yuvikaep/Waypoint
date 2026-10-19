@@ -4,6 +4,7 @@ import { cleanExtra, alarmAlerts, hardBrake, overspeed, REPEAT, SPEED_REPEAT, sh
 import { cleanSetup, cleanVehicle } from './provision.mjs';
 import { addMonths, cleanCoupon, cleanRenewal, couponProblem, planState, priceWithCoupon, renewalFrom } from './billing.mjs';
 import { cleanGpsRequest, REQUEST_STATUS } from './buy.mjs';
+import { standingSince } from './stops.mjs';
 
 export const hash = value => createHash('sha256').update(value).digest('hex');
 export const token = () => randomBytes(32).toString('base64url');
@@ -369,8 +370,8 @@ export class TrackingStore {
     const ignition = this.db.prepare('SELECT ignition FROM positions WHERE deviceId=? AND ignition IS NOT NULL ORDER BY receivedAt DESC,id DESC LIMIT 1').get(id)?.ignition ?? null;
     let stoppedSince = null;
     if (status === 'Stopped') {
-      const moved = this.db.prepare('SELECT MAX(recordedAt) AS t FROM positions WHERE deviceId=? AND valid=1 AND speed>=3').get(id)?.t ?? null;
-      stoppedSince = this.db.prepare('SELECT MIN(recordedAt) AS t FROM positions WHERE deviceId=? AND recordedAt>?').get(id, moved ?? -1)?.t ?? position.recordedAt;
+      const recent = (this.db.prepare('SELECT recordedAt,latitude,longitude,speed,valid FROM positions WHERE deviceId=? ORDER BY recordedAt DESC,id DESC LIMIT 2000').all(id));
+      stoppedSince = standingSince(recent) ?? position.recordedAt;
     }
     return { ...device, position, online, fresh: !!fresh, status, command, ignition, stoppedSince };
   }

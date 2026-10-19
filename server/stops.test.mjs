@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TrackingStore } from './tracking-store.mjs';
-import { regularStops, stopsOf, suggestedStops } from './stops.mjs';
+import { regularStops, standingSince, stopsOf, suggestedStops } from './stops.mjs';
 
 const MIN = 60000, DAY = 86400000, base = Date.parse('2026-10-01T04:00:00Z');
 const pump = { latitude: 25.487, longitude: 82.798 }, dhaba = { latitude: 25.52, longitude: 82.79 };
@@ -41,4 +41,22 @@ test('suggested stops read only the given vehicles from the store', async t => {
     store.ingest(device.id, { eventId: `${device.id}-${d}-${p.id}`, recordedAt: new Date(p.recordedAt).toISOString(), latitude: p.latitude, longitude: p.longitude, speed: p.speed });
   const stops = await suggestedStops(store, store.devices(a.customer.id), store.fences(a.customer.id), base - DAY, base + 5 * DAY);
   assert.equal(stops.length, 1); assert.deepEqual(stops[0].vehicles, ['Mine']);
+});
+
+test('standing time ignores GPS drift at rest but ends at real movement or a long silence', () => {
+  const base = Date.parse('2026-10-19T04:00:00Z');
+  // Newest first, as the store reads them: nine minutes parked in one spot.
+  const parked = (minutesAgo, speed = 0, lat = 25.27, lon = 82.83) =>
+    ({ recordedAt: base - minutesAgo * 60000, latitude: lat, longitude: lon, speed, valid: 1 });
+  const run = [parked(0), parked(60), parked(100, 4), parked(140), parked(180)];
+  // The 4 km/h reading at the same spot is drift, so the clock still starts at the oldest fix.
+  assert.equal(standingSince(run), base - 180 * 60000);
+  // Arriving: the fix before it was 2 km away, so standing starts after that one.
+  assert.equal(standingSince([...run, parked(200, 30, 25.29, 82.85)]), base - 180 * 60000);
+  // A reading well above drift speed ends the run even where the coordinates barely moved.
+  assert.equal(standingSince([parked(0), parked(30), parked(60, 25)]), base - 30 * 60000);
+  // After a silence longer than GAP we cannot claim it stood there, so the run starts after it.
+  assert.equal(standingSince([parked(0), parked(60), parked(60 + 13 * 60)]), base - 60 * 60000);
+  assert.equal(standingSince([]), null);
+  assert.equal(standingSince([{ ...parked(0), valid: 0 }]), null);
 });

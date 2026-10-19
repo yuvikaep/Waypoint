@@ -59,3 +59,23 @@ export async function suggestedStops(store, devices, fences, from, to) {
   }
   return regularStops(byVehicle, fences);
 }
+
+// Since when the vehicle has been standing where it stands now. A GPS at rest drifts and now and
+// then reports a few km/h without the vehicle having moved, so speed alone would restart the clock;
+// what counts is leaving RADIUS_M of the latest fix. A reading at DRIFT_KMH or more is faster than
+// drift and ends the run even where the coordinates hardly changed. Fixes come newest first.
+const DRIFT_KMH = 8;
+export function standingSince(fixes) {
+  const valid = fixes.filter(p => p.valid !== 0);
+  const here = valid[0];
+  if (!here) return null;
+  let since = here.recordedAt, previous = here;
+  for (const p of valid.slice(1)) {
+    // After a long silence we cannot say the vehicle stayed put, so the run starts after it.
+    if (previous.recordedAt - p.recordedAt > GAP) break;
+    if (metres(here, p) > RADIUS_M || Number(p.speed) >= DRIFT_KMH) break;
+    since = p.recordedAt;
+    previous = p;
+  }
+  return since;
+}
