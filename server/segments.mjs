@@ -5,6 +5,7 @@ import { ARRIVE_M, MOVE_M, MOVING_KMH, runningAt } from './extra.mjs';
 
 const STOP_MIN = 5 * 60000;     // a halt shorter than this is part of the drive, not a stop
 const BLIP_MS = 2 * 60000;      // and a "run" this short inside a stop is the GPS, not a trip
+const RETURN_MS = 10 * 60000;   // a vehicle back where it started this soon never really left
 const MAX_KMH = 150;            // a jump implying more than this is noise, not distance
 
 export function km(a, b) {
@@ -25,14 +26,16 @@ export function trackOf(fixes) {
 }
 // A stop that is still going on is kept whole however short it is so far, which is what the vehicle
 // card asks for; the timeline, looking back over a finished day, folds a brief halt into the drive.
-export function segmentsOf(fixes, { keepLast = false } = {}) {
+export function segmentsOf(fixes, { keepLast = false, wired } = {}) {
   const track = trackOf(fixes), out = [];
-  // An ignition wire: with one fitted, the engine has to be on for the vehicle to be running.
-  const wired = track.some(q => q.ignition === 1);
+  // An ignition wire: with one fitted, the engine has to be on for the vehicle to be running. Whether
+  // this vehicle has one is about the vehicle, not about the fixes in hand, so a caller that knows
+  // says so; otherwise it is taken from these fixes.
+  const hasWire = wired ?? track.some(q => q.ignition === 1);
   let cur = null;
   for (let n = 0; n < track.length; n++) {
     const p = track[n], prev = track[n - 1];
-    const kind = runningAt(track, n, metres) && !(wired && p.ignition === 0) ? 'run' : 'stop';
+    const kind = runningAt(track, n, metres) && !(hasWire && p.ignition === 0) ? 'run' : 'stop';
     let step = 0;
     if (prev) {
       const dt = (p.recordedAt - prev.recordedAt) / 3600000, d = km(prev, p);
@@ -52,10 +55,12 @@ export function segmentsOf(fixes, { keepLast = false } = {}) {
   // it never went anywhere and the "run" is turned back into standing.
   for (let n = 0; n < out.length; n++) {
     const s = out[n], before = out[n - 1], after = out[n + 1];
-    if (s.kind !== 'run' || s.to - s.from >= BLIP_MS || !before || before.kind !== 'stop') continue;
+    if (s.kind !== 'run' || s.to - s.from >= (after ? RETURN_MS : BLIP_MS) || !before || before.kind !== 'stop') continue;
     // Where it stood before and where it stands after; a segment's end is already the next
-    // segment's first fix, so the starting points are what tell us the place has not changed.
-    if (metres(before.at, after ? after.at : s.end) <= ARRIVE_M) s.kind = 'stop';
+    // segment's first fix, so the starting points are what tell us the place has not changed. A run
+    // still going on has no "after" to come back to, so only a move too small to be one at all —
+    // rather than the whole circle a jump can throw the vehicle around — keeps it standing.
+    if (metres(before.at, after ? after.at : s.end) <= (after ? ARRIVE_M : MOVE_M)) s.kind = 'stop';
   }
   // A short "run" inside a stop is the GPS wandering, and a short halt inside a drive is a traffic
   // light: neither is worth its own line, so both are folded into the segment they interrupted.
@@ -72,7 +77,7 @@ export function segmentsOf(fixes, { keepLast = false } = {}) {
 
 // When the vehicle's current stop began, from fixes given newest first. Null when it is not stopped
 // in these fixes at all.
-export function standingSince(fixes) {
-  const last = segmentsOf(fixes, { keepLast: true }).at(-1);
+export function standingSince(fixes, { wired } = {}) {
+  const last = segmentsOf(fixes, { keepLast: true, wired }).at(-1);
   return last?.kind === 'stop' ? last.from : null;
 }

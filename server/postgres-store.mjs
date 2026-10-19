@@ -4,7 +4,7 @@ import { MOVING_KMH, movingAt, cleanExtra, alarmAlerts, hardBrake, overspeed, RE
 import { cleanSetup, cleanVehicle } from './provision.mjs';
 import { addMonths, cleanCoupon, cleanRenewal, couponProblem, planState, priceWithCoupon, renewalFrom } from './billing.mjs';
 import { cleanGpsRequest, REQUEST_STATUS } from './buy.mjs';
-import { standingSince } from './segments.mjs';
+import { segmentsOf } from './segments.mjs';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 
 export const hash = value => createHash('sha256').update(value).digest('hex');
@@ -315,24 +315,23 @@ export class PostgresTrackingStore {
     const position = (await this.db.prepare('SELECT * FROM positions WHERE deviceId=? ORDER BY recordedAt DESC,id DESC LIMIT 1').get(id)) || null;
     const online = device.lastSeen !== null && this.now()-device.lastSeen < device.offlineSeconds*1000;
     const fresh = position && position.valid !== 0 && this.now()-position.recordedAt < device.offlineSeconds*1000;
-    // Hardware trackers (GT06 family) stop uploading fixes once parked and only send heartbeats,
-    // so an online tracker whose last good fix was stationary is parked, not missing GPS.
-    const recent = position && position.valid !== 0 ? (await this.db.prepare('SELECT recordedAt,latitude,longitude,speed FROM positions WHERE deviceId=? AND valid=1 ORDER BY recordedAt DESC,id DESC LIMIT 120').all(id)).map(r => ({ ...r, recordedAt: Number(r.recordedAt) })) : [];
-    // Ignition comes from whichever packet last reported it, not only the newest fix. A vehicle with an ignition
-    // wire (ignition has been seen ON at least once) is only running while the ignition is on.
+    // Ignition comes from whichever packet last reported it, not only the newest fix. A vehicle with an
+    // ignition wire (ignition has been seen ON at least once) is only running while the ignition is on.
     const ignition = (await this.db.prepare('SELECT ignition FROM positions WHERE deviceId=? AND ignition IS NOT NULL ORDER BY receivedAt DESC,id DESC LIMIT 1').get(id))?.ignition ?? null;
     const wired = ignition !== null && (Number(ignition) === 1 || !!(await this.db.prepare('SELECT 1 AS x FROM positions WHERE deviceId=? AND ignition=1 LIMIT 1').get(id)));
-    const movingNow = !!position && position.valid !== 0 && movingAt(recent, 0, distance) && (!wired || Number(ignition) === 1);
+    // Whether the vehicle is running now and since when it has been standing are the same question
+    // asked of the same runs and stops, so the card cannot contradict the history timeline.
+    const recent = position && position.valid !== 0
+      ? (await this.db.prepare('SELECT recordedAt,latitude,longitude,speed,ignition,valid FROM positions WHERE deviceId=? ORDER BY recordedAt DESC,id DESC LIMIT 2000').all(id))
+      : [];
+    const current = segmentsOf(recent, { keepLast: true, wired }).at(-1) ?? null;
+    const movingNow = current?.kind === 'run';
+    // Hardware trackers (GT06 family) stop uploading fixes once parked and only send heartbeats,
+    // so an online tracker whose last good fix was stationary is parked, not missing GPS.
     const parked = !fresh && device.model !== 'Mobile' && position && position.valid !== 0 && !movingNow;
     const status = !device.lastSeen ? 'Waiting' : !online ? 'Offline' : parked ? 'Stopped' : !fresh ? 'No GPS fix' : movingNow ? 'Moving' : 'Stopped';
     const command = (await this.db.prepare('SELECT * FROM commands WHERE deviceId=? ORDER BY createdAt DESC,rowid DESC LIMIT 1').get(id)) || null;
-    let stoppedSince = null;
-    if (status === 'Stopped') {
-      // Standing lasts until the vehicle was last really running, the same reading the history
-      // timeline gives a stop, so the card and the timeline always agree.
-      const here = (await this.db.prepare('SELECT recordedAt,latitude,longitude,speed,valid FROM positions WHERE deviceId=? ORDER BY recordedAt DESC,id DESC LIMIT 5000').all(id));
-      stoppedSince = standingSince(here) ?? position.recordedAt;
-    }
+    const stoppedSince = status !== 'Stopped' ? null : current?.kind === 'stop' ? current.from : position.recordedAt;
     return { ...device, position, online, fresh: !!fresh, status, command, ignition, stoppedSince };
   }
   async setParkLock(id,on) {

@@ -5,5 +5,5 @@ type Seg = { kind: 'run' | 'stop'; from: number; to: number; km: number; at: Tra
 export function km(a: Point, b: Point): number;
 export function metres(a: Point, b: Point): number;
 export function trackOf(fixes: TrackFix[]): TrackFix[];
-export function segmentsOf(track: TrackFix[], options?: { keepLast?: boolean }): Seg[];
-export function standingSince(fixes: TrackFix[]): number | null;
+export function segmentsOf(track: TrackFix[], options?: { keepLast?: boolean; wired?: boolean }): Seg[];
+export function standingSince(fixes: TrackFix[], options?: { wired?: boolean }): number | null;

@@ -104,3 +104,30 @@ test('a jumpy tracker standing still: the card and the timeline agree on one lon
   assert.equal(standingSince([...rows].reverse()), arrived);
   assert.equal(Math.round((at - 60000 - arrived) / 60000), 209);
 });
+
+test('the card and the timeline read the same runs and stops out of one store', t => {
+  let now = Date.parse('2026-10-19T04:00:00Z'), n = 0;
+  const store = new TrackingStore(':memory:', { now: () => now }); t.after(() => store.close());
+  const send = (lat, lon, speed, minutes = 1) => {
+    store.ingest(device.id, { eventId: `p${n++}`, recordedAt: new Date(now).toISOString(), latitude: lat, longitude: lon, speed, ignition: false });
+    store.seen(device.id, now);
+    now += minutes * 60000;
+  };
+  const device = store.createDevice({ name: 'PT06 TEST', model: 'PT06', uniqueId: '356218606437323', offlineSeconds: 600 }).device;
+  send(25.30, 82.86, 42); send(25.29, 82.85, 38); send(25.2805, 82.838, 24);
+  const arrived = now;
+  for (let i = 0; i < 180; i++) {
+    if (i % 41 === 13) send(25.2735, 82.8301, 5);       // the GPS throws it 400 m and brings it back
+    else if (i % 29 === 9) send(25.2772, 82.8355, 6);
+    else send(25.27, 82.83, 0);
+  }
+  const card = store.device(device.id);
+  assert.equal(card.status, 'Stopped');
+  assert.equal(card.stoppedSince, arrived, 'the card dates the stop from when the vehicle arrived');
+  // The timeline reads the same rows the history page would load and must land on the same minute.
+  const track = store.history(device.id, Date.parse('2026-10-19T00:00:00Z'), now).positions;
+  const stops = segmentsOf(track).filter(s => s.kind === 'stop');
+  assert.equal(stops.length, 1);
+  assert.equal(stops.at(-1).from, card.stoppedSince, 'card and timeline agree');
+  assert.equal(Math.round((now - 60000 - arrived) / 60000), 179);
+});
