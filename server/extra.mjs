@@ -107,3 +107,7 @@ export const cleanPhone = value => {
   if (!/^\+?\d{10,13}$/.test(digits)) { const e = new Error('Enter a 10 digit mobile number.'); e.status = 400; throw e; }
   return digits;
 };
+
+// A fix counts as movement only from this speed up. A parked tracker's GPS drifts and reports 1-4 km/h for a
+// moment, which used to restart "Stopped since" and cut stops into fake little trips.
+export const MOVING_KMH = 6;

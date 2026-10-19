@@ -532,6 +532,7 @@ function renderAlerts(){
 }
 
 /* ---------- Trip maths shared by history and reports ---------- */
+const MOVING=6; // km/h: slower is GPS drift of a parked vehicle
 type Segment={kind:'run'|'stop';from:number;to:number;km:number;at:Fix;end:Fix;maxSpeed:number};
 const STOP_MIN=5*60000;
 function km(a:{latitude:number;longitude:number},b:{latitude:number;longitude:number}){
@@ -543,14 +544,15 @@ function segments(track:Fix[]):Segment[]{
   const out:Segment[]=[];
   let cur:Segment|null=null;
   for(let n=0;n<track.length;n++){
-    const p=track[n],prev=track[n-1],kind:Segment['kind']=p.speed>=3?'run':'stop';
-    let step=0;if(prev){const dt=(p.recordedAt-prev.recordedAt)/3600000,d=km(prev,p);if(dt>0&&d/dt<=150&&(kind==='run'||prev.speed>=3||d>=0.1))step=d}
+    const p=track[n],prev=track[n-1],kind:Segment['kind']=p.speed>=MOVING?'run':'stop';
+    let step=0;if(prev){const dt=(p.recordedAt-prev.recordedAt)/3600000,d=km(prev,p);if(dt>0&&d/dt<=150&&(kind==='run'||prev.speed>=MOVING||d>=0.1))step=d}
     if(!cur||cur.kind!==kind){if(cur){cur.to=p.recordedAt;cur.end=p;cur.km+=step;step=0}cur={kind,from:p.recordedAt,to:p.recordedAt,km:0,at:p,end:p,maxSpeed:p.speed};out.push(cur)}
     cur.to=p.recordedAt;cur.end=p;cur.km+=step;cur.maxSpeed=Math.max(cur.maxSpeed,p.speed);
   }
   // Short halts inside a run are part of the run.
   const merged:Segment[]=[];
-  for(const s of out){const last=merged.at(-1);if(s.kind==='stop'&&s.to-s.from<STOP_MIN&&last){last.to=s.to;last.end=s.end;last.km+=s.km;continue}if(last&&last.kind===s.kind){last.to=s.to;last.end=s.end;last.km+=s.km;last.maxSpeed=Math.max(last.maxSpeed,s.maxSpeed);continue}merged.push({...s})}
+  // A blip of "running" inside a stop (under 2 minutes and 150 m) is GPS drift, not a trip.
+  for(const s of out){const last=merged.at(-1);if(s.kind==='run'&&last?.kind==='stop'&&s.to-s.from<120000&&s.km<0.15){last.to=s.to;last.end=s.end;continue}if(s.kind==='stop'&&s.to-s.from<STOP_MIN&&last){last.to=s.to;last.end=s.end;last.km+=s.km;continue}if(last&&last.kind===s.kind){last.to=s.to;last.end=s.end;last.km+=s.km;last.maxSpeed=Math.max(last.maxSpeed,s.maxSpeed);continue}merged.push({...s})}
   return merged;
 }
 async function loadTrack(id:string,from:Date,to:Date){
@@ -595,9 +597,9 @@ function renderHistory(){
   let track:Fix[]=[],range=rangeFor('today'),tab:'all'|'stops'='all';
   const showPoint=(n:number)=>{
     const p=track[n];if(!p)return;
-    const next=track[n+1]||p,prev=track[n-1]||p,heading=p.speed>=3&&p.heading!=null?p.heading:next!==p?bearing(p,next):prev!==p?bearing(prev,p):0;
-    if(!truck)truck=L.marker(point(p),{icon:playbackIcon(heading,p.speed>=3),zIndexOffset:1000}).addTo(hmap);
-    else{truck.setLatLng(point(p));const pin=truck.getElement()?.querySelector<HTMLElement>('.gps-pin');if(pin){pin.className=`gps-pin on ${p.speed>=3?'running':'stopped'}`;pin.querySelector<HTMLElement>('span')!.style.transform=`rotate(${heading}deg)`}}
+    const next=track[n+1]||p,prev=track[n-1]||p,heading=p.speed>=MOVING&&p.heading!=null?p.heading:next!==p?bearing(p,next):prev!==p?bearing(prev,p):0;
+    if(!truck)truck=L.marker(point(p),{icon:playbackIcon(heading,p.speed>=MOVING),zIndexOffset:1000}).addTo(hmap);
+    else{truck.setLatLng(point(p));const pin=truck.getElement()?.querySelector<HTMLElement>('.gps-pin');if(pin){pin.className=`gps-pin on ${p.speed>=MOVING?'running':'stopped'}`;pin.querySelector<HTMLElement>('span')!.style.transform=`rotate(${heading}deg)`}}
     $<HTMLInputElement>('#slider').value=String(n);
     $('#hpoint').innerHTML=`<b>${clock(p.recordedAt)}</b> · ${Math.round(p.speed)} km/h`;
     if(!hmap.getBounds().pad(-0.15).contains(point(p)))hmap.panTo(point(p),{animate:true});

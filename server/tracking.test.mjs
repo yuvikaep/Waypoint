@@ -484,3 +484,15 @@ test('parking lock: an engine-on heartbeat that repeats an old fix time still al
   advance(30000);store.ingest(device.id,position({eventId:`h${n++}`,recordedAt:fixAt,speed:0,ignition:true}),{receivedAt:store.now()});
   assert.equal(locks().length,1);assert.match(locks()[0].message,/engine started/);
 });
+
+test('GPS drift of a parked tracker (1-4 km/h) does not restart "stopped since"; real movement does',t=>{
+  const {store,device,position,advance}=fixture(t);
+  let n=0;const fix=(speed,gap)=>{advance(gap);store.ingest(device.id,position({eventId:`d${n++}`,recordedAt:new Date(store.now()).toISOString(),speed}))};
+  fix(40,60000);fix(0,60000);const stopAt=store.now();
+  fix(0,300000);fix(4,60000);fix(0,60000);fix(3,60000);fix(0,60000);
+  assert.equal(store.device(device.id).stoppedSince,stopAt,'drift spikes keep the original stop time');
+  assert.equal(store.device(device.id).status,'Stopped');
+  fix(25,60000);assert.equal(store.device(device.id).status,'Moving');
+  fix(0,60000);const second=store.now();fix(0,60000);
+  assert.equal(store.device(device.id).stoppedSince,second,'a real trip moves the stop time forward');
+});

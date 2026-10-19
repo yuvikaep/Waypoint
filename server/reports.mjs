@@ -1,7 +1,7 @@
 // Daily vehicle summaries built from stored fixes. Works with both stores (sync SQLite or async Postgres).
 const GAP = 15 * 60000;          // longer silences are not counted as driving or idling
 const MAX_KMH = 150;             // faster implied jumps are GPS noise, not distance
-const MOVING_KMH = 3;
+import { MOVING_KMH } from './extra.mjs';
 const DRIFT_KM = 0.1;
 
 function km(a, b) {
