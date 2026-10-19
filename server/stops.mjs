@@ -1,7 +1,7 @@
 // Places where a customer's vehicles stop again and again (petrol pump, dhaba, loading point...),
 // worked out from stored fixes so the customer can name them. Works with both stores.
 const STOP_MIN = 10 * 60000;    // a stop counts from 10 minutes standing still
-const MOVING_KMH = 3;
+import { MOVING_KMH } from './extra.mjs';
 const RADIUS_M = 150;           // stops this close are the same place
 const GAP = 12 * 3600000;       // after a longer silence we cannot say the vehicle stayed put
 

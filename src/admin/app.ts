@@ -277,7 +277,7 @@ async function renderDevice(){
     <div class="actions"><button class="btn btn-ghost btn-sm" id="dp-edit">${i('pencil')}Edit / assign</button><button class="btn btn-ghost btn-sm" id="dp-setup">${i('info')}Setup</button><button class="btn btn-danger btn-sm" id="dp-delete">${i('trash-2')}Delete</button></div></div>`;
   const k=(icon:string,tone:string,label:string,value:string,sub='')=>`<div class="dp-kpi ${tone}"><span class="dp-kpi-ico">${i(icon)}</span><div><small>${label}</small><b>${value}</b>${sub?`<em>${sub}</em>`:''}</div></div>`;
   const fresh=(at:number|null)=>at!=null&&Date.now()-at<=10*60000?'ok':'warn';
-  $('#dp-kpi').innerHTML=k('map-pin',p?fresh(fixAt(d)):'warn','Last GPS fix',p?ago(fixAt(d)):'Never',p?time(fixAt(d)):'')
+  $('#dp-kpi').innerHTML=k('map-pin',p?fresh(fixAt(d)):'warn','Last location update',p?ago(fixAt(d)):'Never',p?time(fixAt(d)):'')
     +k('activity',d.online?'ok':'bad','Last heartbeat',ago(d.lastSeen),time(d.lastSeen))
     +k('gauge',p&&p.speed>=3?'ok':'','Speed',p?`${Math.round(p.speed)} km/h`:'—',p?.heading!=null?`heading ${Math.round(p.heading)}°`:'')
     +k('key-round',d.ignition?'ok':'','Ignition',d.ignition==null?'—':d.ignition?'On':'Off')
@@ -338,10 +338,10 @@ function renderHealth(data:Detail){
   // The newest fix is the device's own position; the packet list is mostly heartbeats and may not reach back to it.
   const fix=d.position&&d.position.valid!==0?d.position:lastFix||null;
   const fixAge=fix?Date.now()-fix.recordedAt:Infinity;
-  const fixState=!fix?['bad','No fix yet','The tracker has not sent a satellite location yet.']
-    :fixAge<=10*60000?['ok','Live GPS',`Fixed ${ago(fix.recordedAt).toLowerCase()} · ${time(fix.recordedAt)}`]
-    :d.online?['bad','No location being sent',`Connected and heartbeating, but the last position is from ${time(fix.recordedAt)} (${ago(fix.recordedAt).toLowerCase()}). Check the upload interval: TIMER's second value is the seconds between uploads with the ignition off, and anything under 5 stops them. Set it from <b>Setup &amp; commands</b>.`]
-    :['warn','Old fix',`${ago(fix.recordedAt)} · ${time(fix.recordedAt)}`];
+  const fixState=!fix?['bad','No location yet','The tracker has not sent a location yet.']
+    :fixAge<=10*60000?['ok','Live','']
+    :d.online?['bad','No location being sent',`Connected and heartbeating, but the last location update is from ${time(fix.recordedAt)} (${ago(fix.recordedAt).toLowerCase()}). Check the upload interval: TIMER's second value is the seconds between uploads with the ignition off, and anything under 5 stops them. Set it from <b>Setup &amp; commands</b>.`]
+    :['warn','Old location','The tracker is not connected, so this is its last known location.'];
   const sig=rssi?Number(rssi.v):null,sigTone=sig==null?'':sig>=3?'ok':sig>=2?'warn':'bad';
   const powerTone=data.power.connected==null?(charge?(charge.v?'ok':'bad'):''):data.power.connected?'ok':'bad';
   const row=(icon:string,label:string,value:string,note='',tone='')=>`<div class="hx-row"><span class="hx-ico ${tone}">${i(icon)}</span><div class="hx-body"><small>${label}</small><b>${value}</b>${note?`<em>${note}</em>`:''}</div></div>`;
@@ -360,7 +360,7 @@ function renderHealth(data:Detail){
       +row('siren','Tamper / alarms',alarms.length?alarms.map(a=>`<span class="chip bad plain">${esc(alarmWords(String(extraOf(a).alarm)))}</span>`).join(' '):'None reported',alarms.length?time(alarms[0].receivedAt):'',alarms.length?'bad':'ok')
       +(timeline?`<div class="hx-sub">Power log</div><ul class="hx-timeline">${timeline}</ul>`:''))}
     ${group('satellite','GPS',fixState[0],fixState[1],
-      row('locate-fixed','Fix status',fixState[1],fixState[2],fixState[0])
+      row('locate-fixed','Last location update',fix?`${ago(fix.recordedAt)} · ${time(fix.recordedAt)}`:'Not yet',fixState[2],fixState[0])
       +row('satellite','Satellites',(fix?.satellites??sats?.v)!=null?String(fix?.satellites??sats!.v):na,'','')
       +row('map-pin','Last known place',d.position?`<a href="${mapsLink(d.position)}" target="_blank" rel="noopener">${coords(d.position)}</a>`:'—','','')
       +row('gauge','HDOP / PDOP',`<span class="muted">Not sent by ${esc(d.model)}</span>`,'',''))}
@@ -385,7 +385,7 @@ function renderCommands(data:Detail){
       <form class="form" data-form="server"><h3>Server IP / port</h3><div class="form-row"><label class="field">Host or IP<input class="input" name="host" value="${esc(gateway.trackerHost||'')}" required></label><label class="field">Port<input class="input" name="port" type="number" min="10" max="65535" value="${gateway.gt06Port??5023}" required></label></div><div class="toolbar"><button class="btn btn-primary btn-sm" type="submit">Send</button><button class="btn btn-ghost btn-sm" type="button" data-sms>Copy SMS</button></div></form>
       <form class="form" data-form="timezone"><h3>Time zone</h3><p class="hint">GPS times come out wrong by the offset if this does not match what the receiver expects. India: East, 5 hours 30 minutes (IST).</p><div class="form-row"><label class="field">Hours<input class="input" name="hours" type="number" min="0" max="12" value="5" required></label><label class="field">Minutes<select class="input" name="minutes"><option>0</option><option>15</option><option selected>30</option><option>45</option></select></label></div><label class="field">Direction<select class="input" name="west"><option value="false">East (India)</option><option value="true">West</option></select></label><div class="toolbar"><button class="btn btn-primary btn-sm" type="submit">Send</button><button class="btn btn-ghost btn-sm" type="button" data-sms>Copy SMS</button></div></form>
       <form class="form" data-form="accReport"><h3>Ignition change report</h3><label class="field">Report when ignition changes<select class="input" name="on"><option value="true">On</option><option value="false">Off</option></select></label><div class="toolbar"><button class="btn btn-primary btn-sm" type="submit">Send</button><button class="btn btn-ghost btn-sm" type="button" data-sms>Copy SMS</button></div></form></div>`:''}
-    <h3 style="margin-top:16px">Command log</h3>
+    <h3 style="margin-top:16px">Command log</h3><p class="hint">A PT06 hangs up within seconds of connecting and has never answered a command sent over the internet (the server log shows the command going out and no reply coming back). It does answer by SMS. So "queued" or "sent" here only means the command was handed to the tracker; send the same text by SMS to see the real reply.</p>
     <div id="cmd-log">${data.commands.length?data.commands.map(c=>`<div class="alert-item"><div class="body"><b class="mono">${esc(c.detail.replace(/^CMD /,'').split(' sent over')[0].split(' not sent')[0])}</b><p>${esc(c.detail.replace(/^CMD /,'').replace(/^.*?(sent over GPRS\.|not sent:)/,'$1'))}</p><span class="small muted">${time(c.createdAt)}</span></div><span class="chip ${c.status==='answered'?'ok':c.status==='failed'?'bad':'neutral'} plain">${esc(c.status==='sent'?'sent · waiting for reply':c.status==='queued'?'queued · waiting for the tracker to connect':c.status)}</span></div>`).join(''):'<p class="muted small">No commands sent yet.</p>'}</div>`;
   const run=async(action:string,input:Record<string,unknown>={},label='')=>{
     if(action==='reboot'&&!confirm(`Reboot ${d.name}? It disconnects for about a minute.`))return;

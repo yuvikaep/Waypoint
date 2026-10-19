@@ -240,7 +240,7 @@ function vehicleCard(d:Vehicle){
   return `<article class="we-card ${over?'over':''}">
     <button class="we-card-top" data-open="${d.id}">
       <span class="we-speed ${over?'sos':speed?'run':'zero'}"><b>${speed}</b><small>kmph</small></span>
-      <span class="we-id"><b class="cx-plate">${esc(d.name)}</b>${kindTag(d)}<small class="we-upd"><em>${t(p?fixStale(d)?'Last GPS fix':'Location updated':'Last signal')}</em>${when(fixAt(d))}</small></span>
+      <span class="we-id"><b class="cx-plate">${esc(d.name)}</b>${kindTag(d)}<small class="we-upd"><em>${t(p?'Last location update':'Last signal')}</em>${when(fixAt(d))}</small></span>
       <span class="we-ign ${d.ignition?'on':''}"><b>${d.ignition==null?'—':d.ignition?'ON':'OFF'}</b><small>${t('Ignition')}</small></span>
     </button>
     <button class="we-kebab" data-menu="${d.id}" aria-label="${t('More options')}">${i('ellipsis-vertical')}</button>
@@ -447,7 +447,7 @@ function renderVehicle(){
     const d=vehicle(vehicleId);if(!d)return;
     const p=d.position,km=kmToday.get(d.id),s=statusOf(d);
     $('#vcard').innerHTML=`<button class="we-back" data-back aria-label="${t('Back')}">${i('arrow-left')}</button>
-      <div class="we-vcard-main"><b class="cx-plate">${esc(d.name)}<i class="we-dot ${overspeeding(d)?'sos':group(s)}"></i></b>${kindTag(d)}<small>${t('Last updated on {t}',{t:when(fixAt(d))})}</small>
+      <div class="we-vcard-main"><b class="cx-plate">${esc(d.name)}<i class="we-dot ${overspeeding(d)?'sos':group(s)}"></i></b>${kindTag(d)}<small>${t('Last location update: {t}',{t:when(fixAt(d))})}</small>
       <div class="we-vcard-line"><span>${km==null?'—':t('{n} km today',{n:km})}</span><span>${t('Ignition')}: <b class="${d.ignition?'on':'off'}">${d.ignition==null?'—':d.ignition?t('On'):t('Off')}</b></span></div></div>`;
     on('[data-back]',back,$('#vcard'));icons();
   };
@@ -496,7 +496,7 @@ function renderVehicle(){
 }
 function vehicleInfo(d:Vehicle){
   const s=statusOf(d);
-  modal(`${d.name} · ${t('Information')}`,`<dl class="facts"><dt>${t('Status')}</dt><dd>${statusLabel(s)}</dd>${d.vehicleType?`<dt>${t('Vehicle type')}</dt><dd>${t(VEHICLE_TYPES[d.vehicleType]?.[0]||'Vehicle')}</dd>`:''}${d.makeModel?`<dt>${t('Make and model')}</dt><dd>${esc(d.makeModel)}${d.modelYear?` · ${d.modelYear}`:''}</dd>`:''}${d.fuelType?`<dt>${t('Fuel')}</dt><dd>${t(FUEL_TYPES[d.fuelType]||d.fuelType)}</dd>`:''}${d.capacityKg?`<dt>${t('Load capacity')}</dt><dd>${d.capacityKg} kg</dd>`:''}${d.registration?`<dt>${t('Registration')}</dt><dd>${esc(d.registration)}</dd>`:''}${d.ownerName?`<dt>${t('Registered owner')}</dt><dd>${esc(d.ownerName)}</dd>`:''}<dt>${t('Driver')}</dt><dd>${esc(d.driver||'—')}</dd><dt>${t('Speed limit')}</dt><dd>${d.speedLimit} km/h${d.speedAlert===false?` (${t('alert off')})`:''}</dd><dt>${t('Last updated')}</dt><dd>${when(fixAt(d))}</dd>${d.stoppedSince?`<dt>${t('Standing since')}</dt><dd>${when(d.stoppedSince)}</dd>`:''}<dt>${t('Tracker')}</dt><dd>${d.isMobile?t('Driver phone'):'GPS'}</dd></dl>`);
+  modal(`${d.name} · ${t('Information')}`,`<dl class="facts"><dt>${t('Status')}</dt><dd>${statusLabel(s)}</dd>${d.vehicleType?`<dt>${t('Vehicle type')}</dt><dd>${t(VEHICLE_TYPES[d.vehicleType]?.[0]||'Vehicle')}</dd>`:''}${d.makeModel?`<dt>${t('Make and model')}</dt><dd>${esc(d.makeModel)}${d.modelYear?` · ${d.modelYear}`:''}</dd>`:''}${d.fuelType?`<dt>${t('Fuel')}</dt><dd>${t(FUEL_TYPES[d.fuelType]||d.fuelType)}</dd>`:''}${d.capacityKg?`<dt>${t('Load capacity')}</dt><dd>${d.capacityKg} kg</dd>`:''}${d.registration?`<dt>${t('Registration')}</dt><dd>${esc(d.registration)}</dd>`:''}${d.ownerName?`<dt>${t('Registered owner')}</dt><dd>${esc(d.ownerName)}</dd>`:''}<dt>${t('Driver')}</dt><dd>${esc(d.driver||'—')}</dd><dt>${t('Speed limit')}</dt><dd>${d.speedLimit} km/h${d.speedAlert===false?` (${t('alert off')})`:''}</dd><dt>${t('Last location update')}</dt><dd>${when(fixAt(d))}</dd>${d.stoppedSince?`<dt>${t('Standing since')}</dt><dd>${when(d.stoppedSince)}</dd>`:''}<dt>${t('Tracker')}</dt><dd>${d.isMobile?t('Driver phone'):'GPS'}</dd></dl>`);
 }
 
 /* ---------- Notifications ---------- */
@@ -532,6 +532,7 @@ function renderAlerts(){
 }
 
 /* ---------- Trip maths shared by history and reports ---------- */
+const MOVING=3; // km/h; a run also needs 100 m of real distance (GPS drift of a parked vehicle never gets there)
 type Segment={kind:'run'|'stop';from:number;to:number;km:number;at:Fix;end:Fix;maxSpeed:number};
 const STOP_MIN=5*60000;
 function km(a:{latitude:number;longitude:number},b:{latitude:number;longitude:number}){
@@ -541,16 +542,18 @@ function km(a:{latitude:number;longitude:number},b:{latitude:number;longitude:nu
 // Runs and stops (5 minutes or more) from the stored fixes; implied jumps over 150 km/h are GPS noise.
 function segments(track:Fix[]):Segment[]{
   const out:Segment[]=[];
+  const wired=track.some(q=>q.ignition===1); // an ignition wire: the engine must be on to count as running
   let cur:Segment|null=null;
   for(let n=0;n<track.length;n++){
-    const p=track[n],prev=track[n-1],kind:Segment['kind']=p.speed>=3?'run':'stop';
-    let step=0;if(prev){const dt=(p.recordedAt-prev.recordedAt)/3600000,d=km(prev,p);if(dt>0&&d/dt<=150&&(kind==='run'||prev.speed>=3||d>=0.1))step=d}
+    const p=track[n],prev=track[n-1],kind:Segment['kind']=p.speed>=MOVING&&!(wired&&p.ignition===0)&&track.slice(Math.max(0,n-10),n).some(q=>km(q,p)>=0.1)?'run':'stop';
+    let step=0;if(prev){const dt=(p.recordedAt-prev.recordedAt)/3600000,d=km(prev,p);if(dt>0&&d/dt<=150&&(kind==='run'||prev.speed>=MOVING||d>=0.1))step=d}
     if(!cur||cur.kind!==kind){if(cur){cur.to=p.recordedAt;cur.end=p;cur.km+=step;step=0}cur={kind,from:p.recordedAt,to:p.recordedAt,km:0,at:p,end:p,maxSpeed:p.speed};out.push(cur)}
     cur.to=p.recordedAt;cur.end=p;cur.km+=step;cur.maxSpeed=Math.max(cur.maxSpeed,p.speed);
   }
   // Short halts inside a run are part of the run.
   const merged:Segment[]=[];
-  for(const s of out){const last=merged.at(-1);if(s.kind==='stop'&&s.to-s.from<STOP_MIN&&last){last.to=s.to;last.end=s.end;last.km+=s.km;continue}if(last&&last.kind===s.kind){last.to=s.to;last.end=s.end;last.km+=s.km;last.maxSpeed=Math.max(last.maxSpeed,s.maxSpeed);continue}merged.push({...s})}
+  // A blip of "running" inside a stop (under 2 minutes and 150 m) is GPS drift, not a trip.
+  for(const s of out){const last=merged.at(-1);if(s.kind==='run'&&last?.kind==='stop'&&s.to-s.from<120000&&s.km<0.15){last.to=s.to;last.end=s.end;continue}if(s.kind==='stop'&&s.to-s.from<STOP_MIN&&last){last.to=s.to;last.end=s.end;last.km+=s.km;continue}if(last&&last.kind===s.kind){last.to=s.to;last.end=s.end;last.km+=s.km;last.maxSpeed=Math.max(last.maxSpeed,s.maxSpeed);continue}merged.push({...s})}
   return merged;
 }
 async function loadTrack(id:string,from:Date,to:Date){
@@ -595,9 +598,9 @@ function renderHistory(){
   let track:Fix[]=[],range=rangeFor('today'),tab:'all'|'stops'='all';
   const showPoint=(n:number)=>{
     const p=track[n];if(!p)return;
-    const next=track[n+1]||p,prev=track[n-1]||p,heading=p.speed>=3&&p.heading!=null?p.heading:next!==p?bearing(p,next):prev!==p?bearing(prev,p):0;
-    if(!truck)truck=L.marker(point(p),{icon:playbackIcon(heading,p.speed>=3),zIndexOffset:1000}).addTo(hmap);
-    else{truck.setLatLng(point(p));const pin=truck.getElement()?.querySelector<HTMLElement>('.gps-pin');if(pin){pin.className=`gps-pin on ${p.speed>=3?'running':'stopped'}`;pin.querySelector<HTMLElement>('span')!.style.transform=`rotate(${heading}deg)`}}
+    const next=track[n+1]||p,prev=track[n-1]||p,heading=p.speed>=MOVING&&p.heading!=null?p.heading:next!==p?bearing(p,next):prev!==p?bearing(prev,p):0;
+    if(!truck)truck=L.marker(point(p),{icon:playbackIcon(heading,p.speed>=MOVING),zIndexOffset:1000}).addTo(hmap);
+    else{truck.setLatLng(point(p));const pin=truck.getElement()?.querySelector<HTMLElement>('.gps-pin');if(pin){pin.className=`gps-pin on ${p.speed>=MOVING?'running':'stopped'}`;pin.querySelector<HTMLElement>('span')!.style.transform=`rotate(${heading}deg)`}}
     $<HTMLInputElement>('#slider').value=String(n);
     $('#hpoint').innerHTML=`<b>${clock(p.recordedAt)}</b> · ${Math.round(p.speed)} km/h`;
     if(!hmap.getBounds().pad(-0.15).contains(point(p)))hmap.panTo(point(p),{animate:true});

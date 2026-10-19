@@ -107,3 +107,23 @@ export const cleanPhone = value => {
   if (!/^\+?\d{10,13}$/.test(digits)) { const e = new Error('Enter a 10 digit mobile number.'); e.status = 400; throw e; }
   return digits;
 };
+
+// A vehicle counts as running when it is doing at least MOVING_KMH AND has really travelled: at least REAL_MOVE_M
+// away from one of its previous fixes. A parked tracker's GPS drift reports 1-6 km/h now and then but never
+// 100 m of distance, so it no longer restarts "Stopped since" or makes fake trips.
+export const MOVING_KMH = 3;
+export const REAL_MOVE_M = 100;
+// list is newest first; true when list[k] is a running fix.
+export function movingAt(list, k, distance) {
+  const a = list[k];
+  if (!a || Number(a.speed) < MOVING_KMH) return false;
+  const here = { latitude: Number(a.latitude), longitude: Number(a.longitude) };
+  for (let j = k + 1; j < Math.min(list.length, k + 11); j++)
+    if (distance(here, { latitude: Number(list[j].latitude), longitude: Number(list[j].longitude) }) >= REAL_MOVE_M) return true;
+  return false;
+}
+// Newest running fix in a newest-first list, or null.
+export function lastRealMove(list, distance) {
+  for (let k = 0; k < list.length; k++) if (movingAt(list, k, distance)) return list[k];
+  return null;
+}
