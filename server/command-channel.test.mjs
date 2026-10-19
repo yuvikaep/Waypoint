@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCommandChannel } from './command-channel.mjs';
 import { TraccarBridge } from './traccar.mjs';
+import { TrackingStore } from './tracking-store.mjs';
 
 test('location command channel authenticates, restricts routes, checks capability and fails closed',async t=>{
   const secret='cloud-command-test-secret-32-characters',calls=[];let online=true,types=[{type:'positionSingle'}];
@@ -67,4 +68,21 @@ test('maintenance commands: only approved text reaches an online tracker; packet
   const bridge=new TraccarBridge(null,{url:base,token:secret});
   assert.equal(await bridge.sendText({traccarId:3},'RESET#'),'sent');
   assert.equal((await bridge.packets({uniqueId:'867111062240426'})).length,5);
+});
+
+test('a command keeps its own text when it goes unanswered, and a late reply still lands on it', t => {
+  let now = Date.parse('2026-10-19T13:18:00Z');
+  const store = new TrackingStore(':memory:', { now: () => now }); t.after(() => store.close());
+  const device = store.createDevice({ name: 'PT06 TEST', model: 'PT06', uniqueId: '356218606437323' }).device;
+  store.recordCommand(device.id, 'sent', 'CMD STATUS# sent over GPRS.');
+  now += 6 * 60000; store.tick();
+  let row = store.deviceCommands(device.id)[0];
+  assert.equal(row.status, 'timed out');
+  assert.match(row.detail, /^CMD STATUS# sent over GPRS\. · No reply within five minutes\.$/, 'it still says which command it was');
+  // The tracker answers on its next connection, after the command was given up on.
+  now += 60000;
+  store.ingest(device.id, { eventId: 'reply-1', recordedAt: new Date(now).toISOString(), latitude: 25.27, longitude: 82.83, extra: { result: 'Battery:83%,GPRS:Link Up,GSM Signal:4' } }, { heartbeat: false });
+  row = store.deviceCommands(device.id)[0];
+  assert.equal(row.status, 'answered');
+  assert.equal(row.detail, 'CMD STATUS# sent over GPRS. → Reply: Battery:83%,GPRS:Link Up,GSM Signal:4');
 });

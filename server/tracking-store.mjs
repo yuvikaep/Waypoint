@@ -447,10 +447,12 @@ export class TrackingStore {
       // The same tracker alarm repeats in consecutive packets; one alert per half hour is enough.
       if (inserted && info.alarm) for (const { type, message } of alarmAlerts(info.alarm))
         if (!this.db.prepare('SELECT id FROM alerts WHERE deviceId=? AND type=? AND message=? AND createdAt>=?').get(id, type, message, receivedAt - REPEAT[type])) this.alert(id,type,message,receivedAt);
-      // A tracker's text reply belongs to the newest command still waiting within half an hour.
+      // A tracker's text reply belongs to the newest command sent within half an hour. A tracker that
+      // connects only every minute or two can answer after the command was given up on, and that
+      // reply still belongs to it rather than being thrown away.
       if (inserted && typeof info.result === 'string') {
-        const waiting = this.db.prepare("SELECT id,detail FROM commands WHERE deviceId=? AND status IN ('sent','queued','dispatching') AND detail LIKE 'CMD %' AND createdAt>=? ORDER BY createdAt DESC LIMIT 1").get(id,receivedAt-1800000);
-        if (waiting) this.db.prepare("UPDATE commands SET status='answered',detail=?,updatedAt=? WHERE id=?").run(`${waiting.detail} → Reply: ${info.result}`.slice(0,1000),this.now(),waiting.id);
+        const waiting = this.db.prepare("SELECT id,detail FROM commands WHERE deviceId=? AND status IN ('sent','queued','dispatching','timed out') AND detail LIKE 'CMD %' AND createdAt>=? ORDER BY createdAt DESC LIMIT 1").get(id,receivedAt-1800000);
+        if (waiting) this.db.prepare("UPDATE commands SET status='answered',detail=?,updatedAt=? WHERE id=?").run(`${waiting.detail.replace(' · No reply within five minutes.','')} → Reply: ${info.result}`.slice(0,1000),this.now(),waiting.id);
       }
       this.db.exec('COMMIT');
       return { accepted: true, duplicate: !inserted };
@@ -534,6 +536,6 @@ export class TrackingStore {
       this.db.prepare('UPDATE driver_links SET notified=1 WHERE hash=?').run(link.hash);
       this.alert(link.deviceId,'share_expired','Driver location link expired. Send a new link to keep tracking.');
     }
-    this.db.prepare("UPDATE commands SET status='timed out',detail='No new location within five minutes. This tracker may still be sending older saved locations first; check the device page for its last fix time.',updatedAt=? WHERE status IN ('queued','dispatching','sent') AND createdAt<?").run(this.now(),this.now()-300000);
+    this.db.prepare("UPDATE commands SET status='timed out',detail=CASE WHEN detail LIKE 'CMD %' THEN detail || ' · No reply within five minutes.' ELSE 'No new location within five minutes. This tracker may still be sending older saved locations first; check the device page for its last fix time.' END,updatedAt=? WHERE status IN ('queued','dispatching','sent') AND createdAt<?").run(this.now(),this.now()-300000);
   }
 }
