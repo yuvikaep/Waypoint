@@ -277,7 +277,7 @@ async function renderDevice(){
     <div class="actions"><button class="btn btn-ghost btn-sm" id="dp-edit">${i('pencil')}Edit / assign</button><button class="btn btn-ghost btn-sm" id="dp-setup">${i('info')}Setup</button><button class="btn btn-danger btn-sm" id="dp-delete">${i('trash-2')}Delete</button></div></div>`;
   const k=(icon:string,tone:string,label:string,value:string,sub='')=>`<div class="dp-kpi ${tone}"><span class="dp-kpi-ico">${i(icon)}</span><div><small>${label}</small><b>${value}</b>${sub?`<em>${sub}</em>`:''}</div></div>`;
   const fresh=(at:number|null)=>at!=null&&Date.now()-at<=10*60000?'ok':'warn';
-  $('#dp-kpi').innerHTML=k('map-pin',p?fresh(fixAt(d)):'warn','Last GPS fix',p?ago(fixAt(d)):'Never',p?time(fixAt(d)):'')
+  $('#dp-kpi').innerHTML=k('map-pin',p?fresh(fixAt(d)):'warn','Last location update',p?ago(fixAt(d)):'Never',p?time(fixAt(d)):'')
     +k('activity',d.online?'ok':'bad','Last heartbeat',ago(d.lastSeen),time(d.lastSeen))
     +k('gauge',p&&p.speed>=3?'ok':'','Speed',p?`${Math.round(p.speed)} km/h`:'—',p?.heading!=null?`heading ${Math.round(p.heading)}°`:'')
     +k('key-round',d.ignition?'ok':'','Ignition',d.ignition==null?'—':d.ignition?'On':'Off')
@@ -338,10 +338,10 @@ function renderHealth(data:Detail){
   // The newest fix is the device's own position; the packet list is mostly heartbeats and may not reach back to it.
   const fix=d.position&&d.position.valid!==0?d.position:lastFix||null;
   const fixAge=fix?Date.now()-fix.recordedAt:Infinity;
-  const fixState=!fix?['bad','No fix yet','The tracker has not sent a satellite location yet.']
-    :fixAge<=10*60000?['ok','Live GPS',`Fixed ${ago(fix.recordedAt).toLowerCase()} · ${time(fix.recordedAt)}`]
-    :d.online?['bad','No location being sent',`Connected and heartbeating, but the last position is from ${time(fix.recordedAt)} (${ago(fix.recordedAt).toLowerCase()}). Check the upload interval: TIMER's second value is the seconds between uploads with the ignition off, and anything under 5 stops them. Set it from <b>Setup &amp; commands</b>.`]
-    :['warn','Old fix',`${ago(fix.recordedAt)} · ${time(fix.recordedAt)}`];
+  const fixState=!fix?['bad','No location yet','The tracker has not sent a location yet.']
+    :fixAge<=10*60000?['ok','Live','']
+    :d.online?['bad','No location being sent',`Connected and heartbeating, but the last location update is from ${time(fix.recordedAt)} (${ago(fix.recordedAt).toLowerCase()}). Check the upload interval: TIMER's second value is the seconds between uploads with the ignition off, and anything under 5 stops them. Set it from <b>Setup &amp; commands</b>.`]
+    :['warn','Old location','The tracker is not connected, so this is its last known location.'];
   const sig=rssi?Number(rssi.v):null,sigTone=sig==null?'':sig>=3?'ok':sig>=2?'warn':'bad';
   const powerTone=data.power.connected==null?(charge?(charge.v?'ok':'bad'):''):data.power.connected?'ok':'bad';
   const row=(icon:string,label:string,value:string,note='',tone='')=>`<div class="hx-row"><span class="hx-ico ${tone}">${i(icon)}</span><div class="hx-body"><small>${label}</small><b>${value}</b>${note?`<em>${note}</em>`:''}</div></div>`;
@@ -360,7 +360,7 @@ function renderHealth(data:Detail){
       +row('siren','Tamper / alarms',alarms.length?alarms.map(a=>`<span class="chip bad plain">${esc(alarmWords(String(extraOf(a).alarm)))}</span>`).join(' '):'None reported',alarms.length?time(alarms[0].receivedAt):'',alarms.length?'bad':'ok')
       +(timeline?`<div class="hx-sub">Power log</div><ul class="hx-timeline">${timeline}</ul>`:''))}
     ${group('satellite','GPS',fixState[0],fixState[1],
-      row('locate-fixed','Fix status',fixState[1],fixState[2],fixState[0])
+      row('locate-fixed','Last location update',fix?`${ago(fix.recordedAt)} · ${time(fix.recordedAt)}`:'Not yet',fixState[2],fixState[0])
       +row('satellite','Satellites',(fix?.satellites??sats?.v)!=null?String(fix?.satellites??sats!.v):na,'','')
       +row('map-pin','Last known place',d.position?`<a href="${mapsLink(d.position)}" target="_blank" rel="noopener">${coords(d.position)}</a>`:'—','','')
       +row('gauge','HDOP / PDOP',`<span class="muted">Not sent by ${esc(d.model)}</span>`,'',''))}

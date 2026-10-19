@@ -464,4 +464,6 @@ export const HG:Record<string,string>={
   "Waiting for a call":"Call ka intezaar",
   "Called":"Call ho gayi",
   "Done":"Ho gaya",
+  "Last location update":"Aakhri location update",
+  "Last location update: {t}":"Aakhri location update: {t}",
 };

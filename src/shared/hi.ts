@@ -464,4 +464,6 @@ export const HI:Record<string,string>={
   "Waiting for a call":"कॉल का इंतज़ार",
   "Called":"कॉल हो गई",
   "Done":"हो गया",
+  "Last location update":"आख़िरी लोकेशन अपडेट",
+  "Last location update: {t}":"आख़िरी लोकेशन अपडेट: {t}",
 };
