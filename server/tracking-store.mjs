@@ -428,7 +428,7 @@ export class TrackingStore {
         }
         // A fresh fix proves a location arrived, not that a hardware command was acknowledged.
         this.db.prepare("UPDATE commands SET status='location received',detail='A new GPS fix arrived after the request.',updatedAt=? WHERE deviceId=? AND status IN ('queued','dispatching','sent') AND detail NOT LIKE 'CMD %' AND createdAt<=? AND createdAt>=?")
-          .run(this.now(),id,recordedAt,this.now()-120000);
+          .run(this.now(),id,recordedAt,this.now()-300000);
       }
       if (inserted && typeof info.rssi === 'number') this.db.prepare('UPDATE devices SET rssi=? WHERE id=?').run(Math.round(info.rssi),id);
       // Engine state is judged by when the packet ARRIVED (a GT06 heartbeat repeats an old fix time), movement by the fix time.
@@ -528,6 +528,6 @@ export class TrackingStore {
       this.db.prepare('UPDATE driver_links SET notified=1 WHERE hash=?').run(link.hash);
       this.alert(link.deviceId,'share_expired','Driver location link expired. Send a new link to keep tracking.');
     }
-    this.db.prepare("UPDATE commands SET status='timed out',detail='No fresh location received within two minutes.',updatedAt=? WHERE status IN ('queued','dispatching','sent') AND createdAt<?").run(this.now(),this.now()-120000);
+    this.db.prepare("UPDATE commands SET status='timed out',detail='No new location within five minutes. This tracker may still be sending older saved locations first; check the device page for its last fix time.',updatedAt=? WHERE status IN ('queued','dispatching','sent') AND createdAt<?").run(this.now(),this.now()-300000);
   }
 }

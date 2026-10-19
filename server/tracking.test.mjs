@@ -55,7 +55,7 @@ test('ping needs a fresh fix; cross-device acknowledgement is rejected and unans
   const other=store.createDevice({name:'Other',uniqueId:'other',model:'Mobile'}).device;
   assert.throws(()=>store.ingest(other.id,position({commandId:command.id})),/belong/);
   store.ingest(device.id,position({eventId:'answer',commandId:command.id}));assert.equal(store.device(device.id).command.status,'answered');
-  advance(1000);store.queue(device.id);advance(121000);store.tick();assert.equal(store.device(device.id).command.status,'timed out');
+  advance(1000);store.queue(device.id);advance(301000);store.tick();assert.equal(store.device(device.id).command.status,'timed out');
 });
 test('history pages without dropping equal-time or late packets and survives reopening',t=>{
   const dir=mkdtempSync(join(tmpdir(),'waypoint-test-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
