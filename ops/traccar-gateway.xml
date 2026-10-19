@@ -11,6 +11,10 @@
   <entry key='server.nettyThreads'>2</entry>
   <!-- Longer than the tracker's three-minute heartbeat, but not an indefinitely stale session. -->
   <entry key='gt06.timeout'>300</entry>
+  <!-- Concox trackers with the extended Login (a PT06 sends a 17-byte one carrying its time zone and
+       language) expect commands to carry a language field too. Without it the 0x80 command goes out,
+       the tracker never answers and resets the connection within seconds. -->
+  <entry key='gt06.language'>true</entry>
   <!-- Push every position and event to the local gateway worker so it syncs within about a second. -->
   <entry key='forward.type'>json</entry>
   <entry key='forward.url'>http://127.0.0.1:8183/position</entry>
