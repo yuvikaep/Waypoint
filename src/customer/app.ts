@@ -532,7 +532,7 @@ function renderAlerts(){
 }
 
 /* ---------- Trip maths shared by history and reports ---------- */
-const MOVING=6; // km/h: slower is GPS drift of a parked vehicle
+const MOVING=3; // km/h; a run also needs 100 m of real distance (GPS drift of a parked vehicle never gets there)
 type Segment={kind:'run'|'stop';from:number;to:number;km:number;at:Fix;end:Fix;maxSpeed:number};
 const STOP_MIN=5*60000;
 function km(a:{latitude:number;longitude:number},b:{latitude:number;longitude:number}){
@@ -542,9 +542,10 @@ function km(a:{latitude:number;longitude:number},b:{latitude:number;longitude:nu
 // Runs and stops (5 minutes or more) from the stored fixes; implied jumps over 150 km/h are GPS noise.
 function segments(track:Fix[]):Segment[]{
   const out:Segment[]=[];
+  const wired=track.some(q=>q.ignition===1); // an ignition wire: the engine must be on to count as running
   let cur:Segment|null=null;
   for(let n=0;n<track.length;n++){
-    const p=track[n],prev=track[n-1],kind:Segment['kind']=p.speed>=MOVING?'run':'stop';
+    const p=track[n],prev=track[n-1],kind:Segment['kind']=p.speed>=MOVING&&!(wired&&p.ignition===0)&&track.slice(Math.max(0,n-10),n).some(q=>km(q,p)>=0.1)?'run':'stop';
     let step=0;if(prev){const dt=(p.recordedAt-prev.recordedAt)/3600000,d=km(prev,p);if(dt>0&&d/dt<=150&&(kind==='run'||prev.speed>=MOVING||d>=0.1))step=d}
     if(!cur||cur.kind!==kind){if(cur){cur.to=p.recordedAt;cur.end=p;cur.km+=step;step=0}cur={kind,from:p.recordedAt,to:p.recordedAt,km:0,at:p,end:p,maxSpeed:p.speed};out.push(cur)}
     cur.to=p.recordedAt;cur.end=p;cur.km+=step;cur.maxSpeed=Math.max(cur.maxSpeed,p.speed);

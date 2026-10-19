@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
-import { MOVING_KMH, cleanExtra, alarmAlerts, hardBrake, overspeed, REPEAT, SPEED_REPEAT, shareHours, SHARE_STOPPED, shareSilent, PLACE_KINDS, parkBreach, cleanPhone } from './extra.mjs';
+import { MOVING_KMH, movingAt, lastRealMove, cleanExtra, alarmAlerts, hardBrake, overspeed, REPEAT, SPEED_REPEAT, shareHours, SHARE_STOPPED, shareSilent, PLACE_KINDS, parkBreach, cleanPhone } from './extra.mjs';
 import { cleanSetup, cleanVehicle } from './provision.mjs';
 import { addMonths, cleanCoupon, cleanRenewal, couponProblem, planState, priceWithCoupon, renewalFrom } from './billing.mjs';
 import { cleanGpsRequest, REQUEST_STATUS } from './buy.mjs';
@@ -362,14 +362,19 @@ export class TrackingStore {
     const fresh = position && position.valid !== 0 && this.now()-position.recordedAt < device.offlineSeconds*1000;
     // Hardware trackers (GT06 family) stop uploading fixes once parked and only send heartbeats,
     // so an online tracker whose last good fix was stationary is parked, not missing GPS.
-    const parked = !fresh && device.model !== 'Mobile' && position && position.valid !== 0 && position.speed < MOVING_KMH;
-    const status = !device.lastSeen ? 'Waiting' : !online ? 'Offline' : parked ? 'Stopped' : !fresh ? 'No GPS fix' : position.speed >= MOVING_KMH ? 'Moving' : 'Stopped';
-    const command = this.db.prepare('SELECT * FROM commands WHERE deviceId=? ORDER BY createdAt DESC,rowid DESC LIMIT 1').get(id) || null;
-    // Ignition comes from whichever packet last reported it, not only the newest fix.
+    const recent = position && position.valid !== 0 ? this.db.prepare('SELECT recordedAt,latitude,longitude,speed FROM positions WHERE deviceId=? AND valid=1 ORDER BY recordedAt DESC,id DESC LIMIT 120').all(id) : [];
+    // Ignition comes from whichever packet last reported it, not only the newest fix. A vehicle with an ignition
+    // wire (ignition has been seen ON at least once) is only running while the ignition is on.
     const ignition = this.db.prepare('SELECT ignition FROM positions WHERE deviceId=? AND ignition IS NOT NULL ORDER BY receivedAt DESC,id DESC LIMIT 1').get(id)?.ignition ?? null;
+    const wired = ignition !== null && (Number(ignition) === 1 || !!this.db.prepare('SELECT 1 AS x FROM positions WHERE deviceId=? AND ignition=1 LIMIT 1').get(id));
+    const movingNow = !!position && position.valid !== 0 && movingAt(recent, 0, distance) && (!wired || Number(ignition) === 1);
+    const parked = !fresh && device.model !== 'Mobile' && position && position.valid !== 0 && !movingNow;
+    const status = !device.lastSeen ? 'Waiting' : !online ? 'Offline' : parked ? 'Stopped' : !fresh ? 'No GPS fix' : movingNow ? 'Moving' : 'Stopped';
+    const command = this.db.prepare('SELECT * FROM commands WHERE deviceId=? ORDER BY createdAt DESC,rowid DESC LIMIT 1').get(id) || null;
     let stoppedSince = null;
     if (status === 'Stopped') {
-      const moved = this.db.prepare('SELECT MAX(recordedAt) AS t FROM positions WHERE deviceId=? AND valid=1 AND speed>=?').get(id,MOVING_KMH)?.t ?? null;
+      // Real movement in the recent fixes; beyond that window only clearly fast fixes count (drift never reaches 15 km/h).
+      const moved = lastRealMove(recent, distance)?.recordedAt ?? this.db.prepare('SELECT MAX(recordedAt) AS t FROM positions WHERE deviceId=? AND valid=1 AND speed>=15').get(id)?.t ?? null;
       stoppedSince = this.db.prepare('SELECT MIN(recordedAt) AS t FROM positions WHERE deviceId=? AND recordedAt>?').get(id, moved ?? -1)?.t ?? position.recordedAt;
     }
     return { ...device, position, online, fresh: !!fresh, status, command, ignition, stoppedSince };

@@ -260,7 +260,7 @@ test('GT06 ignition follows the heartbeat ACC bit and parked time starts after t
   const device=store.createDevice({name:'TEST G17',model:'GT06',uniqueId:'867111062240499',offlineSeconds:600}).device;
   const bridge=new TraccarBridge(store,{url:'http://gateway',token:'x',fetcher:async()=>{throw Error('unused')}});
   let id=100;
-  const send=async(type,attrs,speed)=>{const at=new Date(store.now()).toISOString();await bridge.ingest(device.id,{id:id++,deviceId:4,protocol:'gt06',valid:true,fixTime:at,serverTime:at,latitude:25.27,longitude:82.83,speed,course:0,attributes:{type,...attrs}});store.seen(device.id,store.now());};
+  const send=async(type,attrs,speed)=>{const at=new Date(store.now()).toISOString();await bridge.ingest(device.id,{id:id++,deviceId:4,protocol:'gt06',valid:true,fixTime:at,serverTime:at,latitude:25.27+(speed>0?0.0015*(id-100):0),longitude:82.83,speed,course:0,attributes:{type,...attrs}});store.seen(device.id,store.now());};
   // Driving: heartbeat says ACC on, location packets from this clone claim ignition false.
   await send(0x13,{ignition:true,status:198},0);advance(20000);
   await send(0x12,{ignition:false,sat:15},10);advance(20000);
@@ -485,14 +485,28 @@ test('parking lock: an engine-on heartbeat that repeats an old fix time still al
   assert.equal(locks().length,1);assert.match(locks()[0].message,/engine started/);
 });
 
-test('GPS drift of a parked tracker (1-4 km/h) does not restart "stopped since"; real movement does',t=>{
+test('running needs 3 km/h AND 100 m of real distance (and the ignition on when wired); drift does not restart "stopped since"',t=>{
   const {store,device,position,advance}=fixture(t);
-  let n=0;const fix=(speed,gap)=>{advance(gap);store.ingest(device.id,position({eventId:`d${n++}`,recordedAt:new Date(store.now()).toISOString(),speed}))};
-  fix(40,60000);fix(0,60000);const stopAt=store.now();
-  fix(0,300000);fix(4,60000);fix(0,60000);fix(3,60000);fix(0,60000);
-  assert.equal(store.device(device.id).stoppedSince,stopAt,'drift spikes keep the original stop time');
-  assert.equal(store.device(device.id).status,'Stopped');
-  fix(25,60000);assert.equal(store.device(device.id).status,'Moving');
-  fix(0,60000);const second=store.now();fix(0,60000);
-  assert.equal(store.device(device.id).stoppedSince,second,'a real trip moves the stop time forward');
+  let n=0,lat=18.52;
+  const fix=(speed,gap,{move=0,ignition}={})=>{advance(gap);lat+=move;store.ingest(device.id,position({eventId:`d${n++}`,recordedAt:new Date(store.now()).toISOString(),latitude:lat,speed,...(ignition===undefined?{}:{ignition})}))};
+  const dev=()=>store.device(device.id);
+  fix(0,60000);const stopAt=store.now();
+  fix(0,300000);fix(5,60000,{move:0.0003});fix(6,60000,{move:-0.0003});fix(4,60000);fix(0,60000);
+  assert.equal(dev().stoppedSince,stopAt,'drift of ~30 m at 4-6 km/h is not running');assert.equal(dev().status,'Stopped');
+  fix(8,60000,{move:0.0012});fix(8,60000,{move:0.0012});
+  assert.equal(dev().status,'Moving','130 m per fix at 8 km/h is running');
+  fix(0,60000);fix(0,60000);fix(0,60000);const second=store.now();fix(0,60000);
+  assert.equal(dev().stoppedSince<=second,true);assert.equal(dev().status,'Stopped');
+  // 2 km/h is too slow even with distance
+  fix(2,60000,{move:0.002});assert.equal(dev().status,'Stopped');
+});
+
+test('a vehicle with an ignition wire is running only while the ignition is on',t=>{
+  const {store,device,position,advance}=fixture(t);
+  let n=0,lat=18.52;
+  const fix=(speed,ignition)=>{advance(60000);lat+=0.0015;store.ingest(device.id,position({eventId:`w${n++}`,recordedAt:new Date(store.now()).toISOString(),latitude:lat,speed,ignition}))};
+  fix(0,false);fix(0,true);fix(20,true);fix(20,true);
+  assert.equal(store.device(device.id).status,'Moving');
+  fix(20,false);fix(20,false);
+  assert.equal(store.device(device.id).status,'Stopped','ignition off with a wire means not running (towed or noise)');
 });

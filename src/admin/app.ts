@@ -279,7 +279,7 @@ async function renderDevice(){
   const fresh=(at:number|null)=>at!=null&&Date.now()-at<=10*60000?'ok':'warn';
   $('#dp-kpi').innerHTML=k('map-pin',p?fresh(fixAt(d)):'warn','Last location update',p?ago(fixAt(d)):'Never',p?time(fixAt(d)):'')
     +k('activity',d.online?'ok':'bad','Last heartbeat',ago(d.lastSeen),time(d.lastSeen))
-    +k('gauge',p&&p.speed>=6?'ok':'','Speed',p?`${Math.round(p.speed)} km/h`:'—',p?.heading!=null?`heading ${Math.round(p.heading)}°`:'')
+    +k('gauge',p&&p.speed>=3?'ok':'','Speed',p?`${Math.round(p.speed)} km/h`:'—',p?.heading!=null?`heading ${Math.round(p.heading)}°`:'')
     +k('key-round',d.ignition?'ok':'','Ignition',d.ignition==null?'—':d.ignition?'On':'Off')
     +k('battery',battery!=null&&Number(battery)<20?'bad':'','Battery',battery!=null?`${Math.round(Number(battery))}%`:'—')
     +k('satellite','','Satellites',(p?.satellites??sats)!=null?String(p?.satellites??sats):'—',`last packet: ${kind[0].toLowerCase()}`);
