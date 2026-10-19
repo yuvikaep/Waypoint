@@ -316,7 +316,7 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
           if(action==='command'&&method==='POST'){
             await limited(`command:${id}`,10);
             const input=await body(req),text=commandText(device.model,String(input.action||''),input);
-            try{const sent=await bridge.sendText(device,text);return json(res,200,await store.recordCommand(id,sent,`CMD ${text} sent over GPRS.`))}
+            try{const sent=await bridge.sendText(device,text);return json(res,200,await store.recordCommand(id,sent,sent==='queued'?`CMD ${text} waiting for the tracker's next connection.`:`CMD ${text} sent over GPRS.`))}
             catch(e){await store.recordCommand(id,'failed',`CMD ${text} not sent: ${e.message}`);fail(409,e.message)}
           }
         }

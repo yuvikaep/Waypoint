@@ -106,7 +106,7 @@ export async function gatewayRequest(req,res,store,client,bridge){
     for(const incoming of data.devices){
       try{const fresh=await store.raw(incoming.id);if(fresh.model!=='Mobile')await provisionTick(store,bridge,fresh)}
       catch(e){console.error('Provisioning step failed:',e.message)}
-    // Off by default: a PT06 hangs up within seconds of connecting and never answers WHERE# over GPRS (only by SMS),
+    // Off by default: a PT06 hangs up about a minute after each connection and has not answered WHERE# over GPRS (only by SMS),
     // so asking only fills the command log. Set GPS_LOCATE_POLL=true for trackers that do answer.
     if(process.env.GPS_LOCATE_POLL==='true')for(const incoming of data.devices){
       try{const fresh=await store.raw(incoming.id);if(fresh.model!=='Mobile')await locationTick(store,bridge,fresh)}

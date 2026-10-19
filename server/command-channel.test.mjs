@@ -86,3 +86,51 @@ test('a command keeps its own text when it goes unanswered, and a late reply sti
   assert.equal(row.status, 'answered');
   assert.equal(row.detail, 'CMD STATUS# sent over GPRS. → Reply: Battery:83%,GPRS:Link Up,GSM Signal:4');
 });
+
+test('a tracker that hangs up every minute gets its command right after its next Login', async t => {
+  const { mkdtempSync, writeFileSync, appendFileSync, rmSync } = await import('node:fs');
+  const { join } = await import('node:path'); const { tmpdir } = await import('node:os');
+  const dir = mkdtempSync(join(tmpdir(), 'wp-held-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const log = join(dir, 'tracker-server.log');
+  const stamp = ms => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
+  const login = '78781101035621860643732300002122082302f00d0a';
+  let clock = Date.parse('2026-10-19T13:18:51Z');
+  // The PT06 pattern from the receiver log: connect, Login, heartbeat, and about a minute later it hangs up.
+  writeFileSync(log, [
+    `${stamp(clock - 62000)}  INFO: [Tabc00001] connected`,
+    `${stamp(clock - 60000)}  INFO: [Tabc00001: gt06 < 106.222.244.83] ${login}`,
+    `${stamp(clock - 60000)}  INFO: [Tabc00001: gt06 > 106.222.244.83] 7878050108233e0d0d0a`,
+    `${stamp(clock - 120000)}  INFO: [Tabc00000] disconnected`,
+    `${stamp(clock - 120000)}  INFO: [Tabc00000: gt06 < 106.222.240.1] ${login}`,
+  ].join('\n') + '\n');
+  const sent = [];
+  const secret = 'cloud-command-test-secret-32-characters';
+  let ticks = 0;
+  const server = createCommandChannel({
+    secret, traccarUrl: 'http://127.0.0.1:8082', traccarToken: 'receiver-only-token', logFile: log, now: () => clock,
+    pollMs: 0,
+    // Each poll the clock moves on a second; after a few the tracker reconnects and logs in again.
+    wait: async () => {
+      clock += 1000; ticks++;
+      if (ticks === 3) appendFileSync(log, `${stamp(clock)}  INFO: [Tabc00002] connected\n${stamp(clock)}  INFO: [Tabc00002: gt06 < 106.222.241.79] ${login}\n`);
+    },
+    fetcher: async (url, options) => {
+      if (url.includes('/devices?')) return Response.json([{ id: 3, uniqueId: '356218606437323', status: 'online', lastUpdate: new Date(clock).toISOString() }]);
+      if (url.endsWith('/commands/send')) { sent.push({ at: clock, body: JSON.parse(options.body) }); return Response.json({ id: 12 }); }
+      throw Error('Unexpected receiver route ' + url);
+    },
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
+  const asked = clock;
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/commands/send`, {
+    method: 'POST', headers: { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ deviceId: 3, type: 'custom', textChannel: false, attributes: { data: 'STATUS#' } }),
+  });
+  assert.equal(response.status, 202, 'held, not sent into a connection about to close');
+  assert.deepEqual(sent, []);
+  for (let i = 0; i < 20 && !sent.length; i++) await new Promise(r => setTimeout(r, 10));
+  assert.equal(sent.length, 1, 'sent once the tracker logged in again');
+  assert.equal(sent[0].body.attributes.data, 'STATUS#');
+  assert.ok(sent[0].at >= asked + 3000, 'only after the next Login');
+});

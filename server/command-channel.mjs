@@ -55,7 +55,19 @@ export async function trackerPackets(file,uniqueId,limit=200,maxBytes=3_000_000)
   return out.slice(-limit);
 }
 const digest=value=>createHash('sha256').update(value).digest();
-export function createCommandChannel({secret,traccarUrl,traccarToken,fetcher=fetch,now=()=>Date.now(),logFile='/opt/traccar/logs/tracker-server.log'}){
+// A tracker that hangs up about a minute after every connection (PT06) is short-lived: a command sent
+// into one of its connections usually lands near the end, and it hangs up before it can answer. Such
+// a command is held until the tracker's next Login and sent right then, at the start of a fresh
+// connection with the whole minute left to reply. A tracker that keeps its connection gets it at once.
+const SHORT_LIVED_MS=180000,HOLD_MS=150000;
+export async function nextLogin(logFile,uniqueId,since,{now=()=>Date.now(),wait=ms=>new Promise(r=>setTimeout(r,ms)),pollMs=1000,holdMs=HOLD_MS}={}){
+  for(const until=now()+holdMs;now()<until;await wait(pollMs)){
+    const recent=await trackerPackets(logFile,uniqueId,40);
+    if(recent.some(p=>p.direction==='in'&&p.tag==='Login'&&Date.parse(p.at)>=since))return true;
+  }
+  return false;
+}
+export function createCommandChannel({secret,traccarUrl,traccarToken,fetcher=fetch,now=()=>Date.now(),logFile='/opt/traccar/logs/tracker-server.log',wait,pollMs}){
   if(!secret||secret.length<24||!traccarToken)throw Error('Command channel credentials are required.');
   if(traccarUrl!=='http://127.0.0.1:8082')throw Error('Command channel must use the private local receiver.');
   const reply=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(data));};
@@ -101,8 +113,16 @@ export function createCommandChannel({secret,traccarUrl,traccarToken,fetcher=fet
           // open socket. Approved maintenance text is harmless, so it may wait in the receiver's queue and
           // goes out at the next connection, as long as the tracker has been heard from in the last 10 minutes.
           if(!device||!Number.isFinite(lastUpdate)||now()-lastUpdate>600000||lastUpdate>now()+60000)fail(409,'No signal from this tracker in the last 10 minutes, so the command was not queued. Send it by SMS instead.');
-          const result=await request('/commands/send',{method:'POST',body:JSON.stringify({deviceId:id,type:'custom',textChannel:false,attributes:{data:input.attributes.data}})});
-          return reply(res,result.status,result.data);
+          const body=JSON.stringify({deviceId:id,type:'custom',textChannel:false,attributes:{data:input.attributes.data}});
+          const recent=device.uniqueId?await trackerPackets(logFile,device.uniqueId,40):[];
+          const shortLived=recent.some(p=>p.tag==='disconnected'&&now()-Date.parse(p.at)<SHORT_LIVED_MS);
+          if(!shortLived){const result=await request('/commands/send',{method:'POST',body});return reply(res,result.status,result.data);}
+          // Answer the caller now; the command itself goes out right after the tracker's next Login.
+          const since=now()-1000;
+          void nextLogin(logFile,device.uniqueId,since,{now,wait,pollMs})
+            .then(()=>request('/commands/send',{method:'POST',body}))
+            .catch(error=>console.error('Held command could not be sent:',error.message));
+          return reply(res,202,{queued:true,deliver:'next login'});
         }
         // Location queries are only useful right now: never queue them for a tracker that is not connected.
         if(!device||device.status!=='online'||!Number.isFinite(lastUpdate)||now()-lastUpdate>300000||lastUpdate>now()+60000)fail(409,'Tracker is offline or has no recent connection. No command was queued.');
