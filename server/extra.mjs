@@ -131,6 +131,10 @@ export function movingAt(list, k, distance) {
     window.push(list[j]);
   }
   if (!window.length) return false;
+  // A vehicle that is going somewhere has moved since its last fix. Without this, a vehicle that has
+  // parked keeps looking like it is running, because standing still adds nothing to the path walked
+  // and the drive that brought it here is still in view.
+  if (distance(at(a), at(window[0])) < MOVE_M / 5) return false;
   // One jump says nothing, so read a few fixes back — as many as there are, where that is fewer.
   // With fewer than three behind it there is not enough to tell a jump from a start, and then only
   // a move too long to be a jump at all counts.

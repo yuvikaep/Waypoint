@@ -4,5 +4,6 @@ type TrackFix = Point & { recordedAt: number; speed: number; ignition?: number |
 type Seg = { kind: 'run' | 'stop'; from: number; to: number; km: number; at: TrackFix; end: TrackFix; maxSpeed: number };
 export function km(a: Point, b: Point): number;
 export function metres(a: Point, b: Point): number;
+export function trackOf(fixes: TrackFix[]): TrackFix[];
 export function segmentsOf(track: TrackFix[], options?: { keepLast?: boolean }): Seg[];
 export function standingSince(fixes: TrackFix[]): number | null;

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { TrackingStore } from './tracking-store.mjs';
 import { regularStops, stopsOf, suggestedStops } from './stops.mjs';
 import { runningAt } from './extra.mjs';
-import { standingSince } from './segments.mjs';
+import { segmentsOf, standingSince } from './segments.mjs';
 
 const MIN = 60000, DAY = 86400000, base = Date.parse('2026-10-01T04:00:00Z');
 const pump = { latitude: 25.487, longitude: 82.798 }, dhaba = { latitude: 25.52, longitude: 82.79 };
@@ -13,7 +13,7 @@ const day = (d, offset = 0) => {
   return [
     { id: 1, recordedAt: t, latitude: 25.45, longitude: 82.80, speed: 40 },
     { id: 2, recordedAt: t + 10 * MIN, latitude: pump.latitude + offset, longitude: pump.longitude, speed: 0 },
-    { id: 3, recordedAt: t + 30 * MIN, latitude: pump.latitude + 0.0004, longitude: pump.longitude, speed: 30 },
+    { id: 3, recordedAt: t + 30 * MIN, latitude: pump.latitude + 0.0004 + offset, longitude: pump.longitude, speed: 30 },
     { id: 4, recordedAt: t + 40 * MIN, ...dhaba, speed: 0 },
     { id: 5, recordedAt: t + 44 * MIN, latitude: 25.53, longitude: 82.79, speed: 35 },
   ];
@@ -77,4 +77,30 @@ test('one running rule: the card, the timeline and the reports give the same ans
     .map((d, n) => fix(8 + n, 25.27 + d, 82.83 + (n % 3) * 0.0002, [5, 6, 4, 5, 6, 0][n]))];
   assert.equal(standingSince([...later].reverse()), since, 'more jumping does not restart the clock');
   assert.equal(standingSince([]), null);
+});
+
+test('a jumpy tracker standing still: the card and the timeline agree on one long stop', () => {
+  const t = Date.parse('2026-10-19T09:00:00Z');
+  const rows = [];
+  let id = 1, at = t;
+  const add = (lat, lon, speed, minutes = 1) => {
+    rows.push({ id: id++, recordedAt: at, latitude: lat, longitude: lon, speed, valid: 1 });
+    at += minutes * 60000;
+  };
+  // Drives in from 3 km away, then stands for three and a half hours.
+  add(25.30, 82.86, 42); add(25.29, 82.85, 38); add(25.2805, 82.838, 24);
+  const arrived = at;
+  for (let n = 0; n < 210; n++) {
+    // Most minutes it repeats its last fix; now and then the GPS throws it a few hundred metres and
+    // brings it straight back, and the tracker reports 4-6 km/h while it does.
+    if (n % 37 === 11) add(25.2735, 82.8301, 5);
+    else if (n % 23 === 7) add(25.2772, 82.8355, 6);
+    else add(25.27, 82.83, 0);
+  }
+  const stops = segmentsOf(rows).filter(s => s.kind === 'stop');
+  assert.equal(stops.length, 1, 'the jumps are not trips, so there is one stop');
+  assert.equal(stops[0].from, arrived, 'standing starts when it arrived');
+  // The card reads the same stop: 3 h 29 min, not a fresh clock after the last jump.
+  assert.equal(standingSince([...rows].reverse()), arrived);
+  assert.equal(Math.round((at - 60000 - arrived) / 60000), 209);
 });

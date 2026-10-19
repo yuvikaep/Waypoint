@@ -260,7 +260,9 @@ test('GT06 ignition follows the heartbeat ACC bit and parked time starts after t
   const device=store.createDevice({name:'TEST G17',model:'GT06',uniqueId:'867111062240499',offlineSeconds:600}).device;
   const bridge=new TraccarBridge(store,{url:'http://gateway',token:'x',fetcher:async()=>{throw Error('unused')}});
   let id=100;
-  const send=async(type,attrs,speed)=>{const at=new Date(store.now()).toISOString();await bridge.ingest(device.id,{id:id++,deviceId:4,protocol:'gt06',valid:true,fixTime:at,serverTime:at,latitude:25.27+(speed>0?0.0015*(id-100):0),longitude:82.83,speed,course:0,attributes:{type,...attrs}});store.seen(device.id,store.now());};
+  // A vehicle that has driven stays where it stopped; it does not snap back to where it set off.
+  let lat=25.27;
+  const send=async(type,attrs,speed)=>{const at=new Date(store.now()).toISOString();if(speed>0)lat+=0.0015;await bridge.ingest(device.id,{id:id++,deviceId:4,protocol:'gt06',valid:true,fixTime:at,serverTime:at,latitude:lat,longitude:82.83,speed,course:0,attributes:{type,...attrs}});store.seen(device.id,store.now());};
   // Driving: heartbeat says ACC on, location packets from this clone claim ignition false.
   await send(0x13,{ignition:true,status:198},0);advance(20000);
   await send(0x12,{ignition:false,sat:15},10);advance(20000);
