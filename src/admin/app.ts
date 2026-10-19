@@ -371,6 +371,14 @@ const SMS_TEXT:Record<string,(i:Record<string,string>)=>string>={
   accReport:i=>`ACCREP,${i.on==='false'?'OFF':'ON'}#`,timezone:i=>`GMT,${i.west==='true'?'W':'E'},${Number(i.hours)},${Number(i.minutes)||0}#`,interval:i=>`TIMER,${i.moving},${i.parked}#`,
   apn:i=>`APN,${i.apn}${i.user||i.password?`,${i.user||''},${i.password||''}`:''}#`,
   server:i=>`SERVER,${/^\d+(\.\d+){3}$/.test(i.host)?0:1},${i.host},${i.port},0#`};
+// A command row reads as the command itself, then what happened to it; older rows that are only a
+// message (no "CMD " prefix) are shown as they are.
+const commandParts=(detail:string)=>{
+  if(!detail.startsWith('CMD '))return {cmd:detail,rest:''};
+  const text=detail.slice(4),space=text.indexOf(' ');
+  return space<0?{cmd:text,rest:''}:{cmd:text.slice(0,space),rest:text.slice(space+1)};
+};
+const COMMAND_CHIP:Record<string,[string,string]>={queued:['Waiting','neutral'],dispatching:['Sending','neutral'],sent:['Sent','neutral'],answered:['Reply received','ok'],'timed out':['No reply','idle'],failed:['Failed','bad'],'location received':['Location received','ok']};
 function renderCommands(data:Detail){
   const d=data.device,gt06=['GT06','GT06N','PT06'].includes(d.model);
   const online=!!d.lastSeen&&Date.now()-d.lastSeen<=600000;
@@ -386,7 +394,7 @@ function renderCommands(data:Detail){
       <form class="form" data-form="timezone"><h3>Time zone</h3><p class="hint">GPS times come out wrong by the offset if this does not match what the receiver expects. India: East, 5 hours 30 minutes (IST).</p><div class="form-row"><label class="field">Hours<input class="input" name="hours" type="number" min="0" max="12" value="5" required></label><label class="field">Minutes<select class="input" name="minutes"><option>0</option><option>15</option><option selected>30</option><option>45</option></select></label></div><label class="field">Direction<select class="input" name="west"><option value="false">East (India)</option><option value="true">West</option></select></label><div class="toolbar"><button class="btn btn-primary btn-sm" type="submit">Send</button><button class="btn btn-ghost btn-sm" type="button" data-sms>Copy SMS</button></div></form>
       <form class="form" data-form="accReport"><h3>Ignition change report</h3><label class="field">Report when ignition changes<select class="input" name="on"><option value="true">On</option><option value="false">Off</option></select></label><div class="toolbar"><button class="btn btn-primary btn-sm" type="submit">Send</button><button class="btn btn-ghost btn-sm" type="button" data-sms>Copy SMS</button></div></form></div>`:''}
     <h3 style="margin-top:16px">Command log</h3><p class="hint">A PT06 opens a new connection about every minute and hangs up at the end of it. A command sent while one is open usually lands near the end, before the tracker can answer, so the server holds it and sends it right after the tracker's next Login. "Waiting for the next connection" means it is held; the reply, if the tracker sends one, appears on the same line. SMS always works as a fallback.</p>
-    <div id="cmd-log">${data.commands.length?data.commands.map(c=>`<div class="alert-item"><div class="body"><b class="mono">${esc(c.detail.replace(/^CMD /,'').split(' sent over')[0].split(' not sent')[0])}</b><p>${esc(c.detail.replace(/^CMD /,'').replace(/^.*?(sent over GPRS\.|not sent:)/,'$1'))}</p><span class="small muted">${time(c.createdAt)}</span></div><span class="chip ${c.status==='answered'?'ok':c.status==='failed'?'bad':'neutral'} plain">${esc(c.status==='sent'?'sent · waiting for reply':c.status==='queued'?'queued · waiting for the tracker to connect':c.status)}</span></div>`).join(''):'<p class="muted small">No commands sent yet.</p>'}</div>`;
+    <div id="cmd-log">${data.commands.length?data.commands.map(c=>{const {cmd,rest}=commandParts(c.detail),[label,tone]=COMMAND_CHIP[c.status]||[c.status,'neutral'];return `<div class="alert-item cmd-row"><div class="body"><div class="cmd-head"><b class="mono">${esc(cmd)}</b><span class="chip ${tone} plain">${esc(label)}</span></div>${rest?`<p>${esc(rest)}</p>`:''}<span class="small muted">${time(c.createdAt)}</span></div></div>`}).join(''):'<p class="muted small">No commands sent yet.</p>'}</div>`;
   const run=async(action:string,input:Record<string,unknown>={},label='')=>{
     if(action==='reboot'&&!confirm(`Reboot ${d.name}? It disconnects for about a minute.`))return;
     try{await post(`/admin/devices/${d.id}/command`,{action,...input});toast(`${label||action} sent. The tracker's reply appears in the log.`)}catch(e){toast((e as Error).message,true)}

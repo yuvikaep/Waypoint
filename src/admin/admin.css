@@ -147,3 +147,8 @@
   .dp-tabs{top:64px}
   .ax .dp-head .actions{width:100%}
 }
+
+/* Command log: the command and its state on one line, what happened underneath */
+.cmd-row .cmd-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.cmd-row .cmd-head b{word-break:break-all}
+.cmd-row p{margin:4px 0 2px;word-break:break-word}
