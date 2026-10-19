@@ -485,20 +485,24 @@ test('parking lock: an engine-on heartbeat that repeats an old fix time still al
   assert.equal(locks().length,1);assert.match(locks()[0].message,/engine started/);
 });
 
-test('running needs 3 km/h AND 100 m of real distance (and the ignition on when wired); drift does not restart "stopped since"',t=>{
+test('running means really going somewhere, not a GPS wandering on the spot; drift does not restart "stopped since"',t=>{
   const {store,device,position,advance}=fixture(t);
   let n=0,lat=18.52;
   const fix=(speed,gap,{move=0,ignition}={})=>{advance(gap);lat+=move;store.ingest(device.id,position({eventId:`d${n++}`,recordedAt:new Date(store.now()).toISOString(),latitude:lat,speed,...(ignition===undefined?{}:{ignition})}))};
   const dev=()=>store.device(device.id);
   fix(0,60000);const stopAt=store.now();
   fix(0,300000);fix(5,60000,{move:0.0003});fix(6,60000,{move:-0.0003});fix(4,60000);fix(0,60000);
-  assert.equal(dev().stoppedSince,stopAt,'drift of ~30 m at 4-6 km/h is not running');assert.equal(dev().status,'Stopped');
+  assert.equal(dev().stoppedSince,stopAt,'a GPS wandering ~30 m back and forth at 4-6 km/h is not running');assert.equal(dev().status,'Stopped');
   fix(8,60000,{move:0.0012});fix(8,60000,{move:0.0012});
   assert.equal(dev().status,'Moving','130 m per fix at 8 km/h is running');
+  // Pulling out: the vehicle has to get clear of how far this tracker's GPS wanders, then it is running.
+  fix(0,60000);fix(0,60000);const parked=store.now();fix(0,60000);
+  assert.equal(dev().status,'Stopped');assert.equal(dev().stoppedSince<=parked,true);
+  fix(4,30000,{move:0.0004});assert.equal(dev().status,'Moving','44 m clear of where it stood at 4 km/h is running');
   fix(0,60000);fix(0,60000);fix(0,60000);const second=store.now();fix(0,60000);
   assert.equal(dev().stoppedSince<=second,true);assert.equal(dev().status,'Stopped');
-  // 2 km/h is too slow even with distance
-  fix(2,60000,{move:0.002});assert.equal(dev().status,'Stopped');
+  // Below walking pace is not driving, however far the coordinates jump.
+  fix(1,60000,{move:0.002});assert.equal(dev().status,'Stopped');
 });
 
 test('a vehicle with an ignition wire is running only while the ignition is on',t=>{

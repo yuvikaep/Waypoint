@@ -1,14 +1,17 @@
 // Daily vehicle summaries built from stored fixes. Works with both stores (sync SQLite or async Postgres).
 const GAP = 15 * 60000;          // longer silences are not counted as driving or idling
 const MAX_KMH = 150;             // faster implied jumps are GPS noise, not distance
-import { MOVING_KMH } from './extra.mjs';
+import { runningAt } from './extra.mjs';
+// A single step this long is real even where the running rule has not kicked in yet; shorter
+// steps only count as distance while the vehicle is running, so jitter never adds up.
 const DRIFT_KM = 0.1;
 
 function km(a, b) {
   const rad = Math.PI / 180, h = Math.sin((b.latitude - a.latitude) * rad / 2) ** 2
     + Math.cos(a.latitude * rad) * Math.cos(b.latitude * rad) * Math.sin((b.longitude - a.longitude) * rad / 2) ** 2;
   return 12742 * Math.asin(Math.sqrt(h));
-}
+}const metres = (a, b) => km(a, b) * 1000;
+
 
 // Local calendar day for a timestamp, given the viewer's Date#getTimezoneOffset (minutes).
 const dayOf = (at, tzOffset) => new Date(at - tzOffset * 60000).toISOString().slice(0, 10);
@@ -31,7 +34,9 @@ export function summarize(points, tzOffset = -330) {
     const a = fixes[i - 1], dt = b.recordedAt - a.recordedAt;
     if (dt <= 0 || dt > GAP) continue;
     const dist = km(a, b), from = day(a.recordedAt);
-    const moving = a.speed >= MOVING_KMH || b.speed >= MOVING_KMH;
+    // The same running rule the vehicle card and the history timeline use, so the three agree:
+    // going somewhere, not a GPS wandering on the spot. movingAt reads newest first.
+    const moving = runningAt(fixes, i, metres) || runningAt(fixes, i - 1, metres);
     // A parked tracker's position wanders a few metres; that is drift, not distance.
     if (dist / (dt / 3600000) <= MAX_KMH && (moving || dist >= DRIFT_KM)) from.distanceKm += dist;
     if (moving) {

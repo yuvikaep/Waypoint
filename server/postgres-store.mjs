@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { PgAdapter } from './pg-adapter.mjs';
-import { MOVING_KMH, movingAt, lastRealMove, cleanExtra, alarmAlerts, hardBrake, overspeed, REPEAT, SPEED_REPEAT, shareHours, SHARE_STOPPED, shareSilent, PLACE_KINDS, parkBreach, cleanPhone } from './extra.mjs';
+import { MOVING_KMH, movingAt, standingSince, cleanExtra, alarmAlerts, hardBrake, overspeed, REPEAT, SPEED_REPEAT, shareHours, SHARE_STOPPED, shareSilent, PLACE_KINDS, parkBreach, cleanPhone } from './extra.mjs';
 import { cleanSetup, cleanVehicle } from './provision.mjs';
 import { addMonths, cleanCoupon, cleanRenewal, couponProblem, planState, priceWithCoupon, renewalFrom } from './billing.mjs';
 import { cleanGpsRequest, REQUEST_STATUS } from './buy.mjs';
@@ -327,9 +327,10 @@ export class PostgresTrackingStore {
     const command = (await this.db.prepare('SELECT * FROM commands WHERE deviceId=? ORDER BY createdAt DESC,rowid DESC LIMIT 1').get(id)) || null;
     let stoppedSince = null;
     if (status === 'Stopped') {
-      const moved = lastRealMove(recent, distance)?.recordedAt ?? (await this.db.prepare('SELECT MAX(recordedAt) AS t FROM positions WHERE deviceId=? AND valid=1 AND speed>=15').get(id))?.t ?? null;
-      const first = (await this.db.prepare('SELECT MIN(recordedAt) AS t FROM positions WHERE deviceId=? AND recordedAt>?').get(id, moved ?? -1))?.t;
-      stoppedSince = Number(first ?? position.recordedAt);
+      // Standing time is answered from where the vehicle is, not from its speed readings: walk back
+      // over the fixes until one is away from this spot, which is the moment it arrived.
+      const here = (await this.db.prepare('SELECT recordedAt,latitude,longitude,valid FROM positions WHERE deviceId=? ORDER BY recordedAt DESC,id DESC LIMIT 5000').all(id));
+      stoppedSince = standingSince(here, distance) ?? position.recordedAt;
     }
     return { ...device, position, online, fresh: !!fresh, status, command, ignition, stoppedSince };
   }

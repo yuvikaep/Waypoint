@@ -1,7 +1,7 @@
 // Places where a customer's vehicles stop again and again (petrol pump, dhaba, loading point...),
 // worked out from stored fixes so the customer can name them. Works with both stores.
 const STOP_MIN = 10 * 60000;    // a stop counts from 10 minutes standing still
-import { MOVING_KMH } from './extra.mjs';
+import { runningAt } from './extra.mjs';
 const RADIUS_M = 150;           // stops this close are the same place
 const GAP = 12 * 3600000;       // after a longer silence we cannot say the vehicle stayed put
 
@@ -17,8 +17,10 @@ export function stopsOf(points) {
   const stops = [];
   let start = null, last = null;
   const close = end => { if (start && end - start.recordedAt >= STOP_MIN) stops.push({ latitude: start.latitude, longitude: start.longitude, from: start.recordedAt, to: end }); start = null; };
-  for (const p of fixes) {
-    const still = p.speed < MOVING_KMH;
+  for (let i = 0; i < fixes.length; i++) {
+    const p = fixes[i];
+    // The same running rule as the card: a GPS wandering on the spot is still standing still.
+    const still = !runningAt(fixes, i, metres);
     // Parked GT06 trackers send no fixes until they move again, so the stop lasts until the next fix.
     if (start && (!still || metres(start, p) > RADIUS_M || p.recordedAt - last.recordedAt > GAP)) close(p.recordedAt - last.recordedAt > GAP ? last.recordedAt : p.recordedAt);
     if (still && !start) start = p;

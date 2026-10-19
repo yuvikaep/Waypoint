@@ -1,6 +1,7 @@
 import {$,$$,api,post,clock,closeModal,coords,esc,fromLocalInput,hm,i,icons,IST,IST_OFFSET,istDayStart,localInput,fixAt,fixStale,vehicleKind,vehicleLine,FUEL_TYPES,VEHICLE_TYPES,mapsLink,modal,on,since,statusLabel,statusOf,time,ago,toast,whenUnauthorized,type Alert,type Fence,type Fix,type Identity,type StatusKey,type Vehicle} from '../shared/core';
 import {bearing,createMap,drawRoute,fleetIcon,glide,markerHtml,playbackIcon,point,L} from '../shared/map';
 import {place,placeSpan,placeText,places,placeKey,placeFallback} from '../shared/places';
+import {MOVE_M,MOVING_KMH,runningAt} from '../../server/extra.mjs';
 import {nearest,nearText,nearSaved,placeIcon,PLACE_KIND} from '../shared/poi';
 import {googleModal} from '../shared/google';
 import {googleLive} from '../shared/gview';
@@ -532,28 +533,30 @@ function renderAlerts(){
 }
 
 /* ---------- Trip maths shared by history and reports ---------- */
-const MOVING=3; // km/h; a run also needs 100 m of real distance (GPS drift of a parked vehicle never gets there)
+// The same running rule the server uses for the card, so the timeline and the card never disagree.
 type Segment={kind:'run'|'stop';from:number;to:number;km:number;at:Fix;end:Fix;maxSpeed:number};
 const STOP_MIN=5*60000;
 function km(a:{latitude:number;longitude:number},b:{latitude:number;longitude:number}){
   const r=Math.PI/180,h=Math.sin((b.latitude-a.latitude)*r/2)**2+Math.cos(a.latitude*r)*Math.cos(b.latitude*r)*Math.sin((b.longitude-a.longitude)*r/2)**2;
   return 12742*Math.asin(Math.sqrt(h));
 }
+const metres=(a:{latitude:number;longitude:number},b:{latitude:number;longitude:number})=>km(a,b)*1000;
 // Runs and stops (5 minutes or more) from the stored fixes; implied jumps over 150 km/h are GPS noise.
 function segments(track:Fix[]):Segment[]{
   const out:Segment[]=[];
   const wired=track.some(q=>q.ignition===1); // an ignition wire: the engine must be on to count as running
   let cur:Segment|null=null;
   for(let n=0;n<track.length;n++){
-    const p=track[n],prev=track[n-1],kind:Segment['kind']=p.speed>=MOVING&&!(wired&&p.ignition===0)&&track.slice(Math.max(0,n-10),n).some(q=>km(q,p)>=0.1)?'run':'stop';
-    let step=0;if(prev){const dt=(p.recordedAt-prev.recordedAt)/3600000,d=km(prev,p);if(dt>0&&d/dt<=150&&(kind==='run'||prev.speed>=MOVING||d>=0.1))step=d}
+    const p=track[n],prev=track[n-1];
+    const kind:Segment['kind']=runningAt(track,n,metres)&&!(wired&&p.ignition===0)?'run':'stop';
+    let step=0;if(prev){const dt=(p.recordedAt-prev.recordedAt)/3600000,d=km(prev,p);if(dt>0&&d/dt<=150&&(kind==='run'||prev.speed>=MOVING_KMH||d>=MOVE_M/1000))step=d}
     if(!cur||cur.kind!==kind){if(cur){cur.to=p.recordedAt;cur.end=p;cur.km+=step;step=0}cur={kind,from:p.recordedAt,to:p.recordedAt,km:0,at:p,end:p,maxSpeed:p.speed};out.push(cur)}
     cur.to=p.recordedAt;cur.end=p;cur.km+=step;cur.maxSpeed=Math.max(cur.maxSpeed,p.speed);
   }
   // Short halts inside a run are part of the run.
   const merged:Segment[]=[];
   // A blip of "running" inside a stop (under 2 minutes and 150 m) is GPS drift, not a trip.
-  for(const s of out){const last=merged.at(-1);if(s.kind==='run'&&last?.kind==='stop'&&s.to-s.from<120000&&s.km<0.15){last.to=s.to;last.end=s.end;continue}if(s.kind==='stop'&&s.to-s.from<STOP_MIN&&last){last.to=s.to;last.end=s.end;last.km+=s.km;continue}if(last&&last.kind===s.kind){last.to=s.to;last.end=s.end;last.km+=s.km;last.maxSpeed=Math.max(last.maxSpeed,s.maxSpeed);continue}merged.push({...s})}
+  for(const s of out){const last=merged.at(-1);if(s.kind==='run'&&last?.kind==='stop'&&s.to-s.from<120000&&s.km<MOVE_M/1000){last.to=s.to;last.end=s.end;continue}if(s.kind==='stop'&&s.to-s.from<STOP_MIN&&last){last.to=s.to;last.end=s.end;last.km+=s.km;continue}if(last&&last.kind===s.kind){last.to=s.to;last.end=s.end;last.km+=s.km;last.maxSpeed=Math.max(last.maxSpeed,s.maxSpeed);continue}merged.push({...s})}
   return merged;
 }
 async function loadTrack(id:string,from:Date,to:Date){
@@ -598,9 +601,9 @@ function renderHistory(){
   let track:Fix[]=[],range=rangeFor('today'),tab:'all'|'stops'='all';
   const showPoint=(n:number)=>{
     const p=track[n];if(!p)return;
-    const next=track[n+1]||p,prev=track[n-1]||p,heading=p.speed>=MOVING&&p.heading!=null?p.heading:next!==p?bearing(p,next):prev!==p?bearing(prev,p):0;
-    if(!truck)truck=L.marker(point(p),{icon:playbackIcon(heading,p.speed>=MOVING),zIndexOffset:1000}).addTo(hmap);
-    else{truck.setLatLng(point(p));const pin=truck.getElement()?.querySelector<HTMLElement>('.gps-pin');if(pin){pin.className=`gps-pin on ${p.speed>=MOVING?'running':'stopped'}`;pin.querySelector<HTMLElement>('span')!.style.transform=`rotate(${heading}deg)`}}
+    const next=track[n+1]||p,prev=track[n-1]||p,heading=p.speed>=MOVING_KMH&&p.heading!=null?p.heading:next!==p?bearing(p,next):prev!==p?bearing(prev,p):0;
+    if(!truck)truck=L.marker(point(p),{icon:playbackIcon(heading,p.speed>=MOVING_KMH),zIndexOffset:1000}).addTo(hmap);
+    else{truck.setLatLng(point(p));const pin=truck.getElement()?.querySelector<HTMLElement>('.gps-pin');if(pin){pin.className=`gps-pin on ${p.speed>=MOVING_KMH?'running':'stopped'}`;pin.querySelector<HTMLElement>('span')!.style.transform=`rotate(${heading}deg)`}}
     $<HTMLInputElement>('#slider').value=String(n);
     $('#hpoint').innerHTML=`<b>${clock(p.recordedAt)}</b> · ${Math.round(p.speed)} km/h`;
     if(!hmap.getBounds().pad(-0.15).contains(point(p)))hmap.panTo(point(p),{animate:true});

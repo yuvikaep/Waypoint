@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TrackingStore } from './tracking-store.mjs';
 import { regularStops, stopsOf, suggestedStops } from './stops.mjs';
+import { runningAt, standingSince } from './extra.mjs';
 
 const MIN = 60000, DAY = 86400000, base = Date.parse('2026-10-01T04:00:00Z');
 const pump = { latitude: 25.487, longitude: 82.798 }, dhaba = { latitude: 25.52, longitude: 82.79 };
@@ -41,4 +42,35 @@ test('suggested stops read only the given vehicles from the store', async t => {
     store.ingest(device.id, { eventId: `${device.id}-${d}-${p.id}`, recordedAt: new Date(p.recordedAt).toISOString(), latitude: p.latitude, longitude: p.longitude, speed: p.speed });
   const stops = await suggestedStops(store, store.devices(a.customer.id), store.fences(a.customer.id), base - DAY, base + 5 * DAY);
   assert.equal(stops.length, 1); assert.deepEqual(stops[0].vehicles, ['Mine']);
+});
+
+test('one running rule: the card, the timeline and the reports give the same answer', () => {
+  const metres = (a, b) => {
+    const r = Math.PI / 180, h = Math.sin((b.latitude - a.latitude) * r / 2) ** 2
+      + Math.cos(a.latitude * r) * Math.cos(b.latitude * r) * Math.sin((b.longitude - a.longitude) * r / 2) ** 2;
+    return 12742000 * Math.asin(Math.sqrt(h));
+  };
+  const t = Date.parse('2026-10-19T04:00:00Z');
+  const fix = (n, lat, lon, speed) => ({ id: n, recordedAt: t + n * 60000, latitude: lat, longitude: lon, speed, valid: 1 });
+  // A tracker standing at one spot whose GPS wanders about 40 m, reporting up to 6 km/h.
+  const jitter = [0, 0.00035, -0.0003, 0.0002, -0.00025, 0.0003, 0, -0.00035]
+    .map((d, n) => fix(n, 25.27 + d, 82.83 + (n % 3) * 0.0002, [0, 5, 6, 4, 5, 6, 0, 4][n]));
+  // From the third fix on there is enough history to know how far this GPS wanders; before that a
+  // jump and a start look the same and distance alone has to decide.
+  for (let i = 3; i < jitter.length; i++) assert.equal(runningAt(jitter, i, metres), false, `jitter fix ${i} is not running`);
+  // The same vehicle pulling out. 25 m of real ground is enough on a steady GPS; on this one the
+  // vehicle has to get clear of the jumping first, which is what the straight-line test waits for.
+  const leaving = [...jitter, fix(8, 25.2703, 82.83, 4), fix(9, 25.2706, 82.83, 8), fix(10, 25.2712, 82.83, 10)];
+  assert.equal(runningAt(leaving, 10, metres), true, 'driving away from a jumpy GPS is running');
+  // A steady GPS: the same vehicle is running as soon as it has gone 25 m.
+  const steady = [0, 0, 0, 0, 0, 0].map((d, n) => fix(n, 25.27, 82.83, 0))
+    .concat([fix(6, 25.2701, 82.83, 3), fix(7, 25.27025, 82.83, 4)]);
+  assert.equal(runningAt(steady, 7, metres), true, '28 m from a standstill on a steady GPS is running');
+  // Standing time is the moment it arrived, whatever the jitter did in between (newest first).
+  const since = standingSince([...jitter].reverse(), metres);
+  assert.equal(since, jitter[0].recordedAt);
+  // A fix 2 km away ends the standing run, so it starts after that one.
+  const arrived = [...jitter].reverse();
+  arrived.push({ ...fix(-1, 25.25, 82.81, 40), recordedAt: t - 60000 });
+  assert.equal(standingSince(arrived, metres), jitter[0].recordedAt);
 });
