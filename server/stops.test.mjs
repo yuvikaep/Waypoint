@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TrackingStore } from './tracking-store.mjs';
 import { regularStops, stopsOf, suggestedStops } from './stops.mjs';
-import { runningAt, standingSince } from './extra.mjs';
+import { runningAt } from './extra.mjs';
+import { standingSince } from './segments.mjs';
 
 const MIN = 60000, DAY = 86400000, base = Date.parse('2026-10-01T04:00:00Z');
 const pump = { latitude: 25.487, longitude: 82.798 }, dhaba = { latitude: 25.52, longitude: 82.79 };
@@ -66,11 +67,14 @@ test('one running rule: the card, the timeline and the reports give the same ans
   const steady = [0, 0, 0, 0, 0, 0].map((d, n) => fix(n, 25.27, 82.83, 0))
     .concat([fix(6, 25.2701, 82.83, 3), fix(7, 25.27025, 82.83, 4)]);
   assert.equal(runningAt(steady, 7, metres), true, '28 m from a standstill on a steady GPS is running');
-  // Standing time is the moment it arrived, whatever the jitter did in between (newest first).
-  const since = standingSince([...jitter].reverse(), metres);
-  assert.equal(since, jitter[0].recordedAt);
-  // A fix 2 km away ends the standing run, so it starts after that one.
-  const arrived = [...jitter].reverse();
-  arrived.push({ ...fix(-1, 25.25, 82.81, 40), recordedAt: t - 60000 });
-  assert.equal(standingSince(arrived, metres), jitter[0].recordedAt);
+  // Standing time: the vehicle arrives from 2 km away and then its GPS jumps about. The last fixes
+  // of the drive still read as running, so standing starts within a few minutes of arriving — and
+  // from then on it only grows: the jumping never pushes the start forward again.
+  const arrived = [{ ...fix(-1, 25.25, 82.81, 40), recordedAt: t - 60000 }, ...jitter];
+  const since = standingSince([...arrived].reverse());
+  assert.ok(since >= jitter[0].recordedAt && since <= jitter[5].recordedAt, 'standing starts just after arriving');
+  const later = [...arrived, ...[0.0003, -0.00025, 0.0002, -0.0003, 0.00035, 0]
+    .map((d, n) => fix(8 + n, 25.27 + d, 82.83 + (n % 3) * 0.0002, [5, 6, 4, 5, 6, 0][n]))];
+  assert.equal(standingSince([...later].reverse()), since, 'more jumping does not restart the clock');
+  assert.equal(standingSince([]), null);
 });

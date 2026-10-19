@@ -118,54 +118,41 @@ export const MOVING_KMH = 2;   // slower than a walking pace is not driving
 export const MOVE_M = 25;      // this much ground in a straight line and it has really moved
 export const STRAIGHT = 0.6;   // and most of the path walked has to be that straight line
 export const ARRIVE_M = 100;   // standing "here" means within this of where it stands now
-const WINDOW_MS = 30 * 60000;  // older fixes say nothing about what the vehicle is doing now
+const WINDOW_MS = 60 * 60000;  // older fixes say nothing about what the vehicle is doing now
+const BACK = 5;                // and only this many of them, so an old drive cannot leak into a stop
 const at = p => ({ latitude: Number(p.latitude), longitude: Number(p.longitude) });
 // list is newest first; true when list[k] is a running fix.
 export function movingAt(list, k, distance) {
   const a = list[k];
   if (!a || Number(a.speed) < MOVING_KMH) return false;
   const window = [];
-  for (let j = k + 1; j < Math.min(list.length, k + 8); j++) {
+  for (let j = k + 1; j < Math.min(list.length, k + 1 + BACK); j++) {
     if (Math.abs(a.recordedAt - list[j].recordedAt) > WINDOW_MS) break;
     window.push(list[j]);
   }
   if (!window.length) return false;
   // One jump says nothing, so read a few fixes back — as many as there are, where that is fewer.
-  const least = Math.min(3, window.length);
+  // With fewer than three behind it there is not enough to tell a jump from a start, and then only
+  // a move too long to be a jump at all counts.
+  const least = Math.min(3, window.length), need = window.length >= 3 ? MOVE_M : ARRIVE_M;
   let path = 0, previous = a;
   for (let n = 0; n < window.length; n++) {
     path += distance(at(previous), at(window[n]));
     previous = window[n];
     if (n + 1 < least) continue;
     const net = distance(at(a), at(window[n]));
-    if (net >= MOVE_M && net >= path * STRAIGHT) return true;
+    if (net >= need && net >= path * STRAIGHT) return true;
   }
   return false;
 }
 // Was the vehicle running at fixes[i] of an oldest-first list? Judged against the fixes before it,
 // or, for the very first one where there are none, against the fixes after it.
 export function runningAt(fixes, i, distance) {
-  const back = [fixes[i], ...fixes.slice(Math.max(0, i - 8), i).reverse()];
-  return movingAt(back.length > 1 ? back : [fixes[i], ...fixes.slice(i + 1, i + 9)], 0, distance);
+  const back = [fixes[i], ...fixes.slice(Math.max(0, i - BACK), i).reverse()];
+  return movingAt(back.length > 1 ? back : [fixes[i], ...fixes.slice(i + 1, i + 1 + BACK)], 0, distance);
 }
 // Newest running fix in a newest-first list, or null.
 export function lastRealMove(list, distance) {
   for (let k = 0; k < list.length; k++) if (movingAt(list, k, distance)) return list[k];
   return null;
-}
-// Since when the vehicle has been standing where it stands now: walk back while the fixes stay
-// within ARRIVE_M of the latest one. Jitter never leaves that circle, so it cannot restart the clock,
-// and the answer is the moment the vehicle arrived. Fixes come newest first.
-export function standingSince(fixes, distance, gap = 12 * 3600000) {
-  const valid = fixes.filter(p => p.valid !== 0);
-  const here = valid[0];
-  if (!here) return null;
-  let since = here.recordedAt, previous = here;
-  for (const p of valid.slice(1)) {
-    // After a long silence we cannot claim the vehicle stayed put, so the standing run starts after it.
-    if (previous.recordedAt - p.recordedAt > gap || distance(at(here), at(p)) > ARRIVE_M) break;
-    since = p.recordedAt;
-    previous = p;
-  }
-  return since;
 }

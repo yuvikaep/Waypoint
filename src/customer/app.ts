@@ -1,7 +1,8 @@
 import {$,$$,api,post,clock,closeModal,coords,esc,fromLocalInput,hm,i,icons,IST,IST_OFFSET,istDayStart,localInput,fixAt,fixStale,vehicleKind,vehicleLine,FUEL_TYPES,VEHICLE_TYPES,mapsLink,modal,on,since,statusLabel,statusOf,time,ago,toast,whenUnauthorized,type Alert,type Fence,type Fix,type Identity,type StatusKey,type Vehicle} from '../shared/core';
 import {bearing,createMap,drawRoute,fleetIcon,glide,markerHtml,playbackIcon,point,L} from '../shared/map';
 import {place,placeSpan,placeText,places,placeKey,placeFallback} from '../shared/places';
-import {MOVE_M,MOVING_KMH,runningAt} from '../../server/extra.mjs';
+import {MOVING_KMH} from '../../server/extra.mjs';
+import {segmentsOf} from '../../server/segments.mjs';
 import {nearest,nearText,nearSaved,placeIcon,PLACE_KIND} from '../shared/poi';
 import {googleModal} from '../shared/google';
 import {googleLive} from '../shared/gview';
@@ -535,30 +536,8 @@ function renderAlerts(){
 /* ---------- Trip maths shared by history and reports ---------- */
 // The same running rule the server uses for the card, so the timeline and the card never disagree.
 type Segment={kind:'run'|'stop';from:number;to:number;km:number;at:Fix;end:Fix;maxSpeed:number};
-const STOP_MIN=5*60000;
-function km(a:{latitude:number;longitude:number},b:{latitude:number;longitude:number}){
-  const r=Math.PI/180,h=Math.sin((b.latitude-a.latitude)*r/2)**2+Math.cos(a.latitude*r)*Math.cos(b.latitude*r)*Math.sin((b.longitude-a.longitude)*r/2)**2;
-  return 12742*Math.asin(Math.sqrt(h));
-}
-const metres=(a:{latitude:number;longitude:number},b:{latitude:number;longitude:number})=>km(a,b)*1000;
-// Runs and stops (5 minutes or more) from the stored fixes; implied jumps over 150 km/h are GPS noise.
-function segments(track:Fix[]):Segment[]{
-  const out:Segment[]=[];
-  const wired=track.some(q=>q.ignition===1); // an ignition wire: the engine must be on to count as running
-  let cur:Segment|null=null;
-  for(let n=0;n<track.length;n++){
-    const p=track[n],prev=track[n-1];
-    const kind:Segment['kind']=runningAt(track,n,metres)&&!(wired&&p.ignition===0)?'run':'stop';
-    let step=0;if(prev){const dt=(p.recordedAt-prev.recordedAt)/3600000,d=km(prev,p);if(dt>0&&d/dt<=150&&(kind==='run'||prev.speed>=MOVING_KMH||d>=MOVE_M/1000))step=d}
-    if(!cur||cur.kind!==kind){if(cur){cur.to=p.recordedAt;cur.end=p;cur.km+=step;step=0}cur={kind,from:p.recordedAt,to:p.recordedAt,km:0,at:p,end:p,maxSpeed:p.speed};out.push(cur)}
-    cur.to=p.recordedAt;cur.end=p;cur.km+=step;cur.maxSpeed=Math.max(cur.maxSpeed,p.speed);
-  }
-  // Short halts inside a run are part of the run.
-  const merged:Segment[]=[];
-  // A blip of "running" inside a stop (under 2 minutes and 150 m) is GPS drift, not a trip.
-  for(const s of out){const last=merged.at(-1);if(s.kind==='run'&&last?.kind==='stop'&&s.to-s.from<120000&&s.km<MOVE_M/1000){last.to=s.to;last.end=s.end;continue}if(s.kind==='stop'&&s.to-s.from<STOP_MIN&&last){last.to=s.to;last.end=s.end;last.km+=s.km;continue}if(last&&last.kind===s.kind){last.to=s.to;last.end=s.end;last.km+=s.km;last.maxSpeed=Math.max(last.maxSpeed,s.maxSpeed);continue}merged.push({...s})}
-  return merged;
-}
+// The timeline draws exactly what the vehicle card reads its standing time from.
+const segments=(track:Fix[]):Segment[]=>segmentsOf(track) as Segment[];
 async function loadTrack(id:string,from:Date,to:Date){
   const points:Fix[]=[];let after:number|null=0;
   do{const r:{positions:Fix[];next:number|null}=await api(`/devices/${id}/history?${new URLSearchParams({from:from.toISOString(),to:to.toISOString(),after:String(after)})}`);points.push(...r.positions);after=r.next}while(after!==null&&points.length<100000);
