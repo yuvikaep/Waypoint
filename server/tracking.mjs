@@ -285,7 +285,8 @@ export function createTrackingServer({store,adminToken,bridge=new TraccarBridge(
           let customer=null;if(device.tenantId!=='owner')try{customer=await store.customer(device.tenantId)}catch{/* customer removed */}
           // Today in the admin's own time zone.
           const start=new Date(Date.now()-tz*60000);start.setUTCHours(0,0,0,0);const from=start.getTime()+tz*60000;
-          const today=(await vehicleReport(store,[device],from,Date.now(),Number.isInteger(tz)?tz:-330)).vehicles[0]?.days.at(-1)||null;
+          // Today's summary reads every fix of the day; the page asks for it once a minute, not on every refresh.
+          const today=url.searchParams.get('today')==='0'?null:(await vehicleReport(store,[device],from,Date.now(),Number.isInteger(tz)?tz:-330)).vehicles[0]?.days.at(-1)||null;
           return json(res,200,{device:{...device,customerId:customer?.id||null,customerName:customer?.name||null},packets:await store.recentPackets(id,100),alerts:await store.deviceAlerts(id,20),commands:await store.deviceCommands(id,20),provisioning:{steps:await store.provisionSteps(id),sms:bootstrapSms(await store.raw(id),bridge.state),operators:Object.fromEntries(Object.entries(OPERATORS).map(([k,v])=>[k,{label:v.label,apn:v.apn}]))},power:powerTimeline(await store.powerRows(id,Date.now()-3*86400000)),sim:{iccid:await store.latestIccid(id)},today,gateway:bridge.state});
         }
         const clockMatch=path.match(/^\/api\/gps\/admin\/devices\/([\w-]+)\/clock-fix$/);

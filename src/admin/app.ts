@@ -250,9 +250,13 @@ function packetKinds(packets:Packet[]){
   return kinds;
 }
 const hhmmss=(at:number)=>new Date(at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit',timeZone:'Asia/Kolkata'});
+let todayAt=0,todayFor='',todayCache:Detail['today']=null;
 async function renderDevice(){
   let data:Detail;
-  try{data=await api<Detail>(`/admin/devices/${detailId}?tz=-330`)}catch(e){fail(e);return}
+  // Today's summary reads every fix of the day, so it is asked for once a minute rather than on every refresh.
+  const wantToday=Date.now()-todayAt>60000||todayFor!==detailId;
+  try{data=await api<Detail>(`/admin/devices/${detailId}?tz=-330${wantToday?'':'&today=0'}`)}catch(e){fail(e);return}
+  if(wantToday){todayAt=Date.now();todayFor=detailId;todayCache=data.today}else data.today=todayCache;
   if(view!=='device')return;
   const d=data.device,p=d.position,g=data.gateway;gateway=g;
   const first=!document.querySelector('#device-page');
@@ -311,7 +315,7 @@ async function renderDevice(){
   on('#dp-setup',()=>setupInfo(d));
   on('#dp-delete',async()=>{if(prompt(`Delete ${d.name}? This removes its whole location history and alerts.\nType the IMEI/identifier to confirm: ${d.uniqueId}`)!==d.uniqueId)return;await api(`/admin/devices/${d.id}`,{method:'DELETE'});toast('Device deleted.');go('devices')});
   icons();
-  later(()=>{if(view==='device'&&!document.querySelector('dialog.modal[open]'))void renderDevice()},4000);
+  later(()=>{if(view==='device'&&!document.querySelector('dialog.modal[open]'))void renderDevice()},10000);
 }
 /* ---------- Device health, commands and live terminal ---------- */
 const extraOf=(p:Packet)=>{try{return p.extra?JSON.parse(p.extra) as Record<string,any>:{}}catch{return {}}};
