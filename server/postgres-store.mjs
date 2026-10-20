@@ -320,11 +320,21 @@ export class PostgresTrackingStore {
     const ignition = (await this.db.prepare('SELECT ignition FROM positions WHERE deviceId=? AND ignition IS NOT NULL ORDER BY receivedAt DESC,id DESC LIMIT 1').get(id))?.ignition ?? null;
     const wired = ignition !== null && (Number(ignition) === 1 || !!(await this.db.prepare('SELECT 1 AS x FROM positions WHERE deviceId=? AND ignition=1 LIMIT 1').get(id)));
     // Whether the vehicle is running now and since when it has been standing are the same question
-    // asked of the same runs and stops, so the card cannot contradict the history timeline.
-    const recent = position && position.valid !== 0
-      ? (await this.db.prepare('SELECT recordedAt,latitude,longitude,speed,ignition,valid FROM positions WHERE deviceId=? ORDER BY recordedAt DESC,id DESC LIMIT 2000').all(id))
-      : [];
-    const current = segmentsOf(recent, { keepLast: true, wired }).at(-1) ?? null;
+    // asked of the same runs and stops, so the card cannot contradict the history timeline. Working
+    // that out reads a long run of fixes, so it is done once per new fix and kept on the device: the
+    // card and the fleet list ask every few seconds, while the answer only changes when a fix arrives.
+    let current = null;
+    if (position && position.valid !== 0) {
+      if (Number(device.motionAt) === Number(position.recordedAt) && device.motionKind) current = { kind: device.motionKind, from: Number(device.motionFrom) };
+      else {
+        const recent = (await this.db.prepare('SELECT recordedAt,latitude,longitude,speed,ignition,valid FROM positions WHERE deviceId=? ORDER BY recordedAt DESC,id DESC LIMIT 2000').all(id));
+        const last = segmentsOf(recent, { keepLast: true, wired }).at(-1);
+        current = last ? { kind: last.kind, from: last.from } : null;
+        // A stop longer than the fixes read keeps the start found while it was still in view.
+        if (current?.kind === 'stop' && device.motionKind === 'stop' && Number(device.motionFrom) < current.from && recent.length >= 2000) current.from = Number(device.motionFrom);
+        (await this.db.prepare('UPDATE devices SET motionAt=?,motionKind=?,motionFrom=? WHERE id=?').run(position.recordedAt, current?.kind ?? null, current?.from ?? null, id));
+      }
+    }
     const movingNow = current?.kind === 'run';
     // Hardware trackers (GT06 family) stop uploading fixes once parked and only send heartbeats,
     // so an online tracker whose last good fix was stationary is parked, not missing GPS.

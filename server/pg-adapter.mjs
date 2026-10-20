@@ -6,6 +6,10 @@ const names = Object.fromEntries([
   'recordedAt','receivedAt','fenceId','updatedAt','expiresAt','linkHash',
   'passwordHash','deviceName','verifiedAt','resetAt',
   'simOperator','simType','simNumber','customerName','apnUser','apnPass','commandId','sentAt','doneAt',
+  // Vehicle details, plans and payments, coupons, and the cached run/stop reading.
+  'vehicleType','makeModel','modelYear','fuelType','capacityKg','chassisNumber','engineNumber','ownerName','vehicleNotes',
+  'planStartedAt','planExpiresAt','planMonths','planAmount','couponCode','periodFrom','periodTo','paidAt','maxUses',
+  'motionAt','motionKind','motionFrom',
 ].map(name => [name.toLowerCase(), name]));
 
 // Only these two legacy SQLite statements are accepted. All other statements
